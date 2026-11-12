@@ -1,0 +1,15 @@
+# Go
+/bin/
+*.exe
+*.out
+*.test
+/dist/
+
+# Local config / secrets (never commit)
+*.env
+.pao.json
+.pao.local.*
+
+# Editor / OS
+.DS_Store
+*.swp
