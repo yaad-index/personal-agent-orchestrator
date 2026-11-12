@@ -5,10 +5,10 @@ Architecture Decision Records for **pao** (personal-agent-orchestrator). Convent
 ## Accepted
 - **0000** — Record architecture decisions (meta)
 - **0001** — Node mesh that routes input to agents (the spine)
+- **0002** — Stack and conventions
 
 ## Planned (one ADR each, broad spine first then detail)
-- **0002** — Stack and conventions
-- Routing (agent name + tags; explicit + optional intent)
+- **0003** — Routing (agent name + tags)
 - The approval gate (by retractability; fail-closed; judge for fuzzy cases)
 - Access model + management UI (localhost-default)
 - Temporary agents (ephemeral, first-class, explicit teardown, recipes)
