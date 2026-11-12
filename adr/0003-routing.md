@@ -8,9 +8,9 @@ ADR-0001 fixed that pao is an input router and that every capability, including 
 
 ## Decision
 
-1. **Routing is the organizing principle.** Every input, from any source, is directed to an agent. There is no special fixed infrastructure: a coordinator, worker agents, a judge, and temporary agents are all ordinary routing targets. The judge is reached by routing text to it for a verdict, not by a hardwired gate.
+1. **Routing is the organizing principle.** Every input, from any source, is directed to an agent. There is no special fixed infrastructure for capabilities: worker agents, a judge, and temporary agents are all ordinary routing targets rather than hardwired components. The judge in particular is reached by routing text to it for a verdict, not by a wired-in gate. (The single user-facing coordinator role from ADR-0001 and how it maps onto nodes is left to the transport and failover ADR.)
 
-2. **Routing keys are the agent name and its tags.** Each agent carries a **name** and a set of **tags** in its profile (ADR-0002 / the agent profile). An input addresses a target by **name** (one specific agent) or by **tag** (a capability or role), and a tag address may **fan out** to every agent that carries that tag.
+2. **Routing keys are the agent name and its tags.** Each agent carries a **name** and a set of **tags** in its profile (ADR-0001, the agent profile). An input addresses a target by **name** (one specific agent) or by **tag** (a capability or role). Addressing by tag **fans out** to every agent that carries the tag; that fan-out is the baseline, and how to narrow a tag match to a single target when only one is wanted is part of the deferred selection algorithm below.
 
 3. **A routed input resolves to a running agent or a new one.** Routing decides whether a ready, already-running agent receives the input or pao launches a fresh agent to take it. Launching is an outcome of routing, not a separate spawn-on-event subsystem.
 
