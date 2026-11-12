@@ -4,7 +4,7 @@
 
 ## Context
 
-The user runs several coding agents across different machines that communicate freely. The connections are loose: coordination between them is thin, a chat mirror is enforced only by a slow hook, and a blocked agent is invisible until noticed by hand. pao is the layer that makes them one coordinated system.
+pao makes several independently running coding agents, across machines, into one coordinated system driven from a single front.
 
 ## Decision
 
