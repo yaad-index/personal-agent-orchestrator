@@ -8,7 +8,7 @@ pao is a new Go service. Before detailing components, we fix the stack and the e
 
 ## Decision
 
-pao names just **two concrete tools, and keeps both swappable.** A **coding-agent harness** is required (it is what pao drives as its agents, ADR-0001), but which one is pluggable: any harness that meets the terminal-in / transcript-out contract qualifies, with Claude Code supported first. **tmux** is the chosen terminal driver; it is well established with no reason to switch, yet it is not special and another multiplexer could replace it. Everything else is described by its **role**, not a product, so the concrete tool stays an implementation or operator choice. Communication channels (chat, mail) and inter-node transport each get their own later ADR.
+pao names just **two concrete tools, and keeps both swappable.** A **coding-agent harness** is required (it is what pao drives as its agents, ADR-0001), but which one is pluggable: any harness that meets the terminal-in / transcript-out contract qualifies, with Claude Code supported first. **tmux** is the chosen terminal driver; it is well established with no reason to switch, yet it is not special and another multiplexer could replace it. Everything else is described by its **role**, not a product, so the concrete tool stays an implementation or operator choice. Communication channels and inter-node transport each get their own later ADR.
 
 ### Stack
 - **Language: Go**, a single binary per node.
