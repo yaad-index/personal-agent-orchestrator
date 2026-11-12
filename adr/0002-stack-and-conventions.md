@@ -1,6 +1,6 @@
 # ADR 0002: Stack and conventions
 
-**Status:** Proposed (2026-11-12)
+**Status:** Accepted (2026-11-12)
 
 ## Context
 
