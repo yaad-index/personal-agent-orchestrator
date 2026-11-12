@@ -14,6 +14,7 @@ Architecture Decision Records for **pao** (personal-agent-orchestrator). Convent
 - Temporary agents (ephemeral, first-class, explicit teardown, recipes)
 - Control plane (lifecycle, context watch, liveness)
 - Mirror + verbosity levels + retention
+- Communication channels (human↔pao: chat, mail)
 - Message model (ids/quote; buttons over reactions)
 - Pluggable backends (profile; transcript contract test; startup)
 - Node transport + failover
