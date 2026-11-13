@@ -29,6 +29,8 @@ import (
 	"github.com/yaad-index/personal-agent-orchestrator/internal/gate"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/harvest"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/mcpsrv"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/mesh"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/mesh/transport"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/mirror"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/msgstore"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/recipe"
@@ -53,6 +55,8 @@ type Options struct {
 	MirrorPoll time.Duration
 	// PollInterval is how often startup checks for readiness.
 	PollInterval time.Duration
+	// MeshListener, when set, replaces listening on the configured mesh address.
+	MeshListener net.Listener
 	// Authorizer is the access seam every surface asks. Nil means operator-only:
 	// the operator may do anything and every agent nothing, until the access
 	// matrix exists to say otherwise.
@@ -167,8 +171,25 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	}
 	mcpHandler := mcpsrv.New(ops, resolver, mcpsrv.WithAuthorizer(opts.Authorizer)).Handler()
 
-	srv, err := local.New(layer, token, local.WithDecider(pending), local.WithTemp(tempAPI{mgr: mgr, store: harvests}),
-		local.WithMount("/mcp", mcpHandler))
+	var meshNode *transport.Node
+	var localOpts []local.Option
+	if cfg.Mesh != nil {
+		id, err := mesh.Load(cfg.Orchestrator.MeshKey, cfg.Orchestrator.Node)
+		if err != nil {
+			return fmt.Errorf("mesh: this node's key: %w (create it with `pao mesh keygen`)", err)
+		}
+		meshNode, err = transport.New(transport.Config{
+			Self: id, Doc: cfg.Mesh, StateDir: cfg.Orchestrator.StateDir,
+			Listen: cfg.Orchestrator.MeshListen, Listener: opts.MeshListener,
+		})
+		if err != nil {
+			return fmt.Errorf("mesh: %w", err)
+		}
+		localOpts = append(localOpts, local.WithMesh(meshStatus(meshNode)))
+	}
+
+	srv, err := local.New(layer, token, append([]local.Option{local.WithDecider(pending), local.WithTemp(tempAPI{mgr: mgr, store: harvests}),
+		local.WithMount("/mcp", mcpHandler)}, localOpts...)...)
 	if err != nil {
 		return err
 	}
@@ -184,15 +205,30 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	url := "http://" + ln.Addr().String() + "/mcp"
 	mcpURL.Store(&url)
 
-	serveErr := make(chan error, 2)
+	serveErr := make(chan error, 3)
 	go func() { serveErr <- httpSrv.Serve(ln) }()
 	go func() { serveErr <- gateSrv.Serve(gateLn) }()
+	meshCtx, stopMesh := context.WithCancel(ctx)
+	defer stopMesh()
+	meshDone := make(chan struct{})
+	if meshNode != nil {
+		go func() {
+			defer close(meshDone)
+			if err := meshNode.Serve(meshCtx); err != nil {
+				serveErr <- fmt.Errorf("mesh: %w", err)
+			}
+		}()
+	} else {
+		close(meshDone)
+	}
 	slog.Info("pao serving", "node", cfg.Orchestrator.Node, "listen", ln.Addr().String(), "agents", len(cfg.Profiles))
 
 	select {
 	case err := <-serveErr:
 		_ = gateSrv.Close()
 		_ = httpSrv.Close()
+		stopMesh()
+		<-meshDone
 		return err
 	case <-ctx.Done():
 	}
@@ -207,6 +243,8 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		_ = httpSrv.Close()
 		err = nil
 	}
+	stopMesh()
+	<-meshDone
 	hook.follow.wait()
 	return err
 }
