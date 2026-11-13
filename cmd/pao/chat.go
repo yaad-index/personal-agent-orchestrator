@@ -105,6 +105,12 @@ func (c ChatCmd) run(ctx context.Context, in io.Reader, out, errw io.Writer) err
 			if strings.TrimSpace(line) == "" {
 				continue
 			}
+			if decision, id, reason, ok := parseDecision(line); ok {
+				if err := client.Decide(ctx, id, decision, reason); err != nil {
+					_, _ = fmt.Fprintf(errw, "answer failed: %v\n", err)
+				}
+				continue
+			}
 			rep, err := client.Post(ctx, c.Sender, line, kind, value)
 			if err != nil {
 				_, _ = fmt.Fprintf(errw, "send failed: %v\n", err)
@@ -117,4 +123,24 @@ func (c ChatCmd) run(ctx context.Context, in io.Reader, out, errw io.Writer) err
 			}
 		}
 	}
+}
+
+// parseDecision recognizes the operator's answers to the gate's questions:
+// "/allow q1", "/always q1" and "/deny q1 [reason]". Any other line, including
+// one that merely starts with a slash, is a message to the agent.
+func parseDecision(line string) (decision, id, reason string, ok bool) {
+	f := strings.Fields(line)
+	if len(f) < 2 || !strings.HasPrefix(f[1], "q") {
+		return "", "", "", false
+	}
+	switch f[0] {
+	case "/allow", "/always":
+		if len(f) != 2 {
+			return "", "", "", false
+		}
+		return strings.TrimPrefix(f[0], "/"), f[1], "", true
+	case "/deny":
+		return "deny", f[1], strings.Join(f[2:], " "), true
+	}
+	return "", "", "", false
 }

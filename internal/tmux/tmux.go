@@ -65,11 +65,15 @@ func New(opts ...Option) *Driver {
 func SessionName(agent string) string { return SessionPrefix + agent }
 
 // NewSession starts a detached session named for agent, running command in
-// dir. It fails if the session already exists.
-func (d *Driver) NewSession(ctx context.Context, agent, dir, command string) error {
+// dir with env (KEY=value entries) added to its environment. It fails if the
+// session already exists.
+func (d *Driver) NewSession(ctx context.Context, agent, dir, command string, env []string) error {
 	args := []string{"new-session", "-d", "-s", SessionName(agent)}
 	if dir != "" {
 		args = append(args, "-c", dir)
+	}
+	for _, e := range env {
+		args = append(args, "-e", e)
 	}
 	args = append(args, command)
 	_, err := d.run(ctx, nil, args...)

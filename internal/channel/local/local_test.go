@@ -17,6 +17,7 @@ import (
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/comm"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/gate"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/msgstore"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/route"
 )
@@ -88,7 +89,7 @@ func TestNewRefusesAnEmptyToken(t *testing.T) {
 func TestEveryRouteRequiresTheToken(t *testing.T) {
 	_, ts := newServer(t, &fakeLayer{})
 	for _, tc := range []struct{ method, path string }{
-		{"POST", "/v1/messages"}, {"POST", "/v1/reactions"}, {"GET", "/v1/stream"},
+		{"POST", "/v1/messages"}, {"POST", "/v1/reactions"}, {"POST", "/v1/decisions"}, {"GET", "/v1/stream"},
 	} {
 		for _, auth := range []string{"", "Bearer wrong", "Bearer ", token, "Basic " + token} {
 			resp := do(t, ts, tc.method, tc.path, `{}`, auth)
@@ -192,6 +193,68 @@ func TestPostReaction(t *testing.T) {
 
 	fl.err = msgstore.ErrNotFound
 	resp = do(t, ts, "POST", "/v1/reactions", `{"id":"gone","emoji":"👍"}`, bearer())
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+}
+
+type fakeDecider struct {
+	got map[string]gate.Answer
+	err error
+}
+
+func (f *fakeDecider) Answer(id string, a gate.Answer) error {
+	if f.err != nil {
+		return f.err
+	}
+	if f.got == nil {
+		f.got = map[string]gate.Answer{}
+	}
+	f.got[id] = a
+	return nil
+}
+
+func TestPostDecision(t *testing.T) {
+	fd := &fakeDecider{}
+	_, ts := newServer(t, &fakeLayer{}, WithDecider(fd))
+
+	for _, tc := range []struct {
+		body string
+		want gate.Answer
+	}{
+		{`{"id":"q1","decision":"allow"}`, gate.Answer{Allow: true}},
+		{`{"id":"q2","decision":"always"}`, gate.Answer{Allow: true, Remember: true}},
+		{`{"id":"q3","decision":"deny","reason":"not now"}`, gate.Answer{Reason: "not now"}},
+	} {
+		resp := do(t, ts, "POST", "/v1/decisions", tc.body, bearer())
+		assert.Equal(t, http.StatusOK, resp.StatusCode, tc.body)
+	}
+	assert.Equal(t, gate.Answer{Allow: true}, fd.got["q1"])
+	assert.Equal(t, gate.Answer{Allow: true, Remember: true}, fd.got["q2"])
+	assert.Equal(t, gate.Answer{Reason: "not now"}, fd.got["q3"])
+}
+
+func TestPostDecisionRejects(t *testing.T) {
+	fd := &fakeDecider{}
+	_, ts := newServer(t, &fakeLayer{}, WithDecider(fd))
+
+	for name, body := range map[string]string{
+		"unknown decision": `{"id":"q1","decision":"maybe"}`,
+		"no decision":      `{"id":"q1"}`,
+		"no id":            `{"decision":"allow"}`,
+		"unknown field":    `{"id":"q1","decision":"allow","x":1}`,
+	} {
+		resp := do(t, ts, "POST", "/v1/decisions", body, bearer())
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode, name)
+	}
+	assert.Empty(t, fd.got, "nothing reached the gate")
+
+	fd.err = gate.ErrNoSuchQuestion
+	resp := do(t, ts, "POST", "/v1/decisions", `{"id":"q9","decision":"allow"}`, bearer())
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode, "answering a question that is not waiting")
+}
+
+func TestPostDecisionWithoutAGate(t *testing.T) {
+	_, ts := newServer(t, &fakeLayer{})
+	resp := do(t, ts, "POST", "/v1/decisions", `{"id":"q1","decision":"allow"}`, bearer())
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 }
 
