@@ -32,6 +32,8 @@ func Agent(name string) Subject { return Subject{Kind: KindAgent, Name: name} }
 type Action string
 
 const (
+	// Spawn starts a temporary agent (ADR-0006 point 2).
+	Spawn Action = "spawn"
 	// Kill tears a temporary agent down (ADR-0006 point 3).
 	Kill Action = "kill"
 	// ReadHarvest reads a harvested slice (ADR-0006 point 4).

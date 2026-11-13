@@ -195,3 +195,28 @@ func TestFailedDeliveryIsNotUse(t *testing.T) {
 
 	assert.False(t, reg.Temps()[0].Received, "a message that never reached the agent does not make it used")
 }
+
+func TestEnsureLaunchesOnceAndReportsIt(t *testing.T) {
+	r, reg, l, _ := newRouter(t, core.Profile{Name: "a"})
+	p, _, _ := reg.Lookup("a")
+
+	launched, err := r.Ensure(context.Background(), p)
+	require.NoError(t, err)
+	assert.True(t, launched)
+	launched, err = r.Ensure(context.Background(), p)
+	require.NoError(t, err)
+	assert.False(t, launched, "an agent already running is not launched again")
+	assert.EqualValues(t, 1, l.launches.Load())
+	_, st, _ := reg.Lookup("a")
+	assert.Equal(t, core.Running, st)
+}
+
+func TestEnsureFailureLeavesTheAgentStopped(t *testing.T) {
+	r, reg, l, _ := newRouter(t, core.Profile{Name: "a"})
+	l.failFor = "a"
+	p, _, _ := reg.Lookup("a")
+	_, err := r.Ensure(context.Background(), p)
+	require.Error(t, err)
+	_, st, _ := reg.Lookup("a")
+	assert.Equal(t, core.Stopped, st)
+}

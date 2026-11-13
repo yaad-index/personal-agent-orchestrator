@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/msgstore"
@@ -61,11 +62,14 @@ type Layer struct {
 	router   Router
 	pre      map[string]Preprocessor
 	channels []Channel
+
+	mu    sync.RWMutex
+	bound map[string]string // agent name to the channel its output goes to
 }
 
 // New returns a Layer.
 func New(store *msgstore.Store, router Router) *Layer {
-	return &Layer{store: store, router: router, pre: make(map[string]Preprocessor)}
+	return &Layer{store: store, router: router, pre: make(map[string]Preprocessor), bound: make(map[string]string)}
 }
 
 // Preprocess registers the preprocessor for a source kind. Call it before the
@@ -74,6 +78,45 @@ func (l *Layer) Preprocess(source string, p Preprocessor) { l.pre[source] = p }
 
 // AddChannel registers a human front. Call it before the layer starts sending.
 func (l *Layer) AddChannel(c Channel) { l.channels = append(l.channels, c) }
+
+// HasChannel reports whether a channel of that name is registered.
+func (l *Layer) HasChannel(name string) bool {
+	for _, c := range l.channels {
+		if c.Name() == name {
+			return true
+		}
+	}
+	return false
+}
+
+// Channels returns the names of the registered channels, in the order added.
+func (l *Layer) Channels() []string {
+	out := make([]string, 0, len(l.channels))
+	for _, c := range l.channels {
+		out = append(out, c.Name())
+	}
+	return out
+}
+
+// Bind sends what the agent says to the named channel only, instead of to every
+// channel (ADR-0006 point 1: a temporary agent has its own stream on a channel
+// named at launch). Binding an agent again replaces its binding.
+func (l *Layer) Bind(agent, channel string) error {
+	if !l.HasChannel(channel) {
+		return fmt.Errorf("no channel %q", channel)
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.bound[agent] = channel
+	return nil
+}
+
+// Unbind returns the agent's output to every channel.
+func (l *Layer) Unbind(agent string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.bound, agent)
+}
 
 // Delivery is the outcome of one inbound message.
 type Delivery struct {
@@ -163,7 +206,27 @@ func (l *Layer) Send(ctx context.Context, from string, m core.Message) (core.Mes
 	if err != nil {
 		return core.Message{}, err
 	}
+	l.mu.RLock()
+	only, bound := l.bound[from]
+	l.mu.RUnlock()
+	if bound {
+		return stored, l.sendTo(ctx, only, stored)
+	}
 	return stored, l.fanOut(ctx, stored)
+}
+
+// sendTo hands m to the one channel named. A channel that has gone is an error,
+// never a silent fall back to every channel: the binding said where it goes.
+func (l *Layer) sendTo(ctx context.Context, name string, m core.Message) error {
+	for _, c := range l.channels {
+		if c.Name() == name {
+			if err := c.Send(ctx, m); err != nil {
+				return fmt.Errorf("channel %q: %w", name, err)
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("channel %q is not registered", name)
 }
 
 // Notify sends pao's own message to the human (an alert, a raw pane). Unlike

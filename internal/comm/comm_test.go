@@ -318,3 +318,106 @@ func TestNotifyReachesTheHumanButNoAgent(t *testing.T) {
 		assert.ErrorIs(t, err, msgstore.ErrNotFound, "agent %s must not be able to fetch it", agent)
 	}
 }
+
+type recChannel struct {
+	name string
+	mu   sync.Mutex
+	got  []core.Message
+	fail error
+}
+
+func (c *recChannel) Name() string { return c.name }
+func (c *recChannel) Send(_ context.Context, m core.Message) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.got = append(c.got, m)
+	return c.fail
+}
+func (c *recChannel) texts() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var out []string
+	for _, m := range c.got {
+		out = append(out, m.Text)
+	}
+	return out
+}
+
+func twoChannelLayer(t *testing.T) (*Layer, *recChannel, *recChannel) {
+	t.Helper()
+	store, err := msgstore.Open(filepath.Join(t.TempDir(), "m.db"), 100)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+	l := New(store, nil)
+	a, b := &recChannel{name: "a"}, &recChannel{name: "b"}
+	l.AddChannel(a)
+	l.AddChannel(b)
+	return l, a, b
+}
+
+func TestABoundAgentSpeaksOnlyOnItsChannel(t *testing.T) {
+	l, a, b := twoChannelLayer(t)
+	require.NoError(t, l.Bind("tmp", "b"))
+
+	_, err := l.Send(context.Background(), "tmp", core.Message{Sender: "tmp", Text: "mine"})
+	require.NoError(t, err)
+	_, err = l.Send(context.Background(), "other", core.Message{Sender: "other", Text: "everyone"})
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"mine", "everyone"}, b.texts())
+	assert.Equal(t, []string{"everyone"}, a.texts(), "the bound agent's stream is not on the other channel; an unbound agent's still is")
+}
+
+func TestUnbindReturnsTheAgentToEveryChannel(t *testing.T) {
+	l, a, b := twoChannelLayer(t)
+	require.NoError(t, l.Bind("tmp", "b"))
+	l.Unbind("tmp")
+
+	_, err := l.Send(context.Background(), "tmp", core.Message{Sender: "tmp", Text: "x"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"x"}, a.texts())
+	assert.Equal(t, []string{"x"}, b.texts())
+}
+
+func TestBindNeedsARegisteredChannel(t *testing.T) {
+	l, _, _ := twoChannelLayer(t)
+	require.Error(t, l.Bind("tmp", "nope"))
+	_, err := l.Send(context.Background(), "tmp", core.Message{Sender: "tmp", Text: "x"})
+	require.NoError(t, err, "a failed bind leaves no binding behind")
+	assert.True(t, l.HasChannel("a"))
+	assert.False(t, l.HasChannel("nope"))
+	assert.Equal(t, []string{"a", "b"}, l.Channels())
+}
+
+func TestBindingDoesNotNarrowPaoOwnMessages(t *testing.T) {
+	l, a, b := twoChannelLayer(t)
+	require.NoError(t, l.Bind("tmp", "b"))
+	_, err := l.Notify(context.Background(), core.Message{Sender: "pao", Text: "alert"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"alert"}, a.texts())
+	assert.Equal(t, []string{"alert"}, b.texts(), "an operator alert reaches every channel whoever is bound where")
+}
+
+func TestABoundChannelThatFailsIsAnErrorNotAFallback(t *testing.T) {
+	l, a, b := twoChannelLayer(t)
+	b.fail = errors.New("down")
+	require.NoError(t, l.Bind("tmp", "b"))
+
+	_, err := l.Send(context.Background(), "tmp", core.Message{Sender: "tmp", Text: "x"})
+	require.Error(t, err)
+	assert.Empty(t, a.texts(), "the stream does not spill onto another channel because its own is down")
+}
+
+func TestBindAndSendRace(t *testing.T) {
+	l, _, _ := twoChannelLayer(t)
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(2)
+		go func() { defer wg.Done(); _ = l.Bind("tmp", "a"); l.Unbind("tmp") }()
+		go func() {
+			defer wg.Done()
+			_, _ = l.Send(context.Background(), "tmp", core.Message{Sender: "tmp", Text: "x"})
+		}()
+	}
+	wg.Wait()
+}

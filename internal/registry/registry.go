@@ -198,6 +198,20 @@ func (v TempView) Flag(now time.Time, th Thresholds) Flag {
 	return FlagActive
 }
 
+// TempOf returns a snapshot of the named temporary agent. ok is false for an
+// agent that is unknown or declared in configuration.
+func (r *Registry) TempOf(name string) (TempView, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	e, ok := r.agents[name]
+	if !ok || e.temp == nil {
+		return TempView{}, false
+	}
+	p := e.profile
+	p.Tags = slices.Clone(p.Tags)
+	return TempView{Profile: p, State: e.state, Info: *e.temp, LastActivity: e.lastActive, Received: e.received}, true
+}
+
 // Temps returns a snapshot of every temporary agent, ordered by name.
 func (r *Registry) Temps() []TempView {
 	r.mu.RLock()
