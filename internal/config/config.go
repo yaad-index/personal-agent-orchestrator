@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -224,6 +225,9 @@ func ValidateProfile(p core.Profile) error { return validate(p) }
 func validate(p core.Profile) error {
 	if !namePattern.MatchString(p.Name) {
 		return fmt.Errorf("name %q must be lowercase letters, digits, '-' or '_'", p.Name)
+	}
+	if slices.Contains(core.ReservedNames, p.Name) {
+		return fmt.Errorf("name %q is reserved: pao speaks as it", p.Name)
 	}
 	if p.Backend == "" {
 		return errors.New("backend is required")

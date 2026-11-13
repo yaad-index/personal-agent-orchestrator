@@ -33,6 +33,11 @@ type Inbound struct {
 	ReplyQuote  string
 	Attachments []core.Attachment
 	Target      core.Target
+	// Allow, when set, narrows the agents Target resolves to: an agent it
+	// returns false for is left out, and if none is left the target matches
+	// no agent, in the same words as one that does not exist. It is how access
+	// bounds routing (ADR-0012 point 4); orchestrator-side only.
+	Allow func(core.Profile) bool
 }
 
 // Preprocessor does the source-specific work that must happen before routing,
@@ -45,7 +50,7 @@ type Preprocessor interface {
 // Router is the routing the layer hands normalized messages to.
 type Router interface {
 	Resolve(t core.Target) ([]core.Profile, error)
-	Route(ctx context.Context, t core.Target, m core.Message) ([]route.Result, error)
+	Deliver(ctx context.Context, profiles []core.Profile, m core.Message) []route.Result
 }
 
 // Channel is a human front: the human to pao line (ADR-0001, ADR-0009).
@@ -141,6 +146,18 @@ func (l *Layer) Receive(ctx context.Context, in Inbound) (Delivery, error) {
 	if err != nil {
 		return Delivery{}, err
 	}
+	if in.Allow != nil {
+		kept := make([]core.Profile, 0, len(targets))
+		for _, t := range targets {
+			if in.Allow(t) {
+				kept = append(kept, t)
+			}
+		}
+		if len(kept) == 0 {
+			return Delivery{}, route.NoMatch(in.Target)
+		}
+		targets = kept
+	}
 	scopes := make([]string, len(targets))
 	for i, t := range targets {
 		scopes[i] = t.Name
@@ -162,11 +179,7 @@ func (l *Layer) Receive(ctx context.Context, in Inbound) (Delivery, error) {
 		return Delivery{}, err
 	}
 
-	results, err := l.router.Route(ctx, in.Target, msg)
-	if err != nil {
-		return Delivery{}, err
-	}
-	return Delivery{Message: msg, Results: results}, nil
+	return Delivery{Message: msg, Results: l.router.Deliver(ctx, targets, msg)}, nil
 }
 
 // resolveReply turns a reply reference into a message id: an id must be in

@@ -79,6 +79,17 @@ type Operations interface {
 	Harvest(who access.Subject, id string) (HarvestInfo, error)
 	// HarvestFile returns one harvested file if who may read the harvest.
 	HarvestFile(who access.Subject, id, path string) ([]byte, error)
+	// Send delivers a message to the agent named, or to every agent carrying
+	// the tag, that who may address. The sender the recipients read is who, not
+	// anything the caller supplies.
+	Send(ctx context.Context, who access.Subject, byTag bool, target, text string) ([]Delivered, error)
+}
+
+// Delivered is the outcome for one addressed agent.
+type Delivered struct {
+	Agent    string `json:"agent" jsonschema:"the agent addressed"`
+	Launched bool   `json:"launched" jsonschema:"whether it had to be started to receive the message"`
+	Error    string `json:"error,omitempty" jsonschema:"why delivery to it failed, if it did"`
 }
 
 // maxFileBytes bounds what one read_harvest call returns.
@@ -106,7 +117,14 @@ func (s *Server) addTools() {
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 	}, s.listRecipes)
 
-	destructive, notDestructive := true, false
+	notDestructive := false
+	mcp.AddTool(s.srv, &mcp.Tool{
+		Name:        "send_message",
+		Description: "Send a message to an agent by name, or to every agent carrying a tag. The recipients read it as `[you]: text` with your own name; you cannot choose another. You can only address agents you are allowed to; one you may not address is reported as not found.",
+		Annotations: &mcp.ToolAnnotations{DestructiveHint: &notDestructive},
+	}, s.sendMessage)
+
+	destructive := true
 	mcp.AddTool(s.srv, &mcp.Tool{
 		Name:        "spawn_agent",
 		Description: "Start a temporary agent from a recipe, in a fresh isolated working directory, with its stream bound to a channel. Returns its name. Spawning is gated: you may be asked to wait for the operator.",
@@ -247,4 +265,32 @@ func (s *Server) listRecipes(_ context.Context, req *mcp.CallToolRequest, _ noIn
 	}
 	out.Recipes = append(out.Recipes, rs...)
 	return nil, out, nil
+}
+
+type sendInput struct {
+	Name string `json:"name,omitempty" jsonschema:"the agent to send to; give this or tag"`
+	Tag  string `json:"tag,omitempty" jsonschema:"send to every agent carrying this tag; give this or name"`
+	Text string `json:"text" jsonschema:"the message"`
+}
+
+type sendOutput struct {
+	Delivered []Delivered `json:"delivered"`
+}
+
+func (s *Server) sendMessage(ctx context.Context, req *mcp.CallToolRequest, in sendInput) (*mcp.CallToolResult, sendOutput, error) {
+	if (in.Name == "") == (in.Tag == "") {
+		return nil, sendOutput{}, errors.New("give exactly one of name and tag")
+	}
+	if in.Text == "" {
+		return nil, sendOutput{}, errors.New("a message needs text")
+	}
+	target, byTag := in.Name, false
+	if in.Tag != "" {
+		target, byTag = in.Tag, true
+	}
+	ds, err := s.ops.Send(ctx, subject(req), byTag, target, in.Text)
+	if ds == nil {
+		ds = []Delivered{}
+	}
+	return nil, sendOutput{Delivered: ds}, err
 }

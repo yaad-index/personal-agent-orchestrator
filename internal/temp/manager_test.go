@@ -709,3 +709,13 @@ func TestAnUnknownRecipeLooksLikeADeniedOneToAnyoneButTheOperator(t *testing.T) 
 	_, err = e.m.Spawn(context.Background(), SpawnRequest{Recipe: "nope", Name: "a", Requester: access.Operator})
 	assert.ErrorIs(t, err, ErrNoRecipe, "the operator is told which")
 }
+
+func TestSpawnRefusesTheNamesPaoSpeaksAs(t *testing.T) {
+	e := newEnv(t, map[string]string{"researcher": recipeYAML})
+	for _, name := range core.ReservedNames {
+		_, err := e.m.Spawn(context.Background(), SpawnRequest{Recipe: "researcher", Name: name, Requester: access.Operator})
+		require.ErrorIs(t, err, ErrBadRequest, name)
+	}
+	assert.Empty(t, dirs(t, e.prov.Root))
+	assert.Empty(t, e.reg.Temps())
+}

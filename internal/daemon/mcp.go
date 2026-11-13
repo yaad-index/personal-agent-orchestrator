@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/access"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/comm"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/harvest"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/mcpsrv"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/recipe"
@@ -24,6 +26,8 @@ type mcpOps struct {
 	recipes    func() (*recipe.Set, error)
 	mgr        *temp.Manager
 	store      *harvest.Store
+	layer      *comm.Layer
+	auth       access.Authorizer
 }
 
 func (o mcpOps) Agents() []mcpsrv.AgentInfo {
@@ -119,4 +123,43 @@ func (o mcpOps) Harvest(who access.Subject, id string) (mcpsrv.HarvestInfo, erro
 
 func (o mcpOps) HarvestFile(who access.Subject, id, path string) ([]byte, error) {
 	return o.store.Read(who, id, path)
+}
+
+// senderName is the name recipients read a message as coming from. It comes
+// from the resolved subject and from nothing the caller supplies, so a caller
+// cannot speak as another agent. pao's reserved names keep an agent from being
+// called by the operator's.
+func senderName(who access.Subject) string {
+	if who.Kind == access.KindAgent {
+		return who.Name
+	}
+	return "operator"
+}
+
+func (o mcpOps) Send(ctx context.Context, who access.Subject, byTag bool, target, text string) ([]mcpsrv.Delivered, error) {
+	kind := core.ByName
+	if byTag {
+		kind = core.ByTag
+	}
+	d, err := o.layer.Receive(ctx, comm.Inbound{
+		Source: "mcp", Sender: senderName(who), Text: text, Kind: core.MessageContent,
+		Target: core.Target{Kind: kind, Value: target},
+		// Routing is bounded by what the caller may address: an agent it may
+		// not is left out, and when none is left the target matches nothing.
+		Allow: func(p core.Profile) bool {
+			return access.Allowed(o.auth, who, access.Route, access.Resource{Agent: p.Name, Tags: p.Tags})
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	var out []mcpsrv.Delivered
+	for _, r := range d.Results {
+		item := mcpsrv.Delivered{Agent: r.Agent, Launched: r.Launched}
+		if r.Err != nil {
+			item.Error = r.Err.Error()
+		}
+		out = append(out, item)
+	}
+	return out, nil
 }

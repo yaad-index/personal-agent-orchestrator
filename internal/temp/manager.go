@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"slices"
 	"sync"
 	"time"
 
@@ -229,6 +230,9 @@ func (m *Manager) Spawn(ctx context.Context, req SpawnRequest) (core.Profile, er
 	}
 	if !namePattern.MatchString(name) {
 		return core.Profile{}, fmt.Errorf("%w: agent name %q must be lowercase letters, digits, '-' or '_'", ErrBadRequest, name)
+	}
+	if slices.Contains(core.ReservedNames, name) {
+		return core.Profile{}, fmt.Errorf("%w: agent name %q is reserved", ErrBadRequest, name)
 	}
 	if err := m.authorize(ctx, req.Requester, access.Spawn, access.Resource{Agent: name, Tags: rec.Profile.Tags},
 		map[string]string{"recipe": rec.Name, "agent": name}); err != nil {
