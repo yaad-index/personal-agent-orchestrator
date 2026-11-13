@@ -14,10 +14,12 @@ import (
 
 // CLI is the root command tree.
 type CLI struct {
-	Version VersionCmd `cmd:"" help:"Print the build version."`
-	Config  ConfigCmd  `cmd:"" help:"Inspect pao configuration."`
-	Run     RunCmd     `cmd:"" help:"Run the node daemon."`
-	Chat    ChatCmd    `cmd:"" help:"Talk to agents through the node's local channel."`
+	Version      VersionCmd      `cmd:"" help:"Print the build version."`
+	Config       ConfigCmd       `cmd:"" help:"Inspect pao configuration."`
+	Run          RunCmd          `cmd:"" help:"Run the node daemon."`
+	Chat         ChatCmd         `cmd:"" help:"Talk to agents through the node's local channel."`
+	Hook         HookCmd         `cmd:"" help:"The backend's pre-tool-call hook: ask the node's gate about an action."`
+	HookSettings HookSettingsCmd `cmd:"" name:"hook-settings" help:"Print the backend settings JSON that installs the hook."`
 }
 
 // ConfigCmd groups the configuration commands.
