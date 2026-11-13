@@ -292,8 +292,17 @@ node is promoted, both can act as master until the partition heals. The guard in
 step 2 makes this an operator decision with the facts in front of them, and the
 `alert.master_lost` message tells them what the secondaries saw. When the partition
 heals the lower epoch yields. Receiving from a human channel twice during the
-window is possible and is a duplicate, not a corruption. Removing this fully would
-need an election or an external lock, which ADR-0013 rejected on purpose.
+window is possible. For a message that is delivered twice, that is a duplicate. For
+a command with a side effect it is not: two masters that each read the same human
+input independently generate their own commands, so a spawn could happen twice, and
+the id-based idempotency of section 6 does not help, because it covers one master's
+retries and not two masters' separate commands. Whether a channel can be read by
+two masters at once at all depends on the channel (a poll against one account can,
+a single delivery address usually cannot), so the exposure is channel-specific. It is
+an open question for N0 whether a forced promotion should require the old master's
+inbound side to be confirmed stopped, or whether the channel adapters should
+deduplicate on the platform's own message id. Removing the window fully would need an
+election or an external lock, which ADR-0013 rejected on purpose.
 
 ## 10. Detecting that the master is lost, and announcing it
 
@@ -343,7 +352,8 @@ arrives at the master.
   scope exactly as on one node.
 - A quoted reply (text, no id) addressed to one agent is forwarded the same way and
   resolved by the agent's node. A quoted reply addressed to several agents is
-  refused, as ADR-0010 already requires.
+  refused, as the communication layer already does on one node; ADR-0010 itself
+  does not say so, and an ADR that settles the mesh case should.
 - Out of window, unknown and unauthorized are the same answer, not found. Nothing is
   guessed.
 - Pao ids are made globally unique by prefixing the node id, so an id shown to a
