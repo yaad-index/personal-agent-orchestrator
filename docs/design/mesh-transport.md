@@ -269,12 +269,13 @@ not assume it.
 ## 8. The agent directory, routing and streaming
 
 **Directory.** The master keeps a directory of every agent in the mesh: name, tags,
-node, state, flags. Each node announces its agents (`agents`) and changes
-(state events on the `Session` stream). The directory is rebuilt from announcements, never persisted, so
-it cannot go stale across a restart or a promotion.
+node, state, flags, stream bindings. Each node sends it, as `Report` messages on its
+`Master.Session` stream: its agents in full when the stream opens, then each change as
+it happens. The directory is rebuilt from those reports, never persisted, so it cannot
+go stale across a restart or a promotion.
 
 **Names (G3).** A name must be unique across the mesh. The master refuses an
-announcement that reuses a name and reports the conflict to the operator. The node
+report that reuses a name and tells the operator of the conflict. The node
 keeps the agent running locally; it is simply not addressable through the master.
 
 **Routing.** Routing by name or tag resolves against the directory, so a tag fans
@@ -292,8 +293,8 @@ transcript follower posts there directly, rendered at the requested level, using
 the credentials it holds. `SetStream` with no channel clears it. A secondary keeps
 streaming to the channels it was told to if the master is lost: the binding is
 local state. Because it is local, the master does not know it unless told, so every
-binding is reported in the node's `agents` announcement and in a state event on `Session` when it
-changes. That is how a master rebuilt by promotion (section 9) learns which streams
+binding is carried in the node's `Report` messages on `Session`, in the full report
+when the stream opens and in a delta when it changes. That is how a master rebuilt by promotion (section 9) learns which streams
 are live, and can clear or re-level one that it did not itself set.
 
 **View controls.** `Node.View` carries the viewer's pause, resume and backtrack to
@@ -328,9 +329,9 @@ takes the same path as a lower-epoch master in the rejoin rules below.
    receiving from the human channels, and calls `Peer.NewMaster` with the new epoch on every
    peer.
 4. Each peer closes its command connection to the old master, dials the new one, and
-   announces its agents. The new master's directory is complete as the
-   announcements arrive, and because each announcement carries the node's active
-   stream bindings (section 8), the new master also knows which streams are live and
+   reports its agents on a new `Session`. The new master's directory is complete as
+   the reports arrive, and because each report carries the node's active stream
+   bindings (section 8), the new master also knows which streams are live and
    can clear or re-level them. It reconciles them against what it holds nothing for:
    a binding it did not set is reported to the operator and left running until told
    otherwise, not silently dropped.
@@ -342,7 +343,7 @@ while the old master is down, and come back when it rejoins.
 **Rejoin.** A node that starts, or reconnects, with a lower (epoch, node id) than the mesh
 holds becomes a secondary on contact, without anyone's action. It releases the
 human channels' inbound side (stops receiving from them), dials the current master,
-announces its agents, and takes the current configuration. This is deterministic
+reports its agents, and takes the current configuration. This is deterministic
 from the epochs and needs no vote.
 
 **What is not prevented.** If the old master is alive but partitioned away when a
@@ -446,7 +447,7 @@ decided explicitly and limited to the local channel; the design does not assume 
 | A secondary loses the master | Its agents keep running; streams already bound keep posting directly; it redials with backoff; commands from the master's lower epoch are refused if a new master exists. |
 | The master is lost | Secondaries detect and announce (section 10). The human cannot reach any agent until a node is promoted. Gate questions time out and deny. |
 | Promotion while the old master is alive elsewhere | Refused unless forced (section 9); if forced, both act until the partition heals, then the lower epoch yields (at equal epochs, the higher node id). |
-| A node restarts | It takes its persisted epoch and last good configuration, dials the master, announces its agents, and takes the current configuration. |
+| A node restarts | It takes its persisted epoch and last good configuration, dials the master, reports its agents, and takes the current configuration. |
 | A secondary announces a name already taken | The master refuses and reports it; the agent keeps running locally and is not addressable through the mesh. |
 | A command's deadline passes | The sender gets `DEADLINE_EXCEEDED`; a retry with the same request id gets the first result back and does not run the command twice. |
 | A configuration push fails validation on a node | The node keeps its last good version and answers with the error; the master reports which node is behind. |
@@ -489,7 +490,7 @@ Each step is a separate, reviewable change. N1 adds the one new dependency (sect
   mutual TLS on loopback, including a refused unknown key, a refused wrong node id, a
   secondary refused on `Node`, and a stale epoch refused. `pao mesh status` shows the
   peers and their state.
-- **N3. The agent directory.** `agents` announcements, the master's directory,
+- **N3. The agent directory.** `Report` messages on `Master.Session`, the master's directory,
   mesh-unique names, and routing that resolves a name or tag to a remote agent. A
   remote Deliverer behind the router's existing interface.
 - **N4. The command plane.** `Node.Launch`, `Kill`, `Restart`, `Spawn`, `KillTemp` and
