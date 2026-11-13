@@ -12,17 +12,17 @@ pao drives coding agents that run real, side-effecting tools: writing files, she
 
 2. **The decision is policy-driven: the action (tool plus arguments) maps to a risk level** such as read, private, shared, public, or destructive. A low-risk action (a read) auto-allows; a higher-risk one (shared, public, destructive) asks the operator. Deterministic rules run first.
 
-3. **Fail-closed.** An action that matches no rule, or whose risk cannot be determined, defaults to ask, never to a silent allow.
+3. **Fail-closed.** An action that matches no rule, or whose risk cannot be determined, is never silently allowed; it is held and resolved through the escalation chain in points 5 and 6.
 
 4. **The gate mechanism is per-backend and declared in the agent profile.** Each harness states how its pre-tool-call hook works and how pao answers it (part of the agent profile, ADR-0001). This is why the gate extends to a second backend without changing the core.
 
-5. **Fuzzy cases route to a judge agent.** When the policy rules give no clear verdict, pao routes the decision to a judge agent for one (ADR-0003: a judge is an ordinary routing target), instead of always falling back to the operator.
+5. **An uncovered or fuzzy action goes to a judge agent first.** When the policy has no matching rule, or the matching rule gives no clear verdict, pao routes the decision to a judge agent (ADR-0003: a judge is an ordinary routing target) rather than defaulting straight to the operator.
 
-6. **The policy grows over time.** When an agent requests an action the policy does not yet cover, the gate asks (point 3), and on the operator's approval pao can record that action into the policy so it is recognized next time. The policy is accruing data, not a fixed table baked into the code.
+6. **The operator is the final fallback, and the policy grows from their answers.** When the judge is also inconclusive, pao asks the operator. On the operator's approval, pao can record that action into the policy so the same request is covered next time without judge or operator. The policy is accruing data, not a fixed table baked into the code.
 
 ## What this ADR deliberately does NOT decide
 
-The concrete risk taxonomy and policy schema; how an attended session and an unattended one differ in strictness; the judge agent's prompt and how its verdict is phrased; gate timeouts and what a timeout means; and how a denied action is surfaced back to the agent so it stays actionable. Each is deferred to its own later ADR or to implementation.
+The concrete risk taxonomy and policy schema; how an attended session and an unattended one differ in strictness; the judge agent's prompt and how its verdict is phrased; gate timeouts and what a timeout means; how a denied action is surfaced back to the agent so it stays actionable; and the policy as a mechanism, meaning where and how it is stored, how pao reads it, and how it grows (how an addition is proposed, decided and recorded, point 6). Each is deferred to its own later ADR or to implementation.
 
 ## Consequences
 
