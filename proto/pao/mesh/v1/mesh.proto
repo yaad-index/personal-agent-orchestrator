@@ -1,0 +1,283 @@
+// The wire between pao nodes (ADR-0017). Three services, split by who serves them:
+// Node is served by every node and called by the master; Master is served by the
+// node that is master and called by a secondary; Peer is served by every node and
+// called by any other. Who is calling is never read from a message: it is the node
+// whose verified key the connection was made with.
+syntax = "proto3";
+
+package pao.mesh.v1;
+
+option go_package = "github.com/yaad-index/personal-agent-orchestrator/internal/mesh/meshpb;meshpb";
+
+// Every call between nodes carries a deadline, chosen by the caller, and every call
+// that changes state carries a request_id: a repeat with the same id returns the
+// first result and does not run twice. The master epoch the caller believes in is
+// sent in call metadata ("pao-epoch"), not in the messages.
+
+// ---------------------------------------------------------------------------
+// Node: the master commands a node.
+// ---------------------------------------------------------------------------
+
+service Node {
+  // ADR-0007 lifecycle of a named agent on this node.
+  rpc Launch(AgentRef) returns (Result);
+  rpc Kill(AgentRef) returns (Result);
+  rpc Restart(AgentRef) returns (Result);
+  // ADR-0006 temporary agents on this node.
+  rpc Spawn(SpawnRequest) returns (SpawnResult);
+  rpc KillTemp(AgentRef) returns (KillResult);
+  // Hand an inbound message to an agent on this node (ADR-0017 point 4).
+  rpc Deliver(DeliverRequest) returns (DeliverResult);
+  // Bind an agent's stream to a channel at a level, or clear the binding.
+  rpc SetStream(StreamRequest) returns (Result);
+  // A viewer's pause, resume or backtrack: the rendered view only (ADR-0008).
+  rpc View(ViewRequest) returns (Result);
+  // The operator's answer to a gate question this node raised (ADR-0017 point 5).
+  rpc Decide(DecideRequest) returns (Result);
+  // Did this node post a message on a channel, and as whom (ADR-0017 point 10).
+  rpc QueryPosted(PostedQuery) returns (PostedReply);
+  // A new version of the mesh document (ADR-0017 point 9).
+  rpc PushConfig(ConfigBundle) returns (ConfigAck);
+}
+
+message Result {}
+
+message AgentRef {
+  string request_id = 1;
+  string agent = 2;
+}
+
+message SpawnRequest {
+  string request_id = 1;
+  string recipe = 2;
+  // Empty: generated from the recipe.
+  string name = 3;
+  // The channel the agent's stream is bound to.
+  string channel = 4;
+}
+
+message SpawnResult {
+  string name = 1;
+}
+
+message KillResult {
+  string harvest_id = 1;
+  bool complete = 2;
+  bool workdir_kept = 3;
+  int64 files = 4;
+  int64 bytes = 5;
+  string summary = 6;
+}
+
+message DeliverRequest {
+  string request_id = 1;
+  string agent = 2;
+  // What the agent will read is "[sender]: text".
+  string sender = 3;
+  string text = 4;
+  // A reply, already resolved by the master to this node's own id for the message
+  // (reply_ref), or a quoted snippet for this node to resolve (reply_quote).
+  string reply_ref = 5;
+  string reply_quote = 6;
+}
+
+message DeliverResult {
+  // True if the agent had to be started to receive the message.
+  bool launched = 1;
+}
+
+message StreamRequest {
+  string request_id = 1;
+  string agent = 2;
+  // Empty clears the binding.
+  string channel = 3;
+  int32 level = 4;
+  string viewer = 5;
+}
+
+enum ViewAction {
+  VIEW_ACTION_UNSPECIFIED = 0;
+  VIEW_ACTION_PAUSE = 1;
+  VIEW_ACTION_RESUME = 2;
+  VIEW_ACTION_BACKTRACK = 3;
+}
+
+message ViewRequest {
+  string request_id = 1;
+  string viewer = 2;
+  string agent = 3;
+  ViewAction action = 4;
+  // For a backtrack: the level to re-render the past window at.
+  int32 level = 5;
+}
+
+enum Decision {
+  DECISION_UNSPECIFIED = 0;
+  DECISION_ALLOW = 1;
+  DECISION_ALWAYS = 2;
+  DECISION_DENY = 3;
+}
+
+message DecideRequest {
+  string request_id = 1;
+  // Node-qualified, as the operator saw it: "<node>.q<n>".
+  string question_id = 2;
+  Decision decision = 3;
+  string reason = 4;
+}
+
+message PostedQuery {
+  string channel = 1;
+  // The channel's own id for the message.
+  string platform_message_id = 2;
+}
+
+message PostedReply {
+  bool found = 1;
+  string agent = 2;
+  // This node's id for the message, qualified by the node.
+  string message_id = 3;
+}
+
+message ConfigBundle {
+  uint64 version = 1;
+  // The mesh document, as written.
+  bytes document = 2;
+  // SHA-256 of document, hex.
+  string sha256 = 3;
+}
+
+message ConfigAck {
+  // The version the node runs after the call.
+  uint64 version = 1;
+  // Why the node kept its previous version, if it did.
+  string error = 2;
+}
+
+// ---------------------------------------------------------------------------
+// Master: a secondary reports to the master.
+// ---------------------------------------------------------------------------
+
+service Master {
+  // Opened by a secondary and kept open. Up: Reports, the node's agents in full
+  // when the stream opens and then each change. Down: acknowledgements.
+  rpc Session(stream Report) returns (stream Ack);
+}
+
+enum AgentState {
+  AGENT_STATE_UNSPECIFIED = 0;
+  AGENT_STATE_STOPPED = 1;
+  AGENT_STATE_RUNNING = 2;
+}
+
+message StreamBinding {
+  string channel = 1;
+  int32 level = 2;
+  string viewer = 3;
+}
+
+message AgentInfo {
+  string name = 1;
+  repeated string tags = 2;
+  AgentState state = 3;
+  bool temporary = 4;
+  string recipe = 5;
+  string channel = 6;
+  // For a temporary agent: active, idle or unused.
+  string flag = 7;
+  // The streams this agent is bound to, so a master chosen by promotion sees them.
+  repeated StreamBinding bindings = 8;
+}
+
+message AgentsReport {
+  // True when agents is the node's whole list and replaces what the master held.
+  bool full = 1;
+  repeated AgentInfo agents = 2;
+}
+
+message StateEvent {
+  oneof change {
+    AgentInfo changed = 1;
+    string removed = 2;
+  }
+}
+
+message Report {
+  // Increases by one per report on a stream; acknowledged in Ack.
+  uint64 seq = 1;
+  oneof body {
+    AgentsReport agents = 2;
+    StateEvent event = 3;
+  }
+}
+
+message Ack {
+  uint64 seq = 1;
+}
+
+// ---------------------------------------------------------------------------
+// Peer: any node calls any other (liveness and failover).
+// ---------------------------------------------------------------------------
+
+service Peer {
+  rpc Hello(HelloRequest) returns (HelloReply);
+  rpc Liveness(stream Beat) returns (stream Beat);
+  // One secondary announcing that the master is lost (ADR-0017 point 13).
+  rpc MasterLost(MasterLostNotice) returns (Result);
+  // Promotion step 1: what does this peer believe about the master?
+  rpc Probe(ProbeRequest) returns (ProbeReply);
+  // Promotion step 3: a node is now master at this epoch.
+  rpc NewMaster(NewMasterNotice) returns (Result);
+}
+
+enum Role {
+  ROLE_UNSPECIFIED = 0;
+  ROLE_MASTER = 1;
+  ROLE_SECONDARY = 2;
+}
+
+message HelloRequest {
+  Role role = 1;
+  uint64 epoch = 2;
+  // The master this node believes in at that epoch.
+  string master_id = 3;
+  // The protocol minor versions this node speaks within pao.mesh.v1.
+  repeated uint32 minors = 4;
+  uint64 config_version = 5;
+}
+
+message HelloReply {
+  Role role = 1;
+  uint64 epoch = 2;
+  string master_id = 3;
+  repeated uint32 minors = 4;
+  uint64 config_version = 5;
+}
+
+message Beat {
+  uint64 seq = 1;
+  Role role = 2;
+  uint64 epoch = 3;
+  string master_id = 4;
+}
+
+message MasterLostNotice {
+  uint64 epoch = 1;
+  string master_id = 2;
+  // The node announcing; informational, the caller is the verified key.
+  string announcer = 3;
+}
+
+message ProbeRequest {}
+
+message ProbeReply {
+  uint64 epoch = 1;
+  string master_id = 2;
+  // True if this peer has a live connection to a master at its epoch.
+  bool has_live_master = 3;
+}
+
+message NewMasterNotice {
+  uint64 epoch = 1;
+  string master_id = 2;
+}

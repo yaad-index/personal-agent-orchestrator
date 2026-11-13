@@ -40,6 +40,14 @@ Behaviour lives in `internal/<concern>`; `cmd/pao` only parses and wires.
 - Code PRs merge on two reviews and green CI. An ADR change also needs the
   operator's approval.
 
+## The mesh wire
+
+The wire between nodes is defined in `proto/pao/mesh/v1/mesh.proto`; the Go code
+generated from it is committed under `internal/mesh/meshpb` and must not be edited
+by hand. After changing the `.proto`, run `go generate ./internal/mesh/meshpb`. That
+needs `protoc` and two plugins at the versions `scripts/genproto.sh` pins (the script
+refuses any other); CI regenerates the code and fails if the committed files differ.
+
 ## Checks before a PR
 
 ```
