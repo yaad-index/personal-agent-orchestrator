@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -27,8 +28,8 @@ func setup(t *testing.T, profiles map[string]string) string {
 
 func TestLoad(t *testing.T) {
 	path := setup(t, map[string]string{
-		"b.yaml": "name: b\nbackend: claude-code\ntags: [x]\nworkdir: /tmp\n",
-		"a.yaml": "name: a\nbackend: claude-code\n",
+		"b.yaml": "name: b\nbackend: claude-code\ntags: [x]\nworkdir: /tmp\n" + startup,
+		"a.yaml": "name: a\nbackend: claude-code\n" + startup,
 	})
 
 	cfg, err := Load(path)
@@ -38,21 +39,45 @@ func TestLoad(t *testing.T) {
 	assert.Equal(t, "a", cfg.Profiles[0].Name, "profiles load in file-name order")
 	assert.Equal(t, []string{"x"}, cfg.Profiles[1].Tags)
 	assert.Equal(t, "/tmp", cfg.Profiles[1].Workdir)
+	assert.Equal(t, 30*time.Second, cfg.Profiles[1].Startup.ReadyTimeout)
 }
 
+const startup = "startup:\n  command: run\n  ready_pattern: ready\n  ready_timeout: 30s\n"
+
+// TestLoadRejects gives each case exactly one defect and checks the error names
+// it, so a case cannot pass by failing for some other reason.
 func TestLoadRejects(t *testing.T) {
-	cases := map[string]map[string]string{
-		"unknown key":     {"a.yaml": "name: a\nbackend: b\nnope: 1\n"},
-		"missing name":    {"a.yaml": "backend: b\n"},
-		"bad name":        {"a.yaml": "name: Bad Name\nbackend: b\n"},
-		"missing backend": {"a.yaml": "name: a\n"},
-		"bad tag":         {"a.yaml": "name: a\nbackend: b\ntags: [\"X Y\"]\n"},
-		"duplicate name":  {"a.yaml": "name: a\nbackend: b\n", "b.yaml": "name: a\nbackend: b\n"},
+	cases := map[string]struct {
+		profiles map[string]string
+		want     string
+	}{
+		"unknown key":     {map[string]string{"a.yaml": "name: a\nbackend: b\nnope: 1\n" + startup}, "nope"},
+		"missing name":    {map[string]string{"a.yaml": "backend: b\n" + startup}, "name"},
+		"bad name":        {map[string]string{"a.yaml": "name: Bad Name\nbackend: b\n" + startup}, "name"},
+		"missing backend": {map[string]string{"a.yaml": "name: a\n" + startup}, "backend is required"},
+		"bad tag":         {map[string]string{"a.yaml": "name: a\nbackend: b\ntags: [\"X Y\"]\n" + startup}, "tag"},
+		"duplicate name": {map[string]string{
+			"a.yaml": "name: a\nbackend: b\n" + startup,
+			"b.yaml": "name: a\nbackend: b\n" + startup,
+		}, "already defined"},
+		"no startup command": {map[string]string{
+			"a.yaml": "name: a\nbackend: b\nstartup:\n  ready_pattern: r\n  ready_timeout: 1s\n",
+		}, "startup.command"},
+		"no ready pattern": {map[string]string{
+			"a.yaml": "name: a\nbackend: b\nstartup:\n  command: c\n  ready_timeout: 1s\n",
+		}, "startup.ready_pattern is required"},
+		"invalid ready pattern": {map[string]string{
+			"a.yaml": "name: a\nbackend: b\nstartup:\n  command: c\n  ready_pattern: \"(\"\n  ready_timeout: 1s\n",
+		}, "startup.ready_pattern"},
+		"no ready timeout": {map[string]string{
+			"a.yaml": "name: a\nbackend: b\nstartup:\n  command: c\n  ready_pattern: r\n",
+		}, "startup.ready_timeout"},
 	}
-	for name, profiles := range cases {
+	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			_, err := Load(setup(t, profiles))
-			assert.Error(t, err)
+			_, err := Load(setup(t, tc.profiles))
+			require.Error(t, err)
+			assert.ErrorContains(t, err, tc.want)
 		})
 	}
 }

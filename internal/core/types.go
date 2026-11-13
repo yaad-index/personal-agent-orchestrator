@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"time"
 )
 
 // Profile is the agent-intrinsic configuration of one agent (ADR-0001 point 4).
@@ -17,6 +18,20 @@ type Profile struct {
 	Backend string `yaml:"backend"`
 	// Workdir is the directory the agent runs in.
 	Workdir string `yaml:"workdir"`
+	// Startup is the backend's startup procedure (ADR-0007 point 2).
+	Startup Startup `yaml:"startup"`
+}
+
+// Startup declares how a backend is brought to a ready prompt.
+type Startup struct {
+	// Command is the shell command that starts the backend in the terminal.
+	Command string `yaml:"command"`
+	// ReadyPattern is a regular expression that matches the pane once the
+	// backend is ready for input.
+	ReadyPattern string `yaml:"ready_pattern"`
+	// ReadyTimeout bounds how long startup may take before the operator is
+	// shown the pane instead.
+	ReadyTimeout time.Duration `yaml:"ready_timeout"`
 }
 
 // HasTag reports whether the profile carries tag.
@@ -69,6 +84,10 @@ type Message struct {
 	Sender string
 	Text   string
 }
+
+// Line renders the message as the one line the agent reads: `[sender]: text`
+// (ADR-0001 point 4).
+func (m Message) Line() string { return "[" + m.Sender + "]: " + m.Text }
 
 // Launcher brings an agent up from its profile and returns once the agent is
 // ready to receive input, or with the reason it is not (ADR-0007 point 2).
