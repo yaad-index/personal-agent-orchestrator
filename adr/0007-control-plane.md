@@ -1,6 +1,6 @@
 # ADR 0007: Control plane
 
-**Status:** Proposed (2026-11-13)
+**Status:** Accepted (2026-11-13)
 
 ## Context
 
