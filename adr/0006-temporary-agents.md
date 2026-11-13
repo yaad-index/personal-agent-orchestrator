@@ -1,6 +1,6 @@
 # ADR 0006: Temporary agents
 
-**Status:** Proposed (2026-11-13)
+**Status:** Accepted (2026-11-13)
 
 ## Context
 
