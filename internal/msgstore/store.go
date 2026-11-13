@@ -180,39 +180,70 @@ func (s *Store) Resolve(agent, quote string) (core.Message, error) {
 	}
 }
 
-// React records that by reacted to message id with emoji. Reacting twice with
-// the same emoji is the same reaction.
+// React records that by reacted to message id with emoji, whoever owns the
+// message. It is for the human and for pao, which see every message; an agent
+// reacts through ReactAs, which keeps it inside its own scope. Reacting twice
+// with the same emoji is the same reaction.
 func (s *Store) React(id, by, emoji string) error {
-	return s.updateReactions(id, func(rs []core.Reaction) []core.Reaction {
-		r := core.Reaction{By: by, Emoji: emoji}
-		for _, have := range rs {
-			if have == r {
-				return rs
-			}
-		}
-		return append(rs, r)
+	return s.updateReactions("", id, func(rs []core.Reaction) []core.Reaction {
+		return addReaction(rs, core.Reaction{By: by, Emoji: emoji})
 	})
 }
 
-// Unreact removes by's reaction with emoji from message id, if present.
+// ReactAs is React for an agent: the message must be in the agent's scope, and
+// out of scope looks exactly like not found, so an agent cannot tell a message
+// it was never shown from one that does not exist.
+func (s *Store) ReactAs(agent, id, emoji string) error {
+	return s.updateReactions(agent, id, func(rs []core.Reaction) []core.Reaction {
+		return addReaction(rs, core.Reaction{By: agent, Emoji: emoji})
+	})
+}
+
+// UnreactAs removes the agent's own reaction, under the same scope rule.
+func (s *Store) UnreactAs(agent, id, emoji string) error {
+	return s.updateReactions(agent, id, func(rs []core.Reaction) []core.Reaction {
+		return dropReaction(rs, core.Reaction{By: agent, Emoji: emoji})
+	})
+}
+
+// Unreact removes by's reaction with emoji from message id, if present. Like
+// React it is for the human and pao.
 func (s *Store) Unreact(id, by, emoji string) error {
-	return s.updateReactions(id, func(rs []core.Reaction) []core.Reaction {
-		out := rs[:0:0]
-		for _, have := range rs {
-			if have != (core.Reaction{By: by, Emoji: emoji}) {
-				out = append(out, have)
-			}
-		}
-		return out
+	return s.updateReactions("", id, func(rs []core.Reaction) []core.Reaction {
+		return dropReaction(rs, core.Reaction{By: by, Emoji: emoji})
 	})
 }
 
-func (s *Store) updateReactions(id string, f func([]core.Reaction) []core.Reaction) error {
+func addReaction(rs []core.Reaction, r core.Reaction) []core.Reaction {
+	for _, have := range rs {
+		if have == r {
+			return rs
+		}
+	}
+	return append(rs, r)
+}
+
+func dropReaction(rs []core.Reaction, r core.Reaction) []core.Reaction {
+	out := rs[:0:0]
+	for _, have := range rs {
+		if have != r {
+			out = append(out, have)
+		}
+	}
+	return out
+}
+
+// updateReactions applies f to the message's reactions. A non-empty agent
+// restricts it to messages in that agent's scope.
+func (s *Store) updateReactions(agent, id string, f func([]core.Reaction) []core.Reaction) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket(bucket)
 		var rec record
 		if err := load(b, id, &rec); err != nil {
 			return err
+		}
+		if agent != "" && !inScope(rec.Scopes, agent) {
+			return ErrNotFound
 		}
 		rec.Message.Reactions = f(rec.Message.Reactions)
 		val, err := json.Marshal(rec)

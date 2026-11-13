@@ -268,3 +268,35 @@ func TestAgentToolsAreScoped(t *testing.T) {
 	got, _ = l.Fetch("a", mine.ID)
 	assert.Equal(t, []core.Reaction{{By: "h", Emoji: "👍"}}, got.Reactions)
 }
+
+func TestReplyByIDToAFanOutNeedsTheMessageInEveryAddressedAgentsScope(t *testing.T) {
+	l, _, _ := setup(t)
+	team := core.Target{Kind: core.ByTag, Value: "team"} // addresses a and b
+
+	shared, err := l.Receive(context.Background(), Inbound{Sender: "h", Text: "all hands", Target: team})
+	require.NoError(t, err)
+	d, err := l.Receive(context.Background(), Inbound{Sender: "h", Text: "re all", Reply: shared.Message.ID, Target: team})
+	require.NoError(t, err, "a message both agents were shown can be replied to")
+	assert.Equal(t, shared.Message.ID, d.Message.Reply)
+
+	onlyA, err := l.Send(context.Background(), "a", core.Message{Sender: "a", Text: "a's private output"})
+	require.NoError(t, err)
+	_, err = l.Receive(context.Background(), Inbound{Sender: "h", Text: "re", Reply: onlyA.ID, Target: team})
+	assert.ErrorIs(t, err, msgstore.ErrNotFound, "b was never shown it, so the fan-out cannot reference it")
+
+	_, err = l.Receive(context.Background(), Inbound{Sender: "h", Text: "re", Reply: "m9999", Target: team})
+	assert.ErrorIs(t, err, msgstore.ErrNotFound, "absent looks the same as out of scope")
+}
+
+func TestAgentReactionIsScoped(t *testing.T) {
+	l, _, _ := setup(t)
+	mine, err := l.Send(context.Background(), "a", core.Message{Text: "mine"})
+	require.NoError(t, err)
+	theirs, err := l.Send(context.Background(), "b", core.Message{Text: "theirs"})
+	require.NoError(t, err)
+
+	require.NoError(t, l.ReactAs("a", mine.ID, "👍"))
+	assert.ErrorIs(t, l.ReactAs("a", theirs.ID, "👍"), msgstore.ErrNotFound)
+
+	require.NoError(t, l.React(theirs.ID, "human", "👍"), "the human may react to any message")
+}

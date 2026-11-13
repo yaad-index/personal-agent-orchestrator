@@ -126,17 +126,20 @@ func (l *Layer) Receive(ctx context.Context, in Inbound) (Delivery, error) {
 	return Delivery{Message: msg, Results: results}, nil
 }
 
-// resolveReply turns a reply reference into a message id: an id is checked to
-// be in the window and in scope; a quote is resolved within the one addressed
-// agent's scope. A quote with several addressed agents is refused, not guessed.
+// resolveReply turns a reply reference into a message id: an id must be in
+// scope for every addressed agent; a quote is resolved within the one addressed
+// agent's scope, and a quote with several addressed agents is refused, not
+// guessed.
 func (l *Layer) resolveReply(in Inbound, scopes []string) (string, error) {
 	switch {
 	case in.Reply != "":
-		if len(scopes) != 1 {
-			return in.Reply, requireInWindow(l.store, in.Reply)
-		}
-		if _, err := l.store.GetScoped(scopes[0], in.Reply); err != nil {
-			return "", fmt.Errorf("reply %q: %w", in.Reply, err)
+		// The referenced message must be in the scope of every addressed agent.
+		// Out of scope and absent are the same answer (not found), so a
+		// reference cannot be used to probe for messages an agent never saw.
+		for _, agent := range scopes {
+			if _, err := l.store.GetScoped(agent, in.Reply); err != nil {
+				return "", fmt.Errorf("reply %q: %w", in.Reply, err)
+			}
 		}
 		return in.Reply, nil
 	case in.ReplyQuote != "":
@@ -150,13 +153,6 @@ func (l *Layer) resolveReply(in Inbound, scopes []string) (string, error) {
 		return m.ID, nil
 	}
 	return "", nil
-}
-
-func requireInWindow(s *msgstore.Store, id string) error {
-	if _, err := s.Get(id); err != nil {
-		return fmt.Errorf("reply %q: %w", id, err)
-	}
-	return nil
 }
 
 // Send is the single conduit to the human: it stores m in from's scope (so the
@@ -187,5 +183,11 @@ func (l *Layer) Fetch(agent, id string) (core.Message, error) {
 	return l.store.GetScoped(agent, id)
 }
 
-// React records a reaction on a message id.
+// React records the human's reaction on a message id. The human sees every
+// message, so it is not limited to an agent's scope; an agent reacts through
+// ReactAs.
 func (l *Layer) React(id, by, emoji string) error { return l.store.React(id, by, emoji) }
+
+// ReactAs records an agent's reaction, only on a message in the agent's scope.
+// A message outside it is reported as not found.
+func (l *Layer) ReactAs(agent, id, emoji string) error { return l.store.ReactAs(agent, id, emoji) }

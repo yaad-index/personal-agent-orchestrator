@@ -230,3 +230,44 @@ func TestGetScoped(t *testing.T) {
 	_, err = s.GetScoped("a", "m999")
 	assert.ErrorIs(t, err, ErrNotFound)
 }
+
+func TestReactAsIsScopedToTheAgent(t *testing.T) {
+	s := open(t, 10)
+	mine := add(t, s, "for a", "a")
+	theirs := add(t, s, "for b", "b")
+
+	require.NoError(t, s.ReactAs("a", mine.ID, "👍"))
+	got, err := s.Get(mine.ID)
+	require.NoError(t, err)
+	assert.Equal(t, []core.Reaction{{By: "a", Emoji: "👍"}}, got.Reactions, "the reaction is the agent's own")
+
+	err = s.ReactAs("a", theirs.ID, "👍")
+	assert.ErrorIs(t, err, ErrNotFound, "another agent's message looks like it does not exist")
+	err = s.ReactAs("a", "m999", "👍")
+	assert.ErrorIs(t, err, ErrNotFound, "and that is the same answer as a message that does not exist")
+	other, _ := s.Get(theirs.ID)
+	assert.Empty(t, other.Reactions, "nothing was written")
+}
+
+func TestUnreactAsIsScopedAndOnlyRemovesTheAgentsOwn(t *testing.T) {
+	s := open(t, 10)
+	m := add(t, s, "shared", "a", "b")
+	require.NoError(t, s.ReactAs("a", m.ID, "👍"))
+	require.NoError(t, s.ReactAs("b", m.ID, "👍"))
+
+	require.NoError(t, s.UnreactAs("a", m.ID, "👍"))
+	got, _ := s.Get(m.ID)
+	assert.Equal(t, []core.Reaction{{By: "b", Emoji: "👍"}}, got.Reactions, "b's reaction is untouched")
+
+	out := add(t, s, "other", "b")
+	assert.ErrorIs(t, s.UnreactAs("a", out.ID, "👍"), ErrNotFound)
+}
+
+func TestHumanReactionIsNotLimitedToAnAgentsScope(t *testing.T) {
+	s := open(t, 10)
+	m := add(t, s, "agent a said this", "a")
+
+	require.NoError(t, s.React(m.ID, "human", "👍"), "the human sees every message")
+	got, _ := s.Get(m.ID)
+	assert.Equal(t, []core.Reaction{{By: "human", Emoji: "👍"}}, got.Reactions)
+}
