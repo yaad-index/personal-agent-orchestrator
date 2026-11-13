@@ -5,6 +5,13 @@ it decides nothing by itself. It recommends one answer to each question the ADR
 defers, says where the ADR as written does not cover something the design needs,
 and proposes the order to build in.
 
+Decided by the operator since the first draft: nodes talk **directly** (section 3),
+and the wire is **gRPC with typed messages and streaming** over the mutually
+authenticated TLS this proposal describes (section 6). The first draft recommended
+a framed JSON stream with no new dependency; the typed contracts and native streaming
+of gRPC were judged worth its dependency and code generation, and sections 5, 6, 15
+and 16 are revised to match.
+
 ## 1. What is fixed
 
 ADR-0013 fixes six things. This proposal holds to all of them.
@@ -82,10 +89,10 @@ pinned in the mesh configuration. Reasons, in order of weight:
    with it. If it is a separate service, the mesh gains a single point of failure
    and a service to run and keep available, which a personal mesh should not have
    to carry.
-2. **No external dependency.** TLS, key handling and a framed message stream are
-   in the Go standard library. A broker product would be a new dependency in the
-   binary or a new process to deploy, and pao's "own transport" (point 5) rules out
-   reusing one.
+2. **No broker to run or depend on.** Connection security and key handling are in
+   the Go standard library, and the message layer is gRPC (section 6). A broker
+   product would have been a second dependency or a new process to deploy on top of
+   that, and pao's "own transport" (point 5) rules out reusing one.
 3. **The topology is already a hub.** Commands flow from the master to each
    secondary and results flow back. That is a star, not a many-to-many bus. Direct
    connections to one node are simpler than a bus.
@@ -95,15 +102,12 @@ pinned in the mesh configuration. Reasons, in order of weight:
 
 What it costs, honestly: every node must be reachable by address by the nodes
 that dial it, so a deployment has to supply that (a local network, or an overlay
-network). pao does not provide NAT traversal. Secondaries dial out to the master,
-so only the master needs to be dialable from outside its own network for the
-command plane; the liveness plane in section 5 wants peers reachable too.
+network). pao does not provide NAT traversal. Every node dials and is dialed: the
+master calls each secondary to command it, each secondary calls the master to report,
+and the liveness plane connects every pair (section 5).
 
-If the owner prefers a broker anyway, the rest of this proposal survives: the
-envelope, the message types, the directory, the promotion and rejoin rules and the
-build order do not depend on the wire. Only sections 4 and 5 and build steps N1
-and N2 change, and requirement 6 would have to be met by a broker that is not on
-the master.
+Direct was the operator's choice. The rest of the design does not depend on it: the
+directory, the promotion and rejoin rules and the build order would hold over a broker.
 
 ## 4. Identity and encryption
 
@@ -113,7 +117,8 @@ the master.
 - The mesh configuration lists every node: an id, a dialable address and the
   fingerprint (SHA-256 of the public key) of its key. That list is the trust
   anchor. There is no certificate authority and no trust on first use.
-- A connection is TLS 1.3 with client certificates required. Each side presents a
+- A connection is TLS 1.3 with client certificates required, carried as gRPC
+  transport credentials. Each side presents a
   self-signed certificate carrying its public key, and checks the other's
   fingerprint against the list, and checks that the node id in the certificate
   matches the list entry it dialed or accepted. A key not in the list is refused
@@ -127,64 +132,102 @@ the master.
 
 ## 5. Topology: two planes
 
-- **Command plane, a star.** Each secondary keeps one long-lived connection to the
-  master, dialed by the secondary, so a secondary needs no inbound reachability for
-  commands. The master sends commands down it and the secondary sends results and
-  events up it.
-- **Liveness plane, a full mesh.** Every pair of nodes keeps a lightweight
-  connection used only for heartbeats and the failover messages of section 8. It
-  exists because secondaries have to tell whether the master is lost without
-  asking the master, and have to coordinate who announces it. For the handful of
-  nodes of a personal mesh a full mesh is cheap. The node with the lower id dials
-  the higher, to avoid two connections per pair.
+- **Command plane, a star.** The master calls each secondary to command it, as
+  ordinary remote procedure calls. Each secondary keeps one long-lived stream open to
+  the master, over which it reports what it hosts and what changes.
+- **Liveness plane, a full mesh.** Every pair of nodes keeps a lightweight stream used
+  only for heartbeats, and the peers also answer the failover calls of sections 9 and
+  10. It exists because secondaries have to tell whether the master is lost without
+  asking the master, and have to coordinate who announces it. For the handful of nodes
+  of a personal mesh a full mesh is cheap. The node with the lower id dials the higher,
+  to avoid two connections per pair.
 
-A secondary that loses its command connection redials with backoff. Nothing about
-a lost command connection stops the agents on that node or their direct streams.
+A node that loses a connection redials with backoff. Nothing about a lost command
+connection stops the agents on that node or their direct streams. gRPC's own keepalive
+detects a dead connection quickly; the heartbeats carry what keepalive cannot, the
+sender's role and epoch.
 
 ## 6. Wire and protocol
 
-Framing: one JSON object per line over the TLS stream. The standard library is
-enough, a line is easy to log and to test, and no new dependency is needed.
+The wire is gRPC over the mutually authenticated TLS of section 4, with messages
+defined in protocol buffers. The definitions live in the repository and the generated
+Go is committed (build step N1 sets that up).
 
-Envelope, on every message:
+**Three services, split by who serves them.**
 
+```proto
+syntax = "proto3";
+package pao.mesh.v1;
+
+// Served by every node. The master calls it on a secondary.
+service Node {
+  rpc Launch(AgentRef) returns (Result);            // ADR-0007
+  rpc Kill(AgentRef) returns (Result);
+  rpc Restart(AgentRef) returns (Result);
+  rpc Spawn(SpawnRequest) returns (SpawnResult);    // ADR-0006
+  rpc KillTemp(AgentRef) returns (KillResult);
+  rpc Deliver(DeliverRequest) returns (DeliverResult);   // inbound message (G1)
+  rpc SetStream(StreamRequest) returns (Result);    // bind or clear a stream
+  rpc View(ViewRequest) returns (Result);           // pause, resume, backtrack (ADR-0008)
+  rpc Decide(DecideRequest) returns (Result);       // a gate answer (G2)
+  rpc QueryPosted(PostedQuery) returns (PostedReply);    // section 11
+  rpc PushConfig(ConfigBundle) returns (ConfigAck); // section 7
+}
+
+// Served by the node that is master. A secondary calls it.
+service Master {
+  // Opened by a secondary and kept open. Up: the node's agents with their stream
+  // bindings (full, then deltas) and state events. Down: acknowledgements.
+  rpc Session(stream Report) returns (stream Ack);
+}
+
+// Served by every node. Any node calls it on any other.
+service Peer {
+  rpc Hello(HelloRequest) returns (HelloReply);          // id, epoch, role, versions
+  rpc Liveness(stream Beat) returns (stream Beat);       // heartbeats
+  rpc MasterLost(MasterLostNotice) returns (Ack);        // an announcement (section 10)
+  rpc Probe(ProbeRequest) returns (ProbeReply);          // promotion step 1 (section 9)
+  rpc NewMaster(NewMasterNotice) returns (Ack);          // promotion step 3
+}
 ```
-{"v":1, "id":"<sender-unique>", "from":"<node id>", "epoch":<n>,
- "type":"<type>", "re":"<id this answers, if any>", "deadline":"<RFC 3339, commands>",
- "body":{...}}
-```
 
-- `epoch` is the master epoch the sender believes in (section 9). A receiver
-  refuses a command whose epoch is lower than the highest it knows.
-- Commands carry a deadline and are idempotent by `id`: a receiver that sees an id
-  twice answers with the first result. Delivery is at least once.
-- A command gets exactly one result message (`re` set to the command's id), with
-  `ok` or an `error` that has a code and text.
-- The protocol is versioned (`v`). A node refuses a peer whose major version it
-  does not speak and says so.
+**Why commands are calls and not frames on a stream.** A long-lived stream that carries
+commands would give up two of the reasons for choosing gRPC: a deadline per command and
+a typed result per command. As calls, each command has a native gRPC deadline, a typed
+response and a status code, and the generated client and server stubs enforce the
+contract. Streams are used where they fit: the ordered upward feed of reports, and the
+heartbeats. The cost is that the master must be able to dial every secondary, which the
+liveness plane already requires of every node. If a secondary could not be dialed, the
+command plane could run over its `Session` stream instead, at the price of per-command
+deadlines; that variant is not designed or built here.
 
-Message types (the first build needs all of them):
+**Identity and authorization.** The caller's node id comes from the verified
+certificate, never from anything in the message. An interceptor on each service
+checks it: only the current master may call `Node`; any node in the list may call
+`Master.Session` and `Peer`. A secondary cannot command anyone.
 
-| type | direction | meaning |
-|---|---|---|
-| `hello` | both, on connect | node id, epoch, role, config version, protocol version, capabilities |
-| `heartbeat` | all pairs | sequence, role, epoch, sent time |
-| `agents` | secondary to master | the node's agents: name, tags, state, flags and each agent's active stream bindings (channel, level, viewer); full on connect, then deltas |
-| `cmd.launch`, `cmd.kill`, `cmd.restart` | master to node | ADR-0007 lifecycle for a named agent |
-| `cmd.spawn`, `cmd.kill_temp` | master to node | ADR-0006 temporary agents on that node |
-| `cmd.deliver` | master to node | deliver one message to a named agent (G1) |
-| `cmd.stream` | master to node | bind an agent's stream to a channel at a level, or clear it |
-| `cmd.view` | master to node | pause, resume or backtrack a viewer's rendering (ADR-0008) |
-| `cmd.decide` | master to node | the operator's answer to a gate question (G2) |
-| `query.posted` | master to nodes | who posted channel message P (section 11) |
-| `event.state` | node to master | an agent's state, flag or stream binding changed, a temporary agent was spawned or killed |
-| `config.push`, `config.ack` | master to node, back | a new configuration version (section 7) |
-| `alert.master_lost` | node to nodes | a node has announced the master lost for an epoch |
-| `promote.*` | node to nodes | the steps of section 9 |
+**Epoch.** Every call carries the caller's master epoch in call metadata. An interceptor
+refuses a command whose epoch is lower than the highest the receiver knows, with
+`FAILED_PRECONDITION`.
 
-What the transport does not carry: agent output, transcripts, harvest contents,
-attachments' bytes. A command that names a harvest or a file by reference resolves
-it on the node that holds it.
+**Idempotency.** State-changing calls carry a `request_id`. The receiver keeps a bounded,
+time-limited cache of request id to result and answers a repeat with the first result,
+so a retry after a lost response does not run a command twice. This is application
+level; gRPC does not provide it.
+
+**Errors.** gRPC status codes carry the outcome: `NOT_FOUND` for an unknown agent,
+`ALREADY_EXISTS` for a name conflict, `PERMISSION_DENIED` for a caller that is not the
+master, `FAILED_PRECONDITION` for a stale epoch, `DEADLINE_EXCEEDED` and `UNAVAILABLE`
+for time and reachability. A denied or missing agent yields the same code and text, as
+ADR-0012 requires.
+
+**Versioning.** The package is `pao.mesh.v1`; changes within it are additive. `Hello`
+exchanges the versions each side speaks, and a node refuses a peer it has no common
+version with and says so.
+
+**What the transport does not carry.** Agent output, transcripts, harvest contents,
+attachment bytes. A call that names a harvest or a file by reference resolves it on the
+node that holds it.
 
 ## 7. The configuration, and credentials
 
@@ -203,8 +246,8 @@ how it is kept the same, and how credentials get to each node and stay current.
   its environment supplies.
 
 The master distributes the mesh document over the command plane as a versioned
-bundle (`config.push`, with a monotonic version and a hash). A node applies it
-only if it validates, answers `config.ack` with the version it runs, and keeps the
+bundle (`Node.PushConfig`, with a monotonic version and a hash). A node applies it
+only if it validates, answers with the version it runs (`ConfigAck`), and keeps the
 last good one. A node that restarts takes the master's current version on connect.
 The configuration a node was started with is its starting point until the master
 sends a newer one, so a master that is down does not strand it.
@@ -227,7 +270,7 @@ not assume it.
 
 **Directory.** The master keeps a directory of every agent in the mesh: name, tags,
 node, state, flags. Each node announces its agents (`agents`) and changes
-(`event.state`). The directory is rebuilt from announcements, never persisted, so
+(state events on the `Session` stream). The directory is rebuilt from announcements, never persisted, so
 it cannot go stale across a restart or a promotion.
 
 **Names (G3).** A name must be unique across the mesh. The master refuses an
@@ -237,23 +280,23 @@ keeps the agent running locally; it is simply not addressable through the master
 **Routing.** Routing by name or tag resolves against the directory, so a tag fans
 out across nodes. The access filter of ADR-0012 point 4 applies exactly as on one
 node: a caller that may not address an agent gets the same answer as for a missing
-one, whichever node it is on. For a remote agent, delivery is `cmd.deliver` to its
+one, whichever node it is on. For a remote agent, delivery is `Node.Deliver` to its
 node, which stores the message in its own message store and delivers it by the
 existing local path. The reply to the caller is the per-agent outcome the local
 path already reports.
 
 **Streaming (point 3).** To show the human an agent's output, the master sends
-`cmd.stream {agent, channel, level, view}` to the agent's node. That node binds the
+`Node.SetStream {agent, channel, level, viewer}` on the agent's node. That node binds the
 agent to the channel (the binding the communication layer already has) and its
 transcript follower posts there directly, rendered at the requested level, using
-the credentials it holds. `cmd.stream` with no channel clears it. A secondary keeps
+the credentials it holds. `SetStream` with no channel clears it. A secondary keeps
 streaming to the channels it was told to if the master is lost: the binding is
 local state. Because it is local, the master does not know it unless told, so every
-binding is reported in the node's `agents` announcement and in `event.state` when it
+binding is reported in the node's `agents` announcement and in a state event on `Session` when it
 changes. That is how a master rebuilt by promotion (section 9) learns which streams
 are live, and can clear or re-level one that it did not itself set.
 
-**View controls.** `cmd.view` carries the viewer's pause, resume and backtrack to
+**View controls.** `Node.View` carries the viewer's pause, resume and backtrack to
 the node that renders for that viewer. As ADR-0008 says, these act on the rendered
 view only. Pausing the agent itself has no owning ADR and is not carried.
 
@@ -275,14 +318,14 @@ takes the same path as a lower-epoch master in the rejoin rules below.
 
 **Promotion.** `pao promote` is run by the operator on the node to become master.
 
-1. The node contacts every reachable peer and asks for its epoch and whether it has
-   a live command connection to a master.
+1. The node calls `Peer.Probe` on every reachable peer, which answers with its epoch
+   and whether it has a live command connection to a master.
 2. If any peer reports a live master at an epoch at least as high as the highest
    known, the node refuses and says which, unless the operator passes `--force`.
    This is the guard against promoting a node while the old master is merely
    unreachable from one place.
 3. Otherwise it sets its epoch to the highest seen plus one, persists it, starts
-   receiving from the human channels, and sends `hello` with the new epoch to every
+   receiving from the human channels, and calls `Peer.NewMaster` with the new epoch on every
    peer.
 4. Each peer closes its command connection to the old master, dials the new one, and
    announces its agents. The new master's directory is complete as the
@@ -305,13 +348,13 @@ from the epochs and needs no vote.
 **What is not prevented.** If the old master is alive but partitioned away when a
 node is promoted, both can act as master until the partition heals. The guard in
 step 2 makes this an operator decision with the facts in front of them, and the
-`alert.master_lost` message tells them what the secondaries saw. When the partition
+`MasterLost` notice tells them what the secondaries saw. When the partition
 heals the master with the lower epoch yields, and at equal epochs the one with the
 higher node id does (the rule above). Receiving from a human channel twice during the
 window is possible. For a message that is delivered twice, that is a duplicate. For
 a command with a side effect it is not: two masters that each read the same human
 input independently generate their own commands, so a spawn could happen twice, and
-the id-based idempotency of section 6 does not help, because it covers one master's
+the request-id idempotency of section 6 does not help, because it covers one master's
 retries and not two masters' separate commands. Whether a channel can be read by
 two masters at once at all depends on the channel (a poll against one account can,
 a single delivery address usually cannot), so the exposure is channel-specific. It is
@@ -334,9 +377,9 @@ usual case without an election:
 
 - The secondaries are ranked by node id. Rank 0 announces at once; rank n waits
   n times a stagger interval (default 3 seconds).
-- Before announcing, a node checks whether it has received `alert.master_lost` for
+- Before announcing, a node checks whether it has received a `MasterLost` notice for
   this epoch from a peer. If so it stays silent. After announcing it sends
-  `alert.master_lost` to its peers.
+  a `MasterLost` notice to its peers.
 - If the liveness plane is partitioned, two nodes can announce. That is accepted: a
   duplicate alert is better than none, and nothing it triggers is automatic.
 
@@ -359,11 +402,11 @@ arrives at the master.
 **Recommendation.** Resolve on demand, with no per-message traffic.
 
 - A reply that names a platform message id (the channel's own id) is resolved by
-  `query.posted {channel, id}` sent to the nodes. The node that posted it, from the
+  `Node.QueryPosted {channel, id}` called on the nodes. The node that posted it, from the
   index its channel adapter keeps of what it posted, answers with the agent and its
   own pao id. Only the master asks, and only when a human replies, so the cost is a
   few small messages on a rare event rather than a note for every message pushed.
-- The master then sends the reply to that agent's node as an ordinary `cmd.deliver`
+- The master then sends the reply to that agent's node as an ordinary `Node.Deliver`
   that carries the node-local reference, and the node resolves it in the agent's
   scope exactly as on one node.
 - A quoted reply (text, no id) addressed to one agent is forwarded the same way and
@@ -382,7 +425,7 @@ window as its message store. It is node-local data, as point 4 requires.
 
 **Gate (G2).** The gate keeps running on each node. A question carries a
 node-qualified id, `s2.q3`. The node posts it to the channels directly. The
-operator's `/allow s2.q3` arrives at the master, which sends `cmd.decide` to node
+operator's `/allow s2.q3` arrives at the master, which calls `Node.Decide` on node
 `s2`. The unanswered-question timeout is unchanged and local: if the master is lost
 no answer can arrive and the question is denied when its time runs out, which is the
 existing fail-closed behaviour.
@@ -405,7 +448,7 @@ decided explicitly and limited to the local channel; the design does not assume 
 | Promotion while the old master is alive elsewhere | Refused unless forced (section 9); if forced, both act until the partition heals, then the lower epoch yields (at equal epochs, the higher node id). |
 | A node restarts | It takes its persisted epoch and last good configuration, dials the master, announces its agents, and takes the current configuration. |
 | A secondary announces a name already taken | The master refuses and reports it; the agent keeps running locally and is not addressable through the mesh. |
-| A command's deadline passes | The sender gets a timeout error; the receiver, if it later runs the command, answers with the first result when the id is seen again. |
+| A command's deadline passes | The sender gets `DEADLINE_EXCEEDED`; a retry with the same request id gets the first result back and does not run the command twice. |
 | A configuration push fails validation on a node | The node keeps its last good version and answers with the error; the master reports which node is behind. |
 
 ## 14. Security notes
@@ -428,34 +471,38 @@ that start and stop agents, so the same care as the operator surface applies.
 
 ## 15. Build order
 
-Each step is a separate, reviewable change. None needs a new external dependency.
+Each step is a separate, reviewable change. N1 adds the one new dependency (section 16); no other step adds one.
 
 - **N0. Settle the gaps (documents).** An ADR (or two) that clarifies or supersedes
   the points of ADR-0013 for G1 to G5: inbound delivery and gate decisions cross the
   mesh, names are mesh-unique, the local channel is master-only, and cross-node
   agent-initiated operations are out of scope. Needs the owner's approval.
-- **N1. Node identity and the mesh configuration.** Node ids, `pao mesh keygen`, the
-  mesh section (node list with addresses and fingerprints), the split between the
-  mesh and node documents, validation, and the TLS configuration builder with pinned
-  fingerprints. Tests on the validation and on the handshake in process.
-- **N2. Transport core.** Listener, dialer, the envelope, `hello`, `heartbeat`,
-  reconnect with backoff, deadlines and idempotency by id. Tests over real TLS on
-  loopback, including a refused unknown key and a refused wrong node id.
-  `pao mesh status` shows the peers and their state.
+- **N1. Node identity, the mesh configuration, and the protocol toolchain.** Node ids,
+  `pao mesh keygen`, the mesh section (node list with addresses and fingerprints), the
+  split between the mesh and node documents, validation, and gRPC transport credentials
+  with pinned fingerprints. The `.proto` definitions, the committed generated Go, a
+  `go generate` target with the generator versions pinned, and a check in CI that the
+  generated files are current. Tests on the validation and on the credentials in process.
+- **N2. Transport core.** The three services with their interceptors (identity from the
+  certificate, authorization by role, the epoch check), `Hello`, the `Liveness` stream,
+  connection backoff and keepalive settings, and the request-id cache. Tests over real
+  mutual TLS on loopback, including a refused unknown key, a refused wrong node id, a
+  secondary refused on `Node`, and a stale epoch refused. `pao mesh status` shows the
+  peers and their state.
 - **N3. The agent directory.** `agents` announcements, the master's directory,
   mesh-unique names, and routing that resolves a name or tag to a remote agent. A
   remote Deliverer behind the router's existing interface.
-- **N4. The command plane.** `cmd.launch`, `cmd.kill`, `cmd.restart`, `cmd.spawn`,
-  `cmd.kill_temp`, `cmd.deliver`, with results, deadlines and idempotency. Harvests
-  stay on the node that made them; listing and reading them goes through the master
-  as a request to that node.
-- **N5. Streams and view controls.** `cmd.stream` and `cmd.view`: binding on the node
+- **N4. The command plane.** `Node.Launch`, `Kill`, `Restart`, `Spawn`, `KillTemp` and
+  `Deliver`, with typed results, native deadlines and idempotency by request id.
+  Harvests stay on the node that made them; listing and reading them goes through the
+  master as a request to that node.
+- **N5. Streams and view controls.** `Node.SetStream` and `Node.View`: binding on the node
   and direct posting, level, and clearing. Needs a channel a secondary can post to;
   tested with a test channel that is reachable from several nodes.
-- **N6. Replies across nodes.** Node-prefixed ids, the posted index, `query.posted`,
+- **N6. Replies across nodes.** Node-prefixed ids, the posted index, `Node.QueryPosted`,
   and the forwarded reply path.
-- **N7. Gate across nodes.** Node-qualified question ids and `cmd.decide`.
-- **N8. Configuration distribution.** The mesh document push, versions, `config.ack`,
+- **N7. Gate across nodes.** Node-qualified question ids and `Node.Decide`.
+- **N8. Configuration distribution.** The mesh document push, versions, `ConfigAck`,
   last-good retention, and `pao mesh check` for secrets.
 - **N9. Failover detection and alerting.** Liveness plane, master-lost detection, the
   ranked announcer with suppression, the channel path and the alert command, and the
@@ -475,19 +522,50 @@ streaming.
 
 ## 16. Dependencies
 
-None new. TLS, Ed25519, X.509 and JSON are in the Go standard library. Considered and
-not recommended: a message broker or its client library (the fork above); gRPC or a
-WebSocket library (a framed JSON stream over TLS is enough for the message volume,
-and each would add a dependency and a codegen or protocol layer to review).
+One new dependency, chosen by the operator: gRPC and protocol buffers. It is added in
+build step N1, not by this proposal.
+
+| module | version | notes |
+|---|---|---|
+| `google.golang.org/grpc` | v1.85.0 | latest stable at the time of writing; requires Go 1.26.0, which this module already uses |
+| `google.golang.org/protobuf` | v1.36.12 | the protocol buffer runtime |
+| `golang.org/x/net` | v0.60.0 | pulled in by gRPC |
+| `golang.org/x/text` | v0.42.0 | pulled in by gRPC |
+| `golang.org/x/sys` | v0.48.0 | pulled in by gRPC; newer than the version the module records |
+| `google.golang.org/genproto/googleapis/rpc` | v0.0.0-20260817212433-ac3dfec99bb1 | the status messages gRPC uses |
+
+The versions are what resolving gRPC and protobuf from an empty module selects; the
+real list is whatever `go mod tidy` records in N1, and that review is where it is
+checked.
+
+**Build tooling, not linked into the binary.** Generating Go from the `.proto` files
+needs `protoc` and two plugins: `protoc-gen-go` (from the protobuf module, v1.36.12) and
+`protoc-gen-go-grpc` (its own module, v1.6.2). The generated code is committed, so a
+normal build and the tests need none of them. A CI step regenerates the code and fails
+if the committed files differ, which needs `protoc` in CI at a pinned version with a
+verified checksum. That is a second thing to approve, separate from the module
+dependency: a build-time tool and its installation in CI.
+
+Considered and not chosen: a message broker or its client library (the fork); a
+framed JSON stream over TLS with no new dependency (the first draft's
+recommendation, replaced by the operator's decision above); a WebSocket library.
 
 ## 17. Questions for the owner
 
-1. **The fork:** direct over mutual TLS (recommended) or a broker?
-2. **The local channel (G4):** master-only, or an explicit relay exception for
-   development?
-3. **Credentials:** names in the distributed document and secrets provisioned per
+Decided: the fork (direct) and the wire (gRPC over mutual TLS, sections 3 and 6).
+Still open, each with this proposal's recommendation, to be settled in the ADR of
+build step N0:
+
+1. **The local channel (G4):** master-only (recommended), or an explicit relay
+   exception for development?
+2. **Credentials:** names in the distributed document and secrets provisioned per
    node (recommended), or pao distributing secret values?
-4. **Mesh-unique names (G3):** is "one name, one agent in the whole mesh" the rule?
-5. **Agent-initiated cross-node operations (G5):** out of the first build?
-6. **Alert path:** is an operator-supplied alert command acceptable as the
+3. **Mesh-unique names (G3):** is "one name, one agent in the whole mesh" the rule?
+4. **Agent-initiated cross-node operations (G5):** out of the first build?
+5. **Alert path:** is an operator-supplied alert command acceptable as the
    master-independent path until a remote-capable channel exists?
+6. **The codegen toolchain:** is `protoc` with pinned plugins, and a CI check that the
+   committed generated code is current, acceptable?
+7. **Two masters during a forced promotion (section 9):** confirm the old master's
+   inbound is stopped before a forced promotion, or have channel adapters deduplicate
+   on the platform's message id?
