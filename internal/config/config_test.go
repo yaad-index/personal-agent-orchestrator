@@ -119,6 +119,26 @@ func TestOrchestratorDefaultsAndResolution(t *testing.T) {
 	assert.Equal(t, DefaultLevel, o.Level)
 	assert.Equal(t, filepath.Join(filepath.Dir(path), "state"), o.StateDir, "a relative state_dir is resolved against the config")
 	assert.Equal(t, "PAO_TOKEN", o.TokenEnv)
+	assert.Equal(t, []string{"read"}, o.Gate.AutoAllow)
+	assert.Equal(t, DefaultAskTimeout, o.Gate.AskTimeout)
+}
+
+func TestGateSettings(t *testing.T) {
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "pao.yaml"), "node: n\nprofiles_dir: p\nstate_dir: s\ntoken_env: T\ngate:\n  auto_allow: [read, private]\n  ask_timeout: 90s\n")
+	cfg, err := Load(filepath.Join(dir, "pao.yaml"))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"read", "private"}, cfg.Orchestrator.Gate.AutoAllow)
+	assert.Equal(t, 90*time.Second, cfg.Orchestrator.Gate.AskTimeout)
+
+	for name, body := range map[string]string{
+		"unknown risk":     "gate:\n  auto_allow: [spicy]\n",
+		"negative timeout": "gate:\n  ask_timeout: -1s\n",
+	} {
+		write(t, filepath.Join(dir, "bad.yaml"), "node: n\nprofiles_dir: p\nstate_dir: s\ntoken_env: T\n"+body)
+		_, err := Load(filepath.Join(dir, "bad.yaml"))
+		assert.Error(t, err, name)
+	}
 }
 
 func TestOrchestratorRejects(t *testing.T) {

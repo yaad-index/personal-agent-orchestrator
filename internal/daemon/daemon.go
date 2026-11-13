@@ -6,6 +6,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -22,6 +23,7 @@ import (
 	"github.com/yaad-index/personal-agent-orchestrator/internal/config"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/control"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/gate"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/mirror"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/msgstore"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/registry"
@@ -74,6 +76,10 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	if opts.PollInterval > 0 {
 		ctlOpts = append(ctlOpts, control.WithPollInterval(opts.PollInterval))
 	}
+	gateSock := filepath.Join(cfg.Orchestrator.StateDir, "gate.sock")
+	ctlOpts = append(ctlOpts, control.WithEnv(func(agent string) []string {
+		return []string{"PAO_AGENT=" + agent, "PAO_GATE_SOCKET=" + gateSock}
+	}))
 	plane := control.New(tmux.New(tmux.WithSocket(cfg.Orchestrator.TmuxSocket)), ctlOpts...)
 
 	hook := &launchHook{plane: plane}
@@ -88,7 +94,26 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		seen:  make(map[string]bool),
 	}
 
-	srv, err := local.New(layer, token)
+	policy, err := gate.LoadPolicy(filepath.Join(cfg.Orchestrator.StateDir, "policy.json"))
+	if err != nil {
+		return err
+	}
+	pending := gate.NewPending(func(ctx context.Context, text string) error {
+		_, err := layer.Notify(ctx, core.Message{Sender: "pao", Text: text})
+		return err
+	})
+	autoAllow := make(map[gate.Risk]bool)
+	for _, r := range cfg.Orchestrator.Gate.AutoAllow {
+		autoAllow[gate.Risk(r)] = true
+	}
+	gt := &gate.Gate{Policy: policy, Asker: pending, AutoAllow: autoAllow, AskTimeout: cfg.Orchestrator.Gate.AskTimeout}
+	gateLn, err := gate.Listen(gateSock)
+	if err != nil {
+		return err
+	}
+	gateSrv := &http.Server{Handler: (&gate.Server{Gate: gt}).Handler(), ReadHeaderTimeout: 10 * time.Second}
+
+	srv, err := local.New(layer, token, local.WithDecider(pending))
 	if err != nil {
 		return err
 	}
@@ -102,18 +127,29 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	}
 	httpSrv := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
 
-	serveErr := make(chan error, 1)
+	serveErr := make(chan error, 2)
 	go func() { serveErr <- httpSrv.Serve(ln) }()
+	go func() { serveErr <- gateSrv.Serve(gateLn) }()
 	slog.Info("pao serving", "node", cfg.Orchestrator.Node, "listen", ln.Addr().String(), "agents", len(cfg.Profiles))
 
 	select {
 	case err := <-serveErr:
+		_ = gateSrv.Close()
+		_ = httpSrv.Close()
 		return err
 	case <-ctx.Done():
 	}
 	shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	// Close rather than Shutdown for the gate: its requests wait on the
+	// operator, and a question nobody will answer now must not hold the node up.
+	_ = gateSrv.Close()
 	err = httpSrv.Shutdown(shutdown)
+	if errors.Is(err, context.DeadlineExceeded) {
+		// A client still holds a stream open; that is not a failure to stop.
+		_ = httpSrv.Close()
+		err = nil
+	}
 	hook.follow.wait()
 	return err
 }
@@ -128,9 +164,12 @@ type launchHook struct {
 }
 
 func (h *launchHook) Launch(ctx context.Context, p core.Profile) error {
+	// Follow before launching: the transcript a fresh agent writes then arrives
+	// whole (a file that appears after following began is read from its start),
+	// instead of losing whatever the agent wrote before the follower caught up.
+	h.follow.start(p)
 	err := h.plane.Launch(ctx, p)
 	if err == nil {
-		h.follow.start(p)
 		return nil
 	}
 	if re, ok := control.AsReadinessError(err); ok {

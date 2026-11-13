@@ -20,6 +20,7 @@ import (
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/comm"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/gate"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/msgstore"
 )
 
@@ -38,10 +39,16 @@ type Layer interface {
 	React(id, by, emoji string) error
 }
 
+// Decider receives the operator's answers to the gate's questions.
+type Decider interface {
+	Answer(id string, ans gate.Answer) error
+}
+
 // Server is the local channel. It implements comm.Channel for the outbound
 // direction and serves the inbound HTTP API.
 type Server struct {
 	layer     Layer
+	decider   Decider
 	token     []byte
 	heartbeat time.Duration
 
@@ -57,6 +64,9 @@ type Option func(*Server)
 // WithHeartbeat sets how often an idle stream gets a comment line, so a quiet
 // connection is not mistaken for a dead one. Zero disables it.
 func WithHeartbeat(d time.Duration) Option { return func(s *Server) { s.heartbeat = d } }
+
+// WithDecider lets the operator answer the gate's questions over this channel.
+func WithDecider(d Decider) Option { return func(s *Server) { s.decider = d } }
 
 // New returns a Server. An empty token is refused: the channel has no
 // unauthenticated mode.
@@ -101,6 +111,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/messages", s.auth(s.postMessage))
 	mux.HandleFunc("POST /v1/reactions", s.auth(s.postReaction))
+	mux.HandleFunc("POST /v1/decisions", s.auth(s.postDecision))
 	mux.HandleFunc("GET /v1/stream", s.auth(s.stream))
 	return mux
 }
@@ -208,6 +219,50 @@ func (s *Server) postReaction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"id": req.ID})
+}
+
+type decisionRequest struct {
+	ID       string `json:"id"`
+	Decision string `json:"decision"`
+	Reason   string `json:"reason"`
+}
+
+// postDecision is the channel's answer button: allow, always (allow and
+// remember) or deny a question the gate put to the operator.
+func (s *Server) postDecision(w http.ResponseWriter, r *http.Request) {
+	var req decisionRequest
+	if !decode(w, r, &req) {
+		return
+	}
+	if s.decider == nil {
+		writeError(w, http.StatusNotFound, "no gate is configured on this node")
+		return
+	}
+	var ans gate.Answer
+	switch req.Decision {
+	case "allow":
+		ans = gate.Answer{Allow: true}
+	case "always":
+		ans = gate.Answer{Allow: true, Remember: true}
+	case "deny":
+		ans = gate.Answer{Reason: req.Reason}
+	default:
+		writeError(w, http.StatusBadRequest, `decision must be "allow", "always" or "deny"`)
+		return
+	}
+	if req.ID == "" {
+		writeError(w, http.StatusBadRequest, "id is required")
+		return
+	}
+	if err := s.decider.Answer(req.ID, ans); err != nil {
+		if errors.Is(err, gate.ErrNoSuchQuestion) {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		s.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"id": req.ID, "decision": req.Decision})
 }
 
 // MessageJSON is a message as it appears on the stream.

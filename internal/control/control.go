@@ -17,7 +17,7 @@ import (
 // Terminal is the terminal driver the control plane runs agents through. The
 // tmux driver implements it (ADR-0002).
 type Terminal interface {
-	NewSession(ctx context.Context, agent, dir, command string) error
+	NewSession(ctx context.Context, agent, dir, command string, env []string) error
 	HasSession(ctx context.Context, agent string) (bool, error)
 	KillSession(ctx context.Context, agent string) error
 	Capture(ctx context.Context, agent string) (string, error)
@@ -45,6 +45,7 @@ func (e *ReadinessError) Pane() string { return e.pane }
 type Plane struct {
 	term Terminal
 	poll time.Duration
+	env  func(agent string) []string
 }
 
 // Option configures a Plane.
@@ -52,6 +53,11 @@ type Option func(*Plane)
 
 // WithPollInterval sets how often startup checks the pane for readiness.
 func WithPollInterval(d time.Duration) Option { return func(p *Plane) { p.poll = d } }
+
+// WithEnv sets the environment (KEY=value entries) every agent is started with;
+// f is called with the agent's name. It is how an agent learns who it is and
+// where its node's gate is.
+func WithEnv(f func(agent string) []string) Option { return func(p *Plane) { p.env = f } }
 
 // New returns a Plane.
 func New(term Terminal, opts ...Option) *Plane {
@@ -84,7 +90,11 @@ func (p *Plane) Launch(ctx context.Context, prof core.Profile) error {
 		return err
 	}
 	if !exists {
-		if err := p.term.NewSession(ctx, prof.Name, prof.Workdir, prof.Startup.Command); err != nil {
+		var env []string
+		if p.env != nil {
+			env = p.env(prof.Name)
+		}
+		if err := p.term.NewSession(ctx, prof.Name, prof.Workdir, prof.Startup.Command, env); err != nil {
 			return err
 		}
 	}

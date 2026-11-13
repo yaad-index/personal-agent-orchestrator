@@ -54,6 +54,28 @@ func (c *Client) Post(ctx context.Context, sender, text string, kind, value stri
 	return out, nil
 }
 
+// Decide answers a gate question: decision is "allow", "always" or "deny".
+func (c *Client) Decide(ctx context.Context, id, decision, reason string) error {
+	body, err := json.Marshal(decisionRequest{ID: id, Decision: decision, Reason: reason})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.URL+"/v1/decisions", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+	resp, err := c.http().Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return apiError(resp)
+	}
+	return nil
+}
+
 // DeliveryReport is the server's answer to a posted message.
 type DeliveryReport = deliveryJSON
 

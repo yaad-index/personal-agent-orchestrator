@@ -13,10 +13,12 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"go.yaml.in/yaml/v3"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/gate"
 )
 
 // Orchestrator is the node-level config. Sources, channels, routing and
@@ -44,7 +46,21 @@ type Orchestrator struct {
 	// Level is the verbosity level agent output is mirrored to the human at
 	// (ADR-0008). Default 1.
 	Level int `yaml:"level"`
+	// Gate configures the approval gate (ADR-0004).
+	Gate Gate `yaml:"gate"`
 }
+
+// Gate is the approval gate's settings.
+type Gate struct {
+	// AutoAllow lists the risk levels that need no question. Default [read].
+	AutoAllow []string `yaml:"auto_allow"`
+	// AskTimeout bounds how long the operator is waited for; an unanswered
+	// question is a denial. Default 5m.
+	AskTimeout time.Duration `yaml:"ask_timeout"`
+}
+
+// DefaultAskTimeout is the gate's default time to wait for the operator.
+const DefaultAskTimeout = 5 * time.Minute
 
 // Defaults for the optional orchestrator settings.
 const (
@@ -101,6 +117,20 @@ func Load(path string) (*Config, error) {
 	}
 	if o.Level < 1 {
 		return nil, fmt.Errorf("%s: level must be at least 1", path)
+	}
+	if len(o.Gate.AutoAllow) == 0 {
+		o.Gate.AutoAllow = []string{"read"}
+	}
+	for _, r := range o.Gate.AutoAllow {
+		if !gate.Risk(r).Valid() {
+			return nil, fmt.Errorf("%s: gate.auto_allow: unknown risk %q", path, r)
+		}
+	}
+	if o.Gate.AskTimeout == 0 {
+		o.Gate.AskTimeout = DefaultAskTimeout
+	}
+	if o.Gate.AskTimeout < 0 {
+		return nil, fmt.Errorf("%s: gate.ask_timeout must be positive", path)
 	}
 	if !filepath.IsAbs(o.StateDir) {
 		o.StateDir = filepath.Join(filepath.Dir(path), o.StateDir)

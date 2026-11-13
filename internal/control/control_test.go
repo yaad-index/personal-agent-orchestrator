@@ -24,11 +24,12 @@ type fakeTerm struct {
 	panes    []string // successive captures; the last one repeats
 	captures int
 	started  []string
+	env      [][]string
 	pasted   []string
 	killed   []string
 }
 
-func (f *fakeTerm) NewSession(_ context.Context, agent, _, command string) error {
+func (f *fakeTerm) NewSession(_ context.Context, agent, _, command string, env []string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.sessions == nil {
@@ -36,6 +37,7 @@ func (f *fakeTerm) NewSession(_ context.Context, agent, _, command string) error
 	}
 	f.sessions[agent] = true
 	f.started = append(f.started, agent+":"+command)
+	f.env = append(f.env, env)
 	return nil
 }
 
@@ -105,6 +107,16 @@ func TestLaunchTimeoutKeepsPaneOffTheErrorText(t *testing.T) {
 	assert.NotContains(t, err.Error(), "hunter2", "the pane must not leak through the error text")
 	assert.Empty(t, ft.killed, "a stalled startup is flagged, not killed")
 	assert.True(t, ft.sessions["a"], "the session stays up for the operator")
+}
+
+func TestLaunchGivesTheAgentItsEnvironment(t *testing.T) {
+	ft := &fakeTerm{panes: []string{"READY>"}}
+	p := New(ft, WithPollInterval(time.Millisecond), WithEnv(func(agent string) []string {
+		return []string{"WHO=" + agent}
+	}))
+
+	require.NoError(t, p.Launch(context.Background(), profile(time.Second)))
+	assert.Equal(t, [][]string{{"WHO=a"}}, ft.env)
 }
 
 func TestLaunchDoesNotRestartAnExistingSession(t *testing.T) {

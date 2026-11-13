@@ -45,12 +45,12 @@ func TestSessionLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, ok, "no server yet means no session, not an error")
 
-	require.NoError(t, d.NewSession(ctx, "a", t.TempDir(), "cat"))
+	require.NoError(t, d.NewSession(ctx, "a", t.TempDir(), "cat", nil))
 	ok, err = d.HasSession(ctx, "a")
 	require.NoError(t, err)
 	assert.True(t, ok)
 
-	assert.Error(t, d.NewSession(ctx, "a", "", "cat"), "a second session of the same name is refused")
+	assert.Error(t, d.NewSession(ctx, "a", "", "cat", nil), "a second session of the same name is refused")
 
 	require.NoError(t, d.KillSession(ctx, "a"))
 	ok, err = d.HasSession(ctx, "a")
@@ -58,10 +58,19 @@ func TestSessionLifecycle(t *testing.T) {
 	assert.False(t, ok)
 }
 
+func TestNewSessionPassesItsEnvironmentToTheCommand(t *testing.T) {
+	d := newDriver(t)
+	ctx := context.Background()
+	require.NoError(t, d.NewSession(ctx, "a", "", `sh -c 'echo "who=$PAO_TEST_WHO sock=$PAO_TEST_SOCK"; exec cat'`,
+		[]string{"PAO_TEST_WHO=agent-a", "PAO_TEST_SOCK=/run/x y.sock"}))
+
+	waitFor(t, d, "a", "who=agent-a sock=/run/x y.sock")
+}
+
 func TestHasSessionMatchesExactly(t *testing.T) {
 	d := newDriver(t)
 	ctx := context.Background()
-	require.NoError(t, d.NewSession(ctx, "alpha", "", "cat"))
+	require.NoError(t, d.NewSession(ctx, "alpha", "", "cat", nil))
 
 	ok, err := d.HasSession(ctx, "alp")
 	require.NoError(t, err)
@@ -71,7 +80,7 @@ func TestHasSessionMatchesExactly(t *testing.T) {
 func TestPasteArrivesVerbatim(t *testing.T) {
 	d := newDriver(t)
 	ctx := context.Background()
-	require.NoError(t, d.NewSession(ctx, "a", "", "cat"))
+	require.NoError(t, d.NewSession(ctx, "a", "", "cat", nil))
 
 	// Quotes, a dollar sign, a semicolon and a tmux key name must all be
 	// typed as text, and the Enter must submit them (cat echoes the line).
@@ -85,7 +94,7 @@ func TestPasteArrivesVerbatim(t *testing.T) {
 func TestPasteMultiLine(t *testing.T) {
 	d := newDriver(t)
 	ctx := context.Background()
-	require.NoError(t, d.NewSession(ctx, "a", "", "cat"))
+	require.NoError(t, d.NewSession(ctx, "a", "", "cat", nil))
 
 	require.NoError(t, d.Paste(ctx, "a", "line one\nline two"))
 	pane := waitFor(t, d, "a", "line two")
@@ -96,7 +105,7 @@ func TestCancelledPasteStillSubmitsSoTheNextOneIsNotGlued(t *testing.T) {
 	d := newDriver(t)
 	d.settle = 300 * time.Millisecond
 	bg := context.Background()
-	require.NoError(t, d.NewSession(bg, "a", "", "cat"))
+	require.NoError(t, d.NewSession(bg, "a", "", "cat", nil))
 
 	// The first paste's context ends during the settle pause, after the text
 	// reached the pane and before the Enter.
@@ -119,7 +128,7 @@ func TestCancelledPasteStillSubmitsSoTheNextOneIsNotGlued(t *testing.T) {
 func TestPasteWithAnAlreadyCancelledContextPastesNothing(t *testing.T) {
 	d := newDriver(t)
 	bg := context.Background()
-	require.NoError(t, d.NewSession(bg, "a", "", "cat"))
+	require.NoError(t, d.NewSession(bg, "a", "", "cat", nil))
 
 	ctx, cancel := context.WithCancel(bg)
 	cancel()
@@ -134,7 +143,7 @@ func TestPasteWithAnAlreadyCancelledContextPastesNothing(t *testing.T) {
 func TestConcurrentPastesToOneAgentDoNotInterleave(t *testing.T) {
 	d := newDriver(t)
 	ctx := context.Background()
-	require.NoError(t, d.NewSession(ctx, "a", "", "cat"))
+	require.NoError(t, d.NewSession(ctx, "a", "", "cat", nil))
 
 	const n = 8
 	var wg sync.WaitGroup
@@ -160,7 +169,7 @@ func TestConcurrentPastesToOneAgentDoNotInterleave(t *testing.T) {
 func TestOperationsOnMissingSession(t *testing.T) {
 	d := newDriver(t)
 	ctx := context.Background()
-	require.NoError(t, d.NewSession(ctx, "a", "", "cat"))
+	require.NoError(t, d.NewSession(ctx, "a", "", "cat", nil))
 
 	_, err := d.Capture(ctx, "ghost")
 	assert.Error(t, err)

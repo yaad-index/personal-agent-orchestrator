@@ -136,3 +136,30 @@ func TestRunNeedsTheToken(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "PAO_RUN_TEST_TOKEN")
 }
+
+func TestParseDecision(t *testing.T) {
+	for _, tc := range []struct {
+		line             string
+		decision, id, rs string
+		ok               bool
+	}{
+		{"/allow q1", "allow", "q1", "", true},
+		{"/always q12", "always", "q12", "", true},
+		{"/deny q3", "deny", "q3", "", true},
+		{"/deny q3 not on prod, sorry", "deny", "q3", "not on prod, sorry", true},
+		{"/allow", "", "", "", false},
+		{"/allow q1 extra", "", "", "", false},
+		{"/allow soon", "", "", "", false},
+		{"/allow everything now", "", "", "", false},
+		{"/unknown q1", "", "", "", false},
+		{"allow q1", "", "", "", false},
+		{"please /allow q1", "", "", "", false},
+		{"/path/to/file is broken", "", "", "", false},
+	} {
+		d, id, rs, ok := parseDecision(tc.line)
+		assert.Equal(t, tc.ok, ok, tc.line)
+		assert.Equal(t, tc.decision, d, tc.line)
+		assert.Equal(t, tc.id, id, tc.line)
+		assert.Equal(t, tc.rs, rs, tc.line)
+	}
+}
