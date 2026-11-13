@@ -1,6 +1,6 @@
 # ADR 0016: pao as an MCP server
 
-**Status:** Proposed (2026-11-13)
+**Status:** Accepted (2026-11-13)
 
 ## Context
 

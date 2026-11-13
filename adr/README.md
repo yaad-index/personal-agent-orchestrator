@@ -21,8 +21,9 @@ A superseded ADR is never edited or deleted: it keeps a **Superseded-by** header
 - **0013** — Node transport + failover (coordination/stream split; manual promotion)
 - **0014** — Budget + outbound notifications (one notifier; gate exempt; per-account budget)
 - **0015** — Profile inheritance + the account field (extends 0011)
+- **0016** — pao as an MCP server (pao operations as MCP tools; matrix- and gate-bound)
 
 ## Planned (one ADR each, broad spine first then detail)
-- **0016** — pao as an MCP server (pao operations as MCP tools; matrix- and gate-bound)
+- **0017** — Mesh transport + the cross-node gaps (gRPC over mutual TLS, pinned node keys; extends 0013)
 
 The audit log named as a foreseen role in ADR-0002 is deliberately not planned; it would be added later only if a need arises.
