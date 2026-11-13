@@ -198,3 +198,19 @@ func TestAHarvestedFileIsServedAsOpaqueBytes(t *testing.T) {
 	assert.Equal(t, "application/octet-stream", resp.Header.Get("Content-Type"), "agent-written content is never served as a page")
 	assert.Equal(t, "nosniff", resp.Header.Get("X-Content-Type-Options"))
 }
+
+func TestAMountedHandlerIsServedAndAuthenticatesItself(t *testing.T) {
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("mounted:" + r.Header.Get("Authorization")))
+	})
+	_, ts := newServer(t, &fakeLayer{}, WithMount("/mcp", h))
+
+	resp := do(t, ts, "GET", "/mcp", "", "Bearer any-token-at-all")
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode, "the server's own token check does not stand in front of a mount: it must decide for itself")
+	assert.Equal(t, "mounted:Bearer any-token-at-all", string(body))
+
+	resp = do(t, ts, "GET", "/elsewhere", "", "Bearer "+token)
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+}

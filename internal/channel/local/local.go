@@ -50,6 +50,7 @@ type Server struct {
 	layer     Layer
 	decider   Decider
 	temp      TempAPI
+	mounts    []mount
 	token     []byte
 	heartbeat time.Duration
 
@@ -65,6 +66,19 @@ type Option func(*Server)
 // WithHeartbeat sets how often an idle stream gets a comment line, so a quiet
 // connection is not mistaken for a dead one. Zero disables it.
 func WithHeartbeat(d time.Duration) Option { return func(s *Server) { s.heartbeat = d } }
+
+// mount is a handler served at a path of its own.
+type mount struct {
+	path string
+	h    http.Handler
+}
+
+// WithMount serves h at path on this server's listener. The handler is not
+// behind this server's operator-token check: it authenticates its own callers,
+// because they are not only the operator (the MCP endpoint, ADR-0016).
+func WithMount(path string, h http.Handler) Option {
+	return func(s *Server) { s.mounts = append(s.mounts, mount{path, h}) }
+}
 
 // WithDecider lets the operator answer the gate's questions over this channel.
 func WithDecider(d Decider) Option { return func(s *Server) { s.decider = d } }
@@ -115,6 +129,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/decisions", s.auth(s.postDecision))
 	mux.HandleFunc("GET /v1/stream", s.auth(s.stream))
 	s.registerTemp(mux)
+	for _, m := range s.mounts {
+		mux.Handle(m.path, m.h)
+	}
 	return mux
 }
 
