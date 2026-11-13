@@ -1,6 +1,6 @@
 # ADR 0005: Access model and management UI
 
-**Status:** Proposed (2026-11-13)
+**Status:** Accepted (2026-11-13)
 
 ## Context
 
