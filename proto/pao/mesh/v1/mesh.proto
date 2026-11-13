@@ -10,8 +10,10 @@ package pao.mesh.v1;
 option go_package = "github.com/yaad-index/personal-agent-orchestrator/internal/mesh/meshpb;meshpb";
 
 // Every call between nodes carries a deadline, chosen by the caller, and every call
-// that changes state carries a request_id: a repeat with the same id returns the
-// first result and does not run twice. The master epoch the caller believes in is
+// that changes state carries a request_id (field 1), except PushConfig, whose
+// version number does the same job: a repeat with the same id returns the first
+// result and does not run twice, and a configuration version already running is
+// not applied again. The master epoch the caller believes in is
 // sent in call metadata ("pao-epoch"), not in the messages.
 
 // ---------------------------------------------------------------------------
