@@ -24,3 +24,5 @@ A superseded ADR is never edited or deleted: it keeps a **Superseded-by** header
 
 ## Planned (one ADR each, broad spine first then detail)
 - **0016** — pao as an MCP server (pao operations as MCP tools; matrix- and gate-bound)
+
+The audit log named as a foreseen role in ADR-0002 is deliberately not planned; it would be added later only if a need arises.
