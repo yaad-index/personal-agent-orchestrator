@@ -71,6 +71,7 @@ type Node struct {
 	status   map[string]*peerStatus
 	conns    map[string]*grpc.ClientConn
 	nodeSrv  pb.NodeServer
+	sink     Sink
 	lost     []LostNotice
 	sessions map[string]*session
 	cache    *idempotency

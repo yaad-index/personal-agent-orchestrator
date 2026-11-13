@@ -468,7 +468,11 @@ that start and stop agents, so the same care as the operator surface applies.
 - A node adopts a master it hears of from any listed node, in a heartbeat or a hello, if
   that master supersedes the one it holds. That is how a master that rejoins learns to
   yield without being told directly, and it means a listed node can lie about who is
-  master. The trust model is that the nodes on the list are trusted not to; a node that
+  master. The lie then spreads: an honest node that adopts a false belief sends it on in
+  its own heartbeats, so it cascades through the whole liveness mesh and not only to the
+  nodes the liar talks to. A compromised member can therefore disrupt master consensus
+  mesh-wide, naming any listed node master at a high epoch, and not only impersonate
+  itself. The trust model is that the nodes on the list are trusted not to; a node that
   is compromised is outside it, and so is a mesh whose list is edited by someone who
   should not.
 - A compromised secondary can send commands only within what the master accepts from
@@ -496,11 +500,14 @@ Each step is a separate, reviewable change. N1 adds the one new dependency (sect
   mutual TLS on loopback, including a refused unknown key, a refused wrong node id, a
   secondary refused on `Node`, and a stale epoch refused. `pao mesh status` shows the
   peers and their state.
-- **N3. The agent directory.** `Report` messages on `Master.Session`, the master's directory,
-  mesh-unique names, and routing that resolves a name or tag to a remote agent. A
-  remote Deliverer behind the router's existing interface.
-- **N4. The command plane.** `Node.Launch`, `Kill`, `Restart`, `Spawn`, `KillTemp` and
-  `Deliver`, with typed results, native deadlines and idempotency by request id.
+- **N3. The agent directory and remote delivery.** In two parts. First, `Report`
+  messages on `Master.Session`, the master's directory (rebuilt from reports, never
+  persisted, mesh-unique names with the first holder keeping a name), and the reporter a
+  secondary runs. Then routing that resolves a name or tag to a remote agent, and
+  `Node.Deliver`, which a message for a remote agent needs and so belongs here rather than
+  with the other commands: a remote Deliverer behind the router's existing interface.
+- **N4. The command plane.** `Node.Launch`, `Kill`, `Restart`, `Spawn` and `KillTemp`,
+  with typed results, native deadlines and idempotency by request id.
   Harvests stay on the node that made them; listing and reading them goes through the
   master as a request to that node.
 - **N5. Streams and view controls.** `Node.SetStream` and `Node.View`: binding on the node

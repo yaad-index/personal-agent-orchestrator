@@ -692,10 +692,24 @@ func TestTheDialingSideReconnectsWhenAPeerComesBack(t *testing.T) {
 	require.Eventually(t, func() bool { return !up(a, "b") }, 5*time.Second, 10*time.Millisecond)
 
 	// b restarts on the same address, as a restarted node does.
-	ln, err := net.Listen("tcp", addr)
+	ln, err := listenOn(addr)
 	require.NoError(t, err)
 	c.lns["b"] = ln
 	c.node("b", nil)
 	c.start("b")
 	require.Eventually(t, func() bool { return up(a, "b") }, 15*time.Second, 20*time.Millisecond, "a dials b again with backoff and the peer is up")
+}
+
+// listenOn listens on an address that was just released, retrying while it is
+// still held.
+func listenOn(addr string) (net.Listener, error) {
+	var ln net.Listener
+	var err error
+	for i := 0; i < 50; i++ {
+		if ln, err = net.Listen("tcp", addr); err == nil {
+			return ln, nil
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return nil, err
 }
