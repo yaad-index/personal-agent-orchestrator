@@ -62,25 +62,41 @@ func Generate(path, nodeID string) (*Identity, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	if err := writeKeyOnce(path, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})); err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	return identityFrom(nodeID, priv, pub)
+}
+
+// writeKeyOnce writes the key so that the file at path either does not exist or is
+// complete, and never replaces one that exists. It writes a private temporary file
+// beside it and links that into place: a link fails if the name is taken, and a
+// process that dies part way leaves a temporary file, not a half-written key that
+// would block the next attempt.
+func writeKeyOnce(path string, content []byte) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, ".key-*") // created 0600, exclusively
 	if err != nil {
-		if errors.Is(err, fs.ErrExist) {
-			return nil, fmt.Errorf("%w at %s", ErrKeyExists, path)
-		}
-		return nil, err
+		return err
 	}
-	_, werr := f.Write(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}))
-	if cerr := f.Close(); werr == nil {
+	defer func() { _ = os.Remove(tmp.Name()) }()
+	_, werr := tmp.Write(content)
+	if cerr := tmp.Close(); werr == nil {
 		werr = cerr
 	}
 	if werr != nil {
-		_ = os.Remove(path)
-		return nil, werr
+		return werr
 	}
-	return identityFrom(nodeID, priv, pub)
+	if err := os.Link(tmp.Name(), path); err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			return fmt.Errorf("%w at %s", ErrKeyExists, path)
+		}
+		return err
+	}
+	return nil
 }
 
 // Load reads the node's key from path. It refuses a key file that anyone but its
