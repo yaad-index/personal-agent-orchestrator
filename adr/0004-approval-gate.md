@@ -1,6 +1,6 @@
 # ADR 0004: The approval gate
 
-**Status:** Proposed (2026-11-13)
+**Status:** Accepted (2026-11-13)
 
 ## Context
 
