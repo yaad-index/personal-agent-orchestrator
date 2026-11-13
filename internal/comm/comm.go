@@ -116,6 +116,14 @@ func (l *Layer) Bind(agent, channel string) error {
 	return nil
 }
 
+// Bound returns the channel an agent's output is bound to, if it is bound.
+func (l *Layer) Bound(agent string) (string, bool) {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	ch, ok := l.bound[agent]
+	return ch, ok
+}
+
 // Unbind returns the agent's output to every channel.
 func (l *Layer) Unbind(agent string) {
 	l.mu.Lock()

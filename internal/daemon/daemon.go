@@ -30,6 +30,7 @@ import (
 	"github.com/yaad-index/personal-agent-orchestrator/internal/harvest"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/mcpsrv"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/mesh"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/mesh/directory"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/mesh/transport"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/mirror"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/msgstore"
@@ -160,7 +161,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		Thresholds: registry.Thresholds{UnusedAfter: cfg.Orchestrator.Temp.UnusedAfter, IdleAfter: cfg.Orchestrator.Temp.IdleAfter},
 	}
 
-	ops := mcpOps{reg: reg, thresholds: mgr.Thresholds, recipes: mgr.Recipes, mgr: mgr, store: harvests, layer: layer, auth: opts.Authorizer}
+	ops := &mcpOps{reg: reg, thresholds: mgr.Thresholds, recipes: mgr.Recipes, mgr: mgr, store: harvests, layer: layer, auth: opts.Authorizer}
 	resolver := mcpsrv.Chain{
 		mcpsrv.NewOperatorResolver(token),
 		mcpsrv.AgentResolver{Tokens: tokens, Alive: func(agent string) bool {
@@ -172,6 +173,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	mcpHandler := mcpsrv.New(ops, resolver, mcpsrv.WithAuthorizer(opts.Authorizer)).Handler()
 
 	var meshNode *transport.Node
+	var dir *directory.Directory
 	var localOpts []local.Option
 	if cfg.Mesh != nil {
 		id, err := mesh.Load(cfg.Orchestrator.MeshKey, cfg.Orchestrator.Node)
@@ -185,7 +187,25 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		if err != nil {
 			return fmt.Errorf("mesh: %w", err)
 		}
-		localOpts = append(localOpts, local.WithMesh(meshStatus(meshNode)))
+		dir = directory.New(func(name string) bool {
+			_, _, ok := reg.Lookup(name)
+			return ok
+		})
+		meshNode.SetSink(dir)
+		meshNode.SetNodeServer(meshNodeServer{layer: layer})
+		router.SetRemote(meshRemote{dir: dir, node: meshNode})
+		ops.dir = dir
+		// A temporary agent may not take a name an agent on another node holds.
+		mgr.Check = func(p core.Profile) error {
+			if err := checkProfile(p); err != nil {
+				return err
+			}
+			if dir.Has(p.Name) {
+				return fmt.Errorf("the name %q is held by an agent on another node", p.Name)
+			}
+			return nil
+		}
+		localOpts = append(localOpts, local.WithMesh(meshStatusWith(meshNode, dir)))
 	}
 
 	srv, err := local.New(layer, token, append([]local.Option{local.WithDecider(pending), local.WithTemp(tempAPI{mgr: mgr, store: harvests}),
@@ -212,12 +232,19 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	defer stopMesh()
 	meshDone := make(chan struct{})
 	if meshNode != nil {
+		var meshWG sync.WaitGroup
+		meshWG.Add(2)
 		go func() {
-			defer close(meshDone)
+			defer meshWG.Done()
 			if err := meshNode.Serve(meshCtx); err != nil {
 				serveErr <- fmt.Errorf("mesh: %w", err)
 			}
 		}()
+		go func() {
+			defer meshWG.Done()
+			meshNode.RunReporter(meshCtx, registrySource{reg: reg, thresholds: mgr.Thresholds, layer: layer}, time.Second)
+		}()
+		go func() { meshWG.Wait(); close(meshDone) }()
 	} else {
 		close(meshDone)
 	}
