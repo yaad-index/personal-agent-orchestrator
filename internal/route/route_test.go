@@ -163,3 +163,35 @@ func TestConcurrentInputsLaunchOnce(t *testing.T) {
 	assert.EqualValues(t, 1, l.launches.Load())
 	assert.Len(t, d.got["a"], 20)
 }
+
+func tempRouter(t *testing.T, now time.Time) (*Router, *registry.Registry, *fakeDeliverer) {
+	t.Helper()
+	reg := registry.New()
+	require.NoError(t, reg.AddTemp(core.Profile{Name: "t"}, registry.TempInfo{Created: now.Add(-time.Hour)}))
+	d := &fakeDeliverer{fail: "none"}
+	return New(reg, &fakeLauncher{}, d, WithClock(func() time.Time { return now })), reg, d
+}
+
+func TestDeliveryMarksTheTempAgentUsed(t *testing.T) {
+	now := time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
+	r, reg, _ := tempRouter(t, now)
+
+	_, err := r.Route(context.Background(), core.Target{Kind: core.ByName, Value: "t"}, msg)
+	require.NoError(t, err)
+
+	v := reg.Temps()[0]
+	assert.True(t, v.Received)
+	assert.Equal(t, now, v.LastActivity)
+}
+
+func TestFailedDeliveryIsNotUse(t *testing.T) {
+	now := time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
+	r, reg, d := tempRouter(t, now)
+	d.fail = "t"
+
+	res, err := r.Route(context.Background(), core.Target{Kind: core.ByName, Value: "t"}, msg)
+	require.NoError(t, err)
+	require.Error(t, res[0].Err)
+
+	assert.False(t, reg.Temps()[0].Received, "a message that never reached the agent does not make it used")
+}

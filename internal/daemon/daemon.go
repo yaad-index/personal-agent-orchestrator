@@ -89,6 +89,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	hook.follow = &followers{
 		ctx:   ctx,
 		layer: layer,
+		reg:   reg,
 		level: cfg.Orchestrator.Level,
 		poll:  opts.MirrorPoll,
 		seen:  make(map[string]bool),
@@ -186,6 +187,7 @@ func (h *launchHook) Launch(ctx context.Context, p core.Profile) error {
 type followers struct {
 	ctx   context.Context
 	layer *comm.Layer
+	reg   *registry.Registry
 	level int
 	poll  time.Duration
 
@@ -214,6 +216,8 @@ func (f *followers) start(p core.Profile) {
 	go func() {
 		defer f.wg.Done()
 		err := m.Follow(f.ctx, path, mirror.FromEnd, func(e core.Entry) {
+			// Any line the agent writes is activity, shown to the human or not.
+			f.reg.Touch(p.Name, time.Now(), false)
 			text, ok := render(e, levels, f.level)
 			if !ok {
 				return

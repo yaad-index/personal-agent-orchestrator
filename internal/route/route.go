@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/registry"
@@ -27,13 +28,25 @@ type Router struct {
 	launcher  core.Launcher
 	deliverer core.Deliverer
 
+	now func() time.Time
+
 	mu    sync.Mutex
 	locks map[string]*sync.Mutex
 }
 
+// Option tunes a Router.
+type Option func(*Router)
+
+// WithClock replaces the clock used to stamp agent activity.
+func WithClock(now func() time.Time) Option { return func(r *Router) { r.now = now } }
+
 // New returns a Router.
-func New(reg *registry.Registry, l core.Launcher, d core.Deliverer) *Router {
-	return &Router{reg: reg, launcher: l, deliverer: d, locks: make(map[string]*sync.Mutex)}
+func New(reg *registry.Registry, l core.Launcher, d core.Deliverer, opts ...Option) *Router {
+	r := &Router{reg: reg, launcher: l, deliverer: d, now: time.Now, locks: make(map[string]*sync.Mutex)}
+	for _, o := range opts {
+		o(r)
+	}
+	return r
 }
 
 // Route delivers m to every agent the target resolves to and returns one
@@ -86,7 +99,9 @@ func (r *Router) deliver(ctx context.Context, p core.Profile, m core.Message) Re
 
 	if err := r.deliverer.Deliver(ctx, p, m); err != nil {
 		res.Err = fmt.Errorf("deliver to %q: %w", p.Name, err)
+		return res
 	}
+	r.reg.Touch(p.Name, r.now(), true)
 	return res
 }
 
