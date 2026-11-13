@@ -22,5 +22,4 @@ A superseded ADR is never edited or deleted: it keeps a **Superseded-by** header
 
 ## Planned (one ADR each, broad spine first then detail)
 - **0014** — Budget + outbound notifications (one notifier; gate exempt; budget off subscription usage)
-- Budget + outbound notifications
 - Audit log
