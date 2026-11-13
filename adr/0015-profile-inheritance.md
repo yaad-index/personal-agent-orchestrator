@@ -1,10 +1,10 @@
 # ADR 0015: Profile inheritance and the account
 
-**Status:** Proposed (2026-11-13)
+**Status:** Accepted (2026-11-13)
 
 ## Context
 
-ADR-0011 fixed that each agent has a profile declaring its per-backend specifics. In practice profiles overlap heavily (many agents on the same backend differ only in model or account), and pao needs to know which account each agent draws on, the account binding ADR-0014 required and deferred. This ADR extends the profile with inheritance and the account field. It builds on ADR-0011, which stays in force.
+ADR-0011 fixed that each agent has a profile declaring its per-backend specifics. In practice profiles overlap heavily (many agents on the same backend differ only in model or account), and pao needs to know which account each agent draws on, the account binding ADR-0014 required and deferred. This ADR extends the profile with inheritance, the model, and the account field. It builds on ADR-0011, which stays in force.
 
 ## Decision
 
