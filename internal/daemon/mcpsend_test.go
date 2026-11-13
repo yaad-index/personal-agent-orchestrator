@@ -162,3 +162,29 @@ func TestReservedNamesAreNotAgentNames(t *testing.T) {
 		require.Error(t, err, name)
 	}
 }
+
+func TestSendersAreNamedFromTheSubjectAndNobodyHasNone(t *testing.T) {
+	n, ok := senderName(access.Operator)
+	assert.True(t, ok)
+	assert.Equal(t, "operator", n)
+	n, ok = senderName(access.Agent("a"))
+	assert.True(t, ok)
+	assert.Equal(t, "a", n)
+	for _, nobody := range []access.Subject{{}, {Kind: access.KindAgent}, {Name: "operator"}} {
+		_, ok = senderName(nobody)
+		assert.False(t, ok, "%+v", nobody)
+	}
+}
+
+func TestNobodyCannotSendEvenIfTheSeamWouldLetThemAddress(t *testing.T) {
+	ops, sk := sendOps(t, everyoneRoutes{})
+	_, err := ops.Send(context.Background(), access.Subject{}, false, "a", "x")
+	require.ErrorIs(t, err, core.ErrNoMatch, "the invariant holds in the sender logic itself, not only because the default seam refuses nobody")
+	assert.Empty(t, sk.got)
+}
+
+// everyoneRoutes is a seam that allows anything, to show it is not what stops a
+// nameless sender.
+type everyoneRoutes struct{}
+
+func (everyoneRoutes) Allow(access.Subject, access.Action, access.Resource) bool { return true }
