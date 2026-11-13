@@ -306,7 +306,8 @@ from the epochs and needs no vote.
 node is promoted, both can act as master until the partition heals. The guard in
 step 2 makes this an operator decision with the facts in front of them, and the
 `alert.master_lost` message tells them what the secondaries saw. When the partition
-heals the lower epoch yields. Receiving from a human channel twice during the
+heals the master with the lower epoch yields, and at equal epochs the one with the
+higher node id does (the rule above). Receiving from a human channel twice during the
 window is possible. For a message that is delivered twice, that is a duplicate. For
 a command with a side effect it is not: two masters that each read the same human
 input independently generate their own commands, so a spawn could happen twice, and
@@ -401,7 +402,7 @@ decided explicitly and limited to the local channel; the design does not assume 
 |---|---|
 | A secondary loses the master | Its agents keep running; streams already bound keep posting directly; it redials with backoff; commands from the master's lower epoch are refused if a new master exists. |
 | The master is lost | Secondaries detect and announce (section 10). The human cannot reach any agent until a node is promoted. Gate questions time out and deny. |
-| Promotion while the old master is alive elsewhere | Refused unless forced (section 9); if forced, both act until the partition heals, then the lower epoch yields. |
+| Promotion while the old master is alive elsewhere | Refused unless forced (section 9); if forced, both act until the partition heals, then the lower epoch yields (at equal epochs, the higher node id). |
 | A node restarts | It takes its persisted epoch and last good configuration, dials the master, announces its agents, and takes the current configuration. |
 | A secondary announces a name already taken | The master refuses and reports it; the agent keeps running locally and is not addressable through the mesh. |
 | A command's deadline passes | The sender gets a timeout error; the receiver, if it later runs the command, answers with the first result when the id is seen again. |
