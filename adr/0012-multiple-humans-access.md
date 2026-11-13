@@ -1,6 +1,6 @@
 # ADR 0012: Multiple humans and tag-scoped access
 
-**Status:** Proposed (2026-11-13)
+**Status:** Accepted (2026-11-13)
 
 ## Context
 
@@ -14,7 +14,7 @@ ADR-0005 fixed access as an explicit, default-restricted matrix whose rows are a
 
 3. **Tags are access scopes, and they are the routing tags.** A tag is granted as a scope: granting a subject a tag grants access to every resource carrying that tag, so one grant covers a group rather than a cell at a time. It is the same tag a resource is routed by, generalized from the agent name-and-tags of ADR-0003 to tools and channels as well. The coupling is deliberate: a routing tag and an access scope are one thing.
 
-4. **Routing by tag is bounded by the requester's access.** Because a tag is also a scope, a fan-out to a tag reaches only the resources the requester is actually granted, never past its scope.
+4. **Addressing is bounded by the requester's access, by tag or by name.** Because a tag is also a scope, a fan-out to a tag reaches only the resources the requester is actually granted, never past its scope. Addressing a specific resource by name that the requester is not granted is not distinguishable from addressing one that does not exist, so neither a tag nor a name can be used to probe for resources out of reach.
 
 5. **A grant may be a tag-scope or a single cell.** A subject's access is the union of its tag-scopes and any individual cells, for humans and agents alike.
 

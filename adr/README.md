@@ -17,9 +17,9 @@ A superseded ADR is never edited or deleted: it keeps a **Superseded-by** header
 - **0009** — Communication channels (human↔pao)
 - **0010** — The message model (ids/quote; reactions target an id; buttons over reactions)
 - **0011** — Pluggable backends (profile declares per-backend specifics; contract test; startup)
+- **0012** — Multiple humans + tag-scoped access (extends 0005)
 
 ## Planned (one ADR each, broad spine first then detail)
-- **0012** — Multiple humans + tag-scoped access (extends 0005)
-- Node transport + failover
+- **0013** — Node transport + failover (control/data-plane split; manual promotion)
 - Budget + outbound notifications
 - Audit log
