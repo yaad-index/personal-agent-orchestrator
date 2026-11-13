@@ -47,12 +47,13 @@ type Decider interface {
 // Server is the local channel. It implements comm.Channel for the outbound
 // direction and serves the inbound HTTP API.
 type Server struct {
-	layer     Layer
-	decider   Decider
-	temp      TempAPI
-	mounts    []mount
-	token     []byte
-	heartbeat time.Duration
+	layer      Layer
+	decider    Decider
+	temp       TempAPI
+	meshStatus func() MeshJSON
+	mounts     []mount
+	token      []byte
+	heartbeat  time.Duration
 
 	mu   sync.Mutex
 	subs map[chan core.Message]struct{}
@@ -129,6 +130,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/decisions", s.auth(s.postDecision))
 	mux.HandleFunc("GET /v1/stream", s.auth(s.stream))
 	s.registerTemp(mux)
+	s.registerMesh(mux)
 	for _, m := range s.mounts {
 		mux.Handle(m.path, m.h)
 	}

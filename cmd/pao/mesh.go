@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"text/tabwriter"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/config"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/mesh"
@@ -14,6 +15,7 @@ import (
 type MeshCmd struct {
 	Keygen MeshKeygenCmd `cmd:"" help:"Create this node's key and print the fingerprint to list in the mesh document."`
 	Show   MeshShowCmd   `cmd:"" help:"Show this node's identity and the nodes the mesh document lists."`
+	Status MeshStatusCmd `cmd:"" help:"Show a running node's view of the mesh: who is master, and which peers are up."`
 }
 
 // MeshKeygenCmd creates the node's key.
@@ -82,4 +84,41 @@ func (c MeshShowCmd) run(w io.Writer) error {
 		}
 	}
 	return nil
+}
+
+// MeshStatusCmd shows a running node's view of the mesh.
+type MeshStatusCmd struct{ NodeFlags }
+
+// Run implements mesh status.
+func (c MeshStatusCmd) Run() error { return c.run(os.Stdout) }
+
+func (c MeshStatusCmd) run(w io.Writer) error {
+	cl, err := c.client()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := opCtx()
+	defer cancel()
+	st, err := cl.Mesh(ctx)
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "node:   %s (%s)\nmaster: %s at epoch %d\n\n", st.Node, st.Role, st.Master, st.Epoch); err != nil {
+		return err
+	}
+	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
+	for _, p := range st.Peers {
+		state := "DOWN"
+		if p.Up {
+			state = "up"
+		}
+		believes := "-"
+		if p.Master != "" {
+			believes = fmt.Sprintf("%s@%d", p.Master, p.Epoch)
+		}
+		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", p.ID, state, p.Role, believes, p.Addr); err != nil {
+			return err
+		}
+	}
+	return tw.Flush()
 }

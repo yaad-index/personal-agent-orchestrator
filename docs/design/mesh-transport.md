@@ -465,6 +465,12 @@ that start and stop agents, so the same care as the operator surface applies.
   limitation in SECURITY.md), so a node's key file and configuration are readable to
   its agents unless the gate or the operating system stops them. The key file's
   location should be added to the paths a gate rule denies once that rule exists.
+- A node adopts a master it hears of from any listed node, in a heartbeat or a hello, if
+  that master supersedes the one it holds. That is how a master that rejoins learns to
+  yield without being told directly, and it means a listed node can lie about who is
+  master. The trust model is that the nodes on the list are trusted not to; a node that
+  is compromised is outside it, and so is a mesh whose list is edited by someone who
+  should not.
 - A compromised secondary can send commands only within what the master accepts from
   a secondary (announce, results, events, alerts, query answers), and cannot command
   the master or another secondary. The master, in turn, can command every secondary:

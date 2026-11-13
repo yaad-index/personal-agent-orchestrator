@@ -159,3 +159,30 @@ func TestKillEscapesTheNameInThePath(t *testing.T) {
 	_ = KillCmd{NodeFlags: s.flags(t), Name: "../x y"}.run(&out)
 	assert.Equal(t, "DELETE /v1/temp/..%2Fx%20y", s.path, "a name cannot add path segments")
 }
+
+func TestMeshStatusShowsTheMasterAndEachPeer(t *testing.T) {
+	s := newStubNode(t, func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, 200, local.MeshJSON{
+			Node: "n-b", Role: "secondary", Epoch: 2, Master: "n-a",
+			Peers: []local.MeshPeerJSON{
+				{ID: "n-a", Addr: "10.0.0.1:7745", Up: true, Role: "master", Epoch: 2, Master: "n-a"},
+				{ID: "n-c", Addr: "10.0.0.3:7745", Up: false, Role: "unknown"},
+			},
+		})
+	})
+	var out bytes.Buffer
+	require.NoError(t, MeshStatusCmd{NodeFlags: s.flags(t)}.run(&out))
+	assert.Equal(t, "GET /v1/mesh", s.path)
+	assert.Contains(t, out.String(), "node:   n-b (secondary)")
+	assert.Contains(t, out.String(), "master: n-a at epoch 2")
+	assert.Regexp(t, `n-a\s+up\s+master\s+n-a@2\s+10\.0\.0\.1:7745`, out.String())
+	assert.Regexp(t, `n-c\s+DOWN\s+unknown\s+-\s+10\.0\.0\.3:7745`, out.String(), "a peer never heard from is DOWN with no belief")
+}
+
+func TestMeshStatusOnANodeNotInAMeshIsAnError(t *testing.T) {
+	s := newStubNode(t, func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, 404, map[string]string{"error": "Not Found"})
+	})
+	var out bytes.Buffer
+	require.Error(t, MeshStatusCmd{NodeFlags: s.flags(t)}.run(&out))
+}
