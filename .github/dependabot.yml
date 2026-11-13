@@ -1,0 +1,32 @@
+# Weekly version updates for the Go module and the workflow actions. Minor and
+# patch updates of each ecosystem arrive as one pull request; a major update is
+# always its own, so it is read on its own.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: deps
+    groups:
+      go-minor-patch:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: ci
+    groups:
+      actions-minor-patch:
+        update-types:
+          - minor
+          - patch
