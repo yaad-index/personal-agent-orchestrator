@@ -27,6 +27,11 @@ const token = "test-token"
 // reportEnv is a startup value that makes the fake agent report its environment.
 const reportEnv = "report-env"
 
+// oldSession is a startup value for an agent whose transcript path is a
+// directory that already holds an earlier session's transcript. The agent
+// reports its environment first, into a new file, like a fresh session.
+const oldSession = "old-session"
+
 // fakeAgent is a stand-in backend: a shell loop that, for every line pasted into
 // its terminal, writes a human-side record and an assistant record to its
 // transcript file, the way a real backend would.
@@ -71,8 +76,18 @@ func startNode(t *testing.T, agents map[string]string) *node {
 	}}
 	for name, startup := range agents {
 		file := filepath.Join(transcripts, name+".jsonl")
+		tpath := file
 		cmd := startup
 		switch startup {
+		case oldSession:
+			tdir := filepath.Join(transcripts, name+"-dir")
+			require.NoError(t, os.MkdirAll(tdir, 0o755))
+			old := filepath.Join(tdir, "earlier-session.jsonl")
+			require.NoError(t, os.WriteFile(old, []byte(`{"type":"assistant","uuid":"old","message":{"role":"assistant","content":[{"type":"text","text":"STALE earlier session"}]}}`+"\n"), 0o600))
+			require.NoError(t, os.Chtimes(old, time.Now().Add(-time.Hour), time.Now().Add(-time.Hour)))
+			file = filepath.Join(tdir, "new-session.jsonl")
+			tpath = tdir
+			cmd = fmt.Sprintf("env REPORT_ENV=1 TRANSCRIPT=%s sh %s", file, scriptPath)
 		case "":
 			cmd = fmt.Sprintf("env TRANSCRIPT=%s sh %s", file, scriptPath)
 		case reportEnv:
@@ -81,7 +96,7 @@ func startNode(t *testing.T, agents map[string]string) *node {
 		cfg.Profiles = append(cfg.Profiles, core.Profile{
 			Name: name, Tags: []string{"team"}, Backend: "fake", Workdir: dir,
 			Startup:    core.Startup{Command: cmd, ReadyPattern: `READY>`, ReadyTimeout: 700 * time.Millisecond},
-			Transcript: core.Transcript{Format: "claude-code", Path: file},
+			Transcript: core.Transcript{Format: "claude-code", Path: tpath},
 		})
 	}
 
@@ -170,6 +185,28 @@ func TestEndToEndHumanToAgentAndBack(t *testing.T) {
 	select {
 	case extra := <-n.events:
 		t.Fatalf("unexpected extra message (the human side of the transcript must not be echoed): %+v", extra)
+	case <-time.After(300 * time.Millisecond):
+	}
+}
+
+func TestAFreshSessionsFirstLinesArriveWholeAndAnOldSessionIsNotReplayed(t *testing.T) {
+	n := startNode(t, map[string]string{"a": oldSession})
+
+	_, err := n.client.Post(context.Background(), "human", "hi", "name", "a")
+	require.NoError(t, err)
+
+	// The agent wrote its environment line while Launch was still polling for
+	// readiness, into a file that did not exist when following began: it must
+	// arrive whole. The earlier session's content, already in the directory
+	// when following began, must not.
+	first := n.next(t)
+	assert.Equal(t, "agent=a gate="+n.gateSock, first.Text)
+	second := n.next(t)
+	assert.Equal(t, "echo: [human]: hi", second.Text)
+
+	select {
+	case m := <-n.events:
+		t.Fatalf("unexpected message, an earlier session must not be replayed: %+v", m)
 	case <-time.After(300 * time.Millisecond):
 	}
 }

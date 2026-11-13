@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/backend/claudecode"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/config"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/gate"
 )
 
@@ -54,11 +55,31 @@ func runHook(ctx context.Context, stdin io.Reader, stdout io.Writer, agent, sock
 // hook-settings)").
 type HookSettingsCmd struct {
 	Command string        `help:"Hook command the backend runs." default:"pao hook"`
-	Timeout time.Duration `help:"How long the backend waits for the hook; it must outlast the operator's time to answer." default:"10m"`
+	Timeout time.Duration `help:"How long the backend waits for the hook; it must outlast the operator's time to answer. Ignored when --config is given." default:"10m"`
+	Config  string        `help:"Orchestrator config to read the gate's ask timeout from; the hook timeout is then that plus a margin, so the backend never gives up before the gate does." type:"existingfile"`
 }
+
+// hookMargin is how much longer than the gate's ask timeout the backend waits
+// for the hook, so the gate's own denial arrives before the backend's.
+const hookMargin = time.Minute
 
 // Run implements hook-settings.
 func (c HookSettingsCmd) Run() error {
-	_, err := fmt.Fprintln(os.Stdout, claudecode.HookSettings(c.Command, int(c.Timeout.Seconds())))
+	timeout, err := c.timeout()
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(os.Stdout, claudecode.HookSettings(c.Command, int(timeout.Seconds())))
 	return err
+}
+
+func (c HookSettingsCmd) timeout() (time.Duration, error) {
+	if c.Config == "" {
+		return c.Timeout, nil
+	}
+	cfg, err := config.Load(c.Config)
+	if err != nil {
+		return 0, err
+	}
+	return cfg.Orchestrator.Gate.AskTimeout + hookMargin, nil
 }
