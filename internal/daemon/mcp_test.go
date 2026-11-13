@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -94,4 +96,86 @@ func TestTheMCPEndpointRefusesAnyoneWithoutTheOperatorToken(t *testing.T) {
 		_ = resp.Body.Close()
 		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode, "auth %q", auth)
 	}
+}
+
+func mcpCall[Out any](t *testing.T, cs *mcp.ClientSession, tool string, args map[string]any) Out {
+	t.Helper()
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: tool, Arguments: args})
+	require.NoError(t, err)
+	require.False(t, res.IsError, "%+v", res.Content)
+	raw, err := json.Marshal(res.StructuredContent)
+	require.NoError(t, err)
+	var out Out
+	require.NoError(t, json.Unmarshal(raw, &out))
+	return out
+}
+
+func TestTheOperatorSpawnsAndKillsATemporaryAgentOverMCP(t *testing.T) {
+	n := startTempNode(t, map[string]string{"fake": goodRecipe("fake")}, config.Temp{})
+	cs := mcpSession(t, n, token)
+
+	spawned := mcpCall[struct {
+		Name string `json:"name"`
+	}](t, cs, "spawn_agent", map[string]any{"recipe": "fake", "name": "tmp-a"})
+	assert.Equal(t, "tmp-a", spawned.Name)
+	a, ok := agentByName(t, n, "tmp-a")
+	require.True(t, ok, "the agent is the same one the HTTP surface sees")
+	assert.Equal(t, "running", a.State)
+
+	// It is routable like any agent; then it makes something and is killed over MCP.
+	_, err := n.client.Post(context.Background(), "human", "hi", "name", "tmp-a")
+	require.NoError(t, err)
+	assert.Equal(t, "echo: [human]: hi", n.next(t).Text)
+	require.NoError(t, os.WriteFile(filepath.Join(n.stateDir, "temp", "tmp-a", "result.txt"), []byte("42"), 0o600))
+
+	killed := mcpCall[struct {
+		HarvestID string `json:"harvest_id"`
+		Complete  bool   `json:"complete"`
+		Files     int    `json:"files"`
+	}](t, cs, "kill_agent", map[string]any{"name": "tmp-a"})
+	assert.True(t, killed.Complete)
+	assert.NotEmpty(t, killed.HarvestID)
+	assert.GreaterOrEqual(t, killed.Files, 2, "README.md and result.txt at least")
+	_, ok = agentByName(t, n, "tmp-a")
+	assert.False(t, ok)
+	_ = n.next(t) // the operator's harvest report on the channel
+
+	list := mcpCall[struct {
+		Harvests []struct {
+			ID        string `json:"id"`
+			Requester string `json:"requester"`
+		} `json:"harvests"`
+	}](t, cs, "list_harvests", nil)
+	require.Len(t, list.Harvests, 1)
+	assert.Equal(t, killed.HarvestID, list.Harvests[0].ID)
+	assert.Equal(t, "operator", list.Harvests[0].Requester, "a kill over MCP with the operator's token is the operator's")
+
+	read := mcpCall[struct {
+		Content  string `json:"content"`
+		Encoding string `json:"encoding"`
+	}](t, cs, "read_harvest", map[string]any{"id": killed.HarvestID, "path": "result.txt"})
+	assert.Equal(t, "42", read.Content)
+	assert.Equal(t, "utf8", read.Encoding)
+
+	// The same harvest through the HTTP surface: one store, two doors.
+	b, err := n.client.HarvestFile(context.Background(), killed.HarvestID, "result.txt")
+	require.NoError(t, err)
+	assert.Equal(t, "42", string(b))
+}
+
+func TestMCPRefusalsCarryTheOperationsOwnWords(t *testing.T) {
+	n := startTempNode(t, map[string]string{"fake": goodRecipe("fake")}, config.Temp{})
+	cs := mcpSession(t, n, token)
+
+	for tool, args := range map[string]map[string]any{
+		"spawn_agent":  {"recipe": "nope"},
+		"kill_agent":   {"name": "boss"}, // a configured agent is not a temporary one
+		"read_harvest": {"id": "no-such-id", "path": "x"},
+	} {
+		res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: tool, Arguments: args})
+		require.NoError(t, err, tool)
+		assert.True(t, res.IsError, tool)
+	}
+	_, ok := agentByName(t, n, "boss")
+	assert.False(t, ok)
 }

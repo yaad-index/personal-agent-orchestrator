@@ -16,15 +16,59 @@ import (
 	"github.com/yaad-index/personal-agent-orchestrator/internal/access"
 )
 
+// fakeOps records who each operation was called as, and what with.
 type fakeOps struct {
 	agents  []AgentInfo
 	recipes []RecipeInfo
 	err     error
+
+	spawnName string
+	spawnErr  error
+	kill      KillInfo
+	killErr   error
+	harvests  []HarvestInfo
+	harvest   HarvestInfo
+	file      []byte
+	opErr     error
+
+	calls *[]opCall
+}
+
+type opCall struct {
+	op   string
+	who  access.Subject
+	args []string
+}
+
+func (f fakeOps) rec(op string, who access.Subject, args ...string) {
+	if f.calls != nil {
+		*f.calls = append(*f.calls, opCall{op, who, args})
+	}
 }
 
 func (f fakeOps) Agents() []AgentInfo { return f.agents }
 func (f fakeOps) Recipes() ([]RecipeInfo, error) {
 	return f.recipes, f.err
+}
+func (f fakeOps) Spawn(_ context.Context, who access.Subject, recipe, name, channel string) (string, error) {
+	f.rec("spawn", who, recipe, name, channel)
+	return f.spawnName, f.spawnErr
+}
+func (f fakeOps) Kill(_ context.Context, who access.Subject, name string) (KillInfo, error) {
+	f.rec("kill", who, name)
+	return f.kill, f.killErr
+}
+func (f fakeOps) Harvests(who access.Subject) ([]HarvestInfo, error) {
+	f.rec("harvests", who)
+	return f.harvests, f.opErr
+}
+func (f fakeOps) Harvest(who access.Subject, id string) (HarvestInfo, error) {
+	f.rec("harvest", who, id)
+	return f.harvest, f.opErr
+}
+func (f fakeOps) HarvestFile(who access.Subject, id, path string) ([]byte, error) {
+	f.rec("file", who, id, path)
+	return f.file, f.opErr
 }
 
 var sampleOps = fakeOps{
@@ -108,10 +152,15 @@ func TestTheServerOffersItsTools(t *testing.T) {
 	var got []string
 	for _, tool := range res.Tools {
 		got = append(got, tool.Name)
-		assert.True(t, tool.Annotations.ReadOnlyHint, "%s only reads", tool.Name)
+		switch tool.Name {
+		case "spawn_agent", "kill_agent":
+			assert.False(t, tool.Annotations.ReadOnlyHint, tool.Name)
+		default:
+			assert.True(t, tool.Annotations.ReadOnlyHint, "%s only reads", tool.Name)
+		}
 		assert.NotEmpty(t, tool.Description)
 	}
-	assert.ElementsMatch(t, []string{"list_agents", "list_recipes"}, got)
+	assert.ElementsMatch(t, []string{"list_agents", "list_recipes", "spawn_agent", "kill_agent", "list_harvests", "read_harvest"}, got)
 }
 
 func TestTheOperatorSeesEverything(t *testing.T) {
@@ -264,4 +313,152 @@ func TestTheServerKeepsNoSession(t *testing.T) {
 	_ = resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Empty(t, resp.Header.Get("Mcp-Session-Id"), "every request carries its own token; there is no session whose identity could be borrowed")
+}
+
+// toolText calls a tool and returns whether it failed, and its text.
+func toolText(t *testing.T, cs *mcp.ClientSession, tool string, args map[string]any) (bool, string) {
+	t.Helper()
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: tool, Arguments: args})
+	require.NoError(t, err)
+	var text strings.Builder
+	for _, c := range res.Content {
+		if tc, ok := c.(*mcp.TextContent); ok {
+			text.WriteString(tc.Text)
+		}
+	}
+	return res.IsError, text.String()
+}
+
+func structured[Out any](t *testing.T, cs *mcp.ClientSession, tool string, args map[string]any) Out {
+	t.Helper()
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: tool, Arguments: args})
+	require.NoError(t, err)
+	require.False(t, res.IsError, "%+v", res.Content)
+	raw, err := json.Marshal(res.StructuredContent)
+	require.NoError(t, err)
+	var out Out
+	require.NoError(t, json.Unmarshal(raw, &out))
+	return out
+}
+
+func TestSpawnAndKillRunAsTheResolvedSubject(t *testing.T) {
+	var calls []opCall
+	ops := fakeOps{spawnName: "tmp-a", kill: KillInfo{HarvestID: "tmp-a-1", Complete: true, Files: 2, Bytes: 9, Summary: "harvested 2"}, calls: &calls}
+	url := serve(t, ops, Chain{NewOperatorResolver("op"), staticResolver{"agent-tok": access.Agent("boss")}})
+	op, ag := connect(t, url, "op"), connect(t, url, "agent-tok")
+
+	out := structured[spawnOutput](t, op, "spawn_agent", map[string]any{"recipe": "r", "name": "tmp-a", "channel": "local"})
+	assert.Equal(t, "tmp-a", out.Name)
+	k := structured[KillInfo](t, ag, "kill_agent", map[string]any{"name": "tmp-a"})
+	assert.Equal(t, "tmp-a-1", k.HarvestID)
+	assert.Equal(t, "harvested 2", k.Summary)
+	_ = structured[spawnOutput](t, ag, "spawn_agent", map[string]any{"recipe": "r"})
+
+	assert.Equal(t, []opCall{
+		{"spawn", access.Operator, []string{"r", "tmp-a", "local"}},
+		{"kill", access.Agent("boss"), []string{"tmp-a"}},
+		{"spawn", access.Agent("boss"), []string{"r", "", ""}},
+	}, calls, "each call reaches the operation as the subject its connection resolved to: the surface decides nothing, the operation does")
+}
+
+func TestARefusedSpawnOrKillIsAToolErrorThatSaysWhatTheOperationSaid(t *testing.T) {
+	ops := fakeOps{spawnErr: errors.New("request denied: no thanks"), killErr: errors.New("no such temporary agent")}
+	cs := connect(t, serve(t, ops, NewOperatorResolver("tok")), "tok")
+
+	failed, text := toolText(t, cs, "spawn_agent", map[string]any{"recipe": "r"})
+	assert.True(t, failed)
+	assert.Contains(t, text, "no thanks", "a refusal by the gate reaches the caller with its reason")
+	failed, text = toolText(t, cs, "kill_agent", map[string]any{"name": "x"})
+	assert.True(t, failed)
+	assert.Contains(t, text, "no such temporary agent")
+}
+
+func TestAnAgentThatIsNotReadyIsStillNamed(t *testing.T) {
+	ops := fakeOps{spawnName: "tmp-a", spawnErr: errors.New("not ready")}
+	cs := connect(t, serve(t, ops, NewOperatorResolver("tok")), "tok")
+	failed, text := toolText(t, cs, "spawn_agent", map[string]any{"recipe": "r"})
+	assert.True(t, failed)
+	assert.Contains(t, text, `"tmp-a"`, "the name is how the agent is found to be inspected or killed")
+}
+
+func TestToolsRefuseMissingRequiredArguments(t *testing.T) {
+	var calls []opCall
+	cs := connect(t, serve(t, fakeOps{calls: &calls}, NewOperatorResolver("tok")), "tok")
+	for tool, args := range map[string]map[string]any{
+		"spawn_agent":  {"recipe": ""},
+		"kill_agent":   {"name": ""},
+		"read_harvest": {"id": ""},
+	} {
+		failed, _ := toolText(t, cs, tool, args)
+		assert.True(t, failed, tool)
+	}
+	assert.Empty(t, calls, "an empty request never reaches the operation")
+}
+
+func TestHarvestListingAndReading(t *testing.T) {
+	var calls []opCall
+	ops := fakeOps{
+		harvests: []HarvestInfo{{ID: "a-1", Agent: "a", Complete: true}},
+		harvest:  HarvestInfo{ID: "a-1", Agent: "a", Files: []FileInfo{{Path: "x.txt", Size: 5}}},
+		file:     []byte("hello"),
+		calls:    &calls,
+	}
+	cs := connect(t, serve(t, ops, staticResolver{"a": access.Agent("boss")}), "a")
+
+	list := structured[listHarvestsOutput](t, cs, "list_harvests", nil)
+	require.Len(t, list.Harvests, 1)
+	assert.Equal(t, "a-1", list.Harvests[0].ID)
+
+	meta := structured[readHarvestOutput](t, cs, "read_harvest", map[string]any{"id": "a-1"})
+	require.NotNil(t, meta.Harvest)
+	assert.Equal(t, "x.txt", meta.Harvest.Files[0].Path)
+	assert.Empty(t, meta.Content)
+
+	body := structured[readHarvestOutput](t, cs, "read_harvest", map[string]any{"id": "a-1", "path": "x.txt"})
+	assert.Equal(t, "utf8", body.Encoding)
+	assert.Equal(t, "hello", body.Content)
+
+	for _, c := range calls {
+		assert.Equal(t, access.Agent("boss"), c.who, c.op)
+	}
+}
+
+func TestBinaryAndOversizeHarvestFiles(t *testing.T) {
+	ops := fakeOps{file: []byte{0xff, 0xfe, 0x00, 0x01}}
+	cs := connect(t, serve(t, ops, NewOperatorResolver("tok")), "tok")
+	out := structured[readHarvestOutput](t, cs, "read_harvest", map[string]any{"id": "a", "path": "bin"})
+	assert.Equal(t, "base64", out.Encoding)
+	assert.Equal(t, "//4AAQ==", out.Content)
+
+	ops = fakeOps{file: make([]byte, maxFileBytes+1)}
+	cs = connect(t, serve(t, ops, NewOperatorResolver("tok")), "tok")
+	failed, text := toolText(t, cs, "read_harvest", map[string]any{"id": "a", "path": "big"})
+	assert.True(t, failed)
+	assert.Contains(t, text, "more than")
+
+	ops = fakeOps{file: make([]byte, maxFileBytes)}
+	cs = connect(t, serve(t, ops, NewOperatorResolver("tok")), "tok")
+	_, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "read_harvest", Arguments: map[string]any{"id": "a", "path": "edge"}})
+	require.NoError(t, err, "exactly the limit is allowed")
+}
+
+func TestAnEmptyHarvestListIsAnArray(t *testing.T) {
+	cs := connect(t, serve(t, fakeOps{}, NewOperatorResolver("tok")), "tok")
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "list_harvests"})
+	require.NoError(t, err)
+	raw, _ := json.Marshal(res.StructuredContent)
+	assert.JSONEq(t, `{"harvests":[]}`, string(raw))
+}
+
+func TestAnOperationErrorOnReadIsAToolError(t *testing.T) {
+	cs := connect(t, serve(t, fakeOps{opErr: errors.New("harvest not found")}, NewOperatorResolver("tok")), "tok")
+	for tool, args := range map[string]map[string]any{
+		"read_harvest": {"id": "x", "path": "p"},
+	} {
+		failed, text := toolText(t, cs, tool, args)
+		assert.True(t, failed)
+		assert.Contains(t, text, "harvest not found")
+	}
+	failed, _ := toolText(t, cs, "list_harvests", nil)
+	assert.True(t, failed)
 }

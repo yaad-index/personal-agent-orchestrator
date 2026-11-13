@@ -2,6 +2,10 @@ package mcpsrv
 
 import (
 	"context"
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"unicode/utf8"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -27,14 +31,58 @@ type RecipeInfo struct {
 	Description string `json:"description" jsonschema:"what the recipe is for"`
 }
 
+// KillInfo is what a kill reports.
+type KillInfo struct {
+	HarvestID   string `json:"harvest_id" jsonschema:"the harvest the agent's outputs were written to"`
+	Complete    bool   `json:"complete" jsonschema:"false if a limit stopped the copy"`
+	WorkdirKept bool   `json:"workdir_kept" jsonschema:"true if the agent's files were not destroyed because the harvest was incomplete"`
+	Files       int    `json:"files" jsonschema:"how many files were harvested"`
+	Bytes       int64  `json:"bytes" jsonschema:"how many bytes were harvested"`
+	Summary     string `json:"summary" jsonschema:"a readable report of what was harvested"`
+}
+
+// FileInfo is one harvested file.
+type FileInfo struct {
+	Path string `json:"path" jsonschema:"path inside the harvest"`
+	Size int64  `json:"size" jsonschema:"size in bytes"`
+}
+
+// HarvestInfo describes one harvest.
+type HarvestInfo struct {
+	ID        string     `json:"id" jsonschema:"the harvest's id"`
+	Agent     string     `json:"agent" jsonschema:"the agent whose outputs it holds"`
+	Tags      []string   `json:"tags" jsonschema:"the agent's tags when it was killed"`
+	Requester string     `json:"requester" jsonschema:"who asked for the kill"`
+	Time      string     `json:"time" jsonschema:"when it was harvested, RFC 3339"`
+	Complete  bool       `json:"complete" jsonschema:"false if a limit stopped the copy"`
+	Bytes     int64      `json:"bytes" jsonschema:"total size of the harvested files"`
+	Files     []FileInfo `json:"files,omitempty" jsonschema:"the harvested files; only when one harvest is read"`
+}
+
 // Operations is what the tools call. It is the node's existing operations, seen
-// from the MCP surface; the daemon supplies it.
+// from the MCP surface; the daemon supplies it. Operations that act on behalf
+// of a caller take its subject, and the operation decides what that subject may
+// do, exactly as for the other surfaces: this package never decides for them.
 type Operations interface {
 	// Agents lists every registered agent, configured and temporary.
 	Agents() []AgentInfo
 	// Recipes lists the installed recipes.
 	Recipes() ([]RecipeInfo, error)
+	// Spawn creates a temporary agent and returns its name. When the agent was
+	// created but did not become ready it returns the name with the error.
+	Spawn(ctx context.Context, who access.Subject, recipe, name, channel string) (string, error)
+	// Kill tears a temporary agent down, harvesting first.
+	Kill(ctx context.Context, who access.Subject, name string) (KillInfo, error)
+	// Harvests lists the harvests who may read.
+	Harvests(who access.Subject) ([]HarvestInfo, error)
+	// Harvest returns one harvest, with its files, if who may read it.
+	Harvest(who access.Subject, id string) (HarvestInfo, error)
+	// HarvestFile returns one harvested file if who may read the harvest.
+	HarvestFile(who access.Subject, id, path string) ([]byte, error)
 }
+
+// maxFileBytes bounds what one read_harvest call returns.
+const maxFileBytes = 1 << 20
 
 type noInput struct{}
 
@@ -57,6 +105,120 @@ func (s *Server) addTools() {
 		Description: "List the recipes a temporary agent can be spawned from.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 	}, s.listRecipes)
+
+	destructive, notDestructive := true, false
+	mcp.AddTool(s.srv, &mcp.Tool{
+		Name:        "spawn_agent",
+		Description: "Start a temporary agent from a recipe, in a fresh isolated working directory, with its stream bound to a channel. Returns its name. Spawning is gated: you may be asked to wait for the operator.",
+		Annotations: &mcp.ToolAnnotations{DestructiveHint: &notDestructive},
+	}, s.spawnAgent)
+	mcp.AddTool(s.srv, &mcp.Tool{
+		Name:        "kill_agent",
+		Description: "Tear a temporary agent down. Its outputs are harvested first and the harvest id is returned; nothing the agent made is lost. Killing is gated: you may be asked to wait for the operator.",
+		Annotations: &mcp.ToolAnnotations{DestructiveHint: &destructive},
+	}, s.killAgent)
+	mcp.AddTool(s.srv, &mcp.Tool{
+		Name:        "list_harvests",
+		Description: "List the harvests of killed temporary agents that you may read, newest first.",
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+	}, s.listHarvests)
+	mcp.AddTool(s.srv, &mcp.Tool{
+		Name:        "read_harvest",
+		Description: "Read a harvest. With only an id it lists the harvest's files; with a path it returns that file's content (text as is, anything else base64).",
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+	}, s.readHarvest)
+}
+
+type spawnInput struct {
+	Recipe  string `json:"recipe" jsonschema:"the recipe to spawn from (see list_recipes)"`
+	Name    string `json:"name,omitempty" jsonschema:"a name for the agent; generated from the recipe if left out"`
+	Channel string `json:"channel,omitempty" jsonschema:"the channel its stream is bound to; the node's only channel if left out"`
+}
+
+type spawnOutput struct {
+	Name string `json:"name" jsonschema:"the new agent's name"`
+}
+
+func (s *Server) spawnAgent(ctx context.Context, req *mcp.CallToolRequest, in spawnInput) (*mcp.CallToolResult, spawnOutput, error) {
+	if in.Recipe == "" {
+		return nil, spawnOutput{}, errors.New("a recipe is required")
+	}
+	name, err := s.ops.Spawn(ctx, subject(req), in.Recipe, in.Name, in.Channel)
+	if err != nil {
+		return nil, spawnOutput{}, withName(name, err)
+	}
+	return nil, spawnOutput{Name: name}, nil
+}
+
+// withName keeps the name of an agent that was created but is not ready in the
+// error the caller sees, since it is how the agent is found afterwards.
+func withName(name string, err error) error {
+	if name == "" {
+		return err
+	}
+	return fmt.Errorf("agent %q: %w", name, err)
+}
+
+type killInput struct {
+	Name string `json:"name" jsonschema:"the temporary agent to kill"`
+}
+
+func (s *Server) killAgent(ctx context.Context, req *mcp.CallToolRequest, in killInput) (*mcp.CallToolResult, KillInfo, error) {
+	if in.Name == "" {
+		return nil, KillInfo{}, errors.New("a name is required")
+	}
+	res, err := s.ops.Kill(ctx, subject(req), in.Name)
+	return nil, res, err
+}
+
+type listHarvestsOutput struct {
+	Harvests []HarvestInfo `json:"harvests"`
+}
+
+func (s *Server) listHarvests(_ context.Context, req *mcp.CallToolRequest, _ noInput) (*mcp.CallToolResult, listHarvestsOutput, error) {
+	hs, err := s.ops.Harvests(subject(req))
+	if hs == nil {
+		hs = []HarvestInfo{}
+	}
+	return nil, listHarvestsOutput{Harvests: hs}, err
+}
+
+type readHarvestInput struct {
+	ID   string `json:"id" jsonschema:"the harvest id (see list_harvests)"`
+	Path string `json:"path,omitempty" jsonschema:"a file path inside the harvest; leave out to list the files"`
+}
+
+type readHarvestOutput struct {
+	Harvest  *HarvestInfo `json:"harvest,omitempty" jsonschema:"the harvest and its files, when no path was given"`
+	Path     string       `json:"path,omitempty" jsonschema:"the file read"`
+	Encoding string       `json:"encoding,omitempty" jsonschema:"utf8 or base64"`
+	Content  string       `json:"content,omitempty" jsonschema:"the file's content"`
+}
+
+func (s *Server) readHarvest(_ context.Context, req *mcp.CallToolRequest, in readHarvestInput) (*mcp.CallToolResult, readHarvestOutput, error) {
+	who := subject(req)
+	if in.ID == "" {
+		return nil, readHarvestOutput{}, errors.New("an id is required")
+	}
+	if in.Path == "" {
+		h, err := s.ops.Harvest(who, in.ID)
+		if err != nil {
+			return nil, readHarvestOutput{}, err
+		}
+		return nil, readHarvestOutput{Harvest: &h}, nil
+	}
+	b, err := s.ops.HarvestFile(who, in.ID, in.Path)
+	if err != nil {
+		return nil, readHarvestOutput{}, err
+	}
+	if len(b) > maxFileBytes {
+		return nil, readHarvestOutput{}, fmt.Errorf("%s is %d bytes, more than the %d one call returns", in.Path, len(b), maxFileBytes)
+	}
+	out := readHarvestOutput{Path: in.Path, Encoding: "utf8", Content: string(b)}
+	if !utf8.Valid(b) {
+		out.Encoding, out.Content = "base64", base64.StdEncoding.EncodeToString(b)
+	}
+	return nil, out, nil
 }
 
 // listAgents lists only the agents the caller may see: an agent the caller may

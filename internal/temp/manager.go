@@ -212,6 +212,12 @@ func (m *Manager) Spawn(ctx context.Context, req SpawnRequest) (core.Profile, er
 	}
 	rec, ok := set.Get(req.Recipe)
 	if !ok {
+		if req.Requester.Kind != access.KindOperator {
+			// Which recipes exist is not for a caller to probe: to anyone but
+			// the operator an unknown recipe is the same refusal as one they
+			// may not use.
+			return core.Profile{}, ErrNotFound
+		}
 		return core.Profile{}, fmt.Errorf("%w: %q", ErrNoRecipe, req.Recipe)
 	}
 
