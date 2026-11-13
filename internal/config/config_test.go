@@ -258,7 +258,7 @@ func meshSetup(t *testing.T, node, orch, doc string) string {
 	return path
 }
 
-const meshDoc = "nodes:\n  - id: n1\n    addr: 10.0.0.1:7745\n    fingerprint: " + meshFp1 + "\n  - id: n2\n    addr: 10.0.0.2:7745\n    fingerprint: " + meshFp2 + "\n"
+const meshDoc = "master: n1\nnodes:\n  - id: n1\n    addr: 10.0.0.1:7745\n    fingerprint: " + meshFp1 + "\n  - id: n2\n    addr: 10.0.0.2:7745\n    fingerprint: " + meshFp2 + "\n"
 
 func TestAMeshIsLoadedAlongsideTheConfig(t *testing.T) {
 	path := meshSetup(t, "n1", "mesh_file: mesh.yaml\nmesh_listen: 0.0.0.0:7745\n", meshDoc)
@@ -282,9 +282,9 @@ func TestMeshSettingsMustBeConsistent(t *testing.T) {
 		"file without listen":  {"mesh_file: mesh.yaml\n", meshDoc, "mesh_listen is required"},
 		"listen without file":  {"mesh_listen: 0.0.0.0:7745\n", "", "mesh_file is not"},
 		"bad listen":           {"mesh_file: mesh.yaml\nmesh_listen: nowhere\n", meshDoc, "host:port"},
-		"this node not listed": {"mesh_file: mesh.yaml\nmesh_listen: 0.0.0.0:7745\n", "nodes:\n  - id: n2\n    addr: h:1\n    fingerprint: " + meshFp2 + "\n", `this node ("n1") is not in the mesh document`},
+		"this node not listed": {"mesh_file: mesh.yaml\nmesh_listen: 0.0.0.0:7745\n", "master: n2\nnodes:\n  - id: n2\n    addr: h:1\n    fingerprint: " + meshFp2 + "\n", `this node ("n1") is not in the mesh document`},
 		"missing document":     {"mesh_file: gone.yaml\nmesh_listen: 0.0.0.0:7745\n", "", "gone.yaml"},
-		"invalid document":     {"mesh_file: mesh.yaml\nmesh_listen: 0.0.0.0:7745\n", "nodes: []\n", "lists no nodes"},
+		"invalid document":     {"mesh_file: mesh.yaml\nmesh_listen: 0.0.0.0:7745\n", "master: n1\nnodes: []\n", "lists no nodes"},
 	}
 	for name, c := range cases {
 		_, err := Load(meshSetup(t, "n1", c.orch, c.doc))

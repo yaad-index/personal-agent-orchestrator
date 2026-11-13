@@ -222,7 +222,7 @@ func writeDoc(t *testing.T, body string) string {
 }
 
 func TestLoadDocument(t *testing.T) {
-	d, err := LoadDocument(writeDoc(t, "nodes:\n  - id: n1\n    addr: 10.0.0.1:7745\n    fingerprint: "+fp1+"\n  - id: n2\n    addr: host.example:7745\n    fingerprint: "+fp2+"\n"))
+	d, err := LoadDocument(writeDoc(t, "master: n1\nnodes:\n  - id: n1\n    addr: 10.0.0.1:7745\n    fingerprint: "+fp1+"\n  - id: n2\n    addr: host.example:7745\n    fingerprint: "+fp2+"\n"))
 	require.NoError(t, err)
 	require.Len(t, d.Nodes, 2)
 	e, ok := d.Entry("n2")
@@ -242,19 +242,21 @@ func TestDocumentValidation(t *testing.T) {
 		return "  - id: " + id + "\n    addr: " + addr + "\n    fingerprint: " + fp + "\n"
 	}
 	cases := map[string]string{
-		"empty":                 "nodes: []\n",
+		"empty":                 "master: a\nnodes: []\n",
 		"no nodes key":          "{}\n",
-		"unknown key":           "nodes:\n" + node("a", "h:1", fp1) + "extra: 1\n",
-		"unknown field":         "nodes:\n" + node("a", "h:1", fp1) + "    note: x\n",
-		"bad id":                "nodes:\n" + node("A", "h:1", fp1),
-		"duplicate id":          "nodes:\n" + node("a", "h:1", fp1) + node("a", "h:2", fp2),
-		"no port":               "nodes:\n" + node("a", "h", fp1),
-		"no host":               "nodes:\n" + node("a", ":1", fp1),
-		"bad fingerprint":       "nodes:\n" + node("a", "h:1", "abc"),
-		"uppercase fingerprint": "nodes:\n" + node("a", "h:1", "sha256:"+strings.Repeat("A", 64)),
-		"wrong algorithm":       "nodes:\n" + node("a", "h:1", "sha1:"+strings.Repeat("1", 64)),
-		"short fingerprint":     "nodes:\n" + node("a", "h:1", "sha256:11"),
-		"one key for two ids":   "nodes:\n" + node("a", "h:1", fp1) + node("b", "h:2", fp1),
+		"unknown key":           "master: a\nnodes:\n" + node("a", "h:1", fp1) + "extra: 1\n",
+		"unknown field":         "master: a\nnodes:\n" + node("a", "h:1", fp1) + "    note: x\n",
+		"bad id":                "master: a\nnodes:\n" + node("A", "h:1", fp1),
+		"duplicate id":          "master: a\nnodes:\n" + node("a", "h:1", fp1) + node("a", "h:2", fp2),
+		"no port":               "master: a\nnodes:\n" + node("a", "h", fp1),
+		"no host":               "master: a\nnodes:\n" + node("a", ":1", fp1),
+		"bad fingerprint":       "master: a\nnodes:\n" + node("a", "h:1", "abc"),
+		"uppercase fingerprint": "master: a\nnodes:\n" + node("a", "h:1", "sha256:"+strings.Repeat("A", 64)),
+		"wrong algorithm":       "master: a\nnodes:\n" + node("a", "h:1", "sha1:"+strings.Repeat("1", 64)),
+		"short fingerprint":     "master: a\nnodes:\n" + node("a", "h:1", "sha256:11"),
+		"one key for two ids":   "master: a\nnodes:\n" + node("a", "h:1", fp1) + node("b", "h:2", fp1),
+		"no master":             "nodes:\n" + node("a", "h:1", fp1),
+		"master not listed":     "master: z\nnodes:\n" + node("a", "h:1", fp1),
 	}
 	for name, body := range cases {
 		_, err := LoadDocument(writeDoc(t, body))
@@ -270,7 +272,7 @@ func TestDocumentValidation(t *testing.T) {
 func newMesh(t *testing.T, names ...string) (map[string]*Identity, *Peers) {
 	t.Helper()
 	ids := make(map[string]*Identity)
-	d := &Document{}
+	d := &Document{Master: names[0]}
 	for i, n := range names {
 		id, err := Generate(keyPath(t), n)
 		require.NoError(t, err)

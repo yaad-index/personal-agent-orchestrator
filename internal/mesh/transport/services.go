@@ -1,0 +1,259 @@
+package transport
+
+import (
+	"context"
+	"errors"
+	"io"
+	"slices"
+	"time"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
+	pb "github.com/yaad-index/personal-agent-orchestrator/internal/mesh/meshpb"
+)
+
+// --- Master ---
+
+type masterServer struct {
+	pb.UnimplementedMasterServer
+	n *Node
+}
+
+// Session is where a secondary reports to the master. The interceptor has already
+// refused it unless this node is master. For now each report is acknowledged and
+// counted; the directory the reports build is the next step.
+func (s masterServer) Session(stream pb.Master_SessionServer) error {
+	caller, _ := CallerFrom(stream.Context())
+	for {
+		r, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		s.n.noteReport(caller, r.GetSeq())
+		if err := stream.Send(&pb.Ack{Seq: r.GetSeq()}); err != nil {
+			return err
+		}
+	}
+}
+
+func (n *Node) noteReport(caller string, seq uint64) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	s := n.sessions[caller]
+	if s == nil {
+		s = &session{}
+		n.sessions[caller] = s
+	}
+	s.reports++
+	s.lastSeq = seq
+	s.last = time.Now()
+}
+
+// Reports returns how many reports the master has had from a node.
+func (n *Node) Reports(from string) int {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if s := n.sessions[from]; s != nil {
+		return s.reports
+	}
+	return 0
+}
+
+// --- Peer ---
+
+type peerServer struct {
+	pb.UnimplementedPeerServer
+	n *Node
+}
+
+// Hello exchanges what each node believes and refuses a peer it shares no protocol
+// minor version with.
+func (s peerServer) Hello(ctx context.Context, req *pb.HelloRequest) (*pb.HelloReply, error) {
+	caller, _ := CallerFrom(ctx)
+	if !shareMinor(req.GetMinors()) {
+		return nil, status.Errorf(codes.FailedPrecondition, "no protocol version in common: this node speaks %v, the caller %v", Minors, req.GetMinors())
+	}
+	s.n.observe(caller, req.GetEpoch(), req.GetMasterId())
+	epoch, master := s.n.mem.View()
+	return &pb.HelloReply{Role: s.n.selfRole(), Epoch: epoch, MasterId: master, Minors: Minors}, nil
+}
+
+func shareMinor(theirs []uint32) bool {
+	for _, m := range theirs {
+		if slices.Contains(Minors, m) {
+			return true
+		}
+	}
+	return false
+}
+
+// Liveness is the heartbeat stream: each side sends a beat every interval and
+// takes in the other's.
+func (s peerServer) Liveness(stream pb.Peer_LivenessServer) error {
+	caller, _ := CallerFrom(stream.Context())
+	return s.n.runLiveness(stream.Context(), caller, stream)
+}
+
+// MasterLost records an announcement that the master is lost.
+func (s peerServer) MasterLost(ctx context.Context, req *pb.MasterLostNotice) (*pb.Result, error) {
+	caller, _ := CallerFrom(ctx)
+	s.n.mu.Lock()
+	s.n.lost = append(s.n.lost, LostNotice{Epoch: req.GetEpoch(), MasterID: req.GetMasterId(), Announcer: caller, At: time.Now()})
+	s.n.mu.Unlock()
+	return &pb.Result{}, nil
+}
+
+// Probe says what this node believes about the master and whether it can see one.
+func (s peerServer) Probe(context.Context, *pb.ProbeRequest) (*pb.ProbeReply, error) {
+	epoch, master := s.n.mem.View()
+	live := master == s.n.cfg.Self.NodeID || s.n.peerUp(master)
+	return &pb.ProbeReply{Epoch: epoch, MasterId: master, HasLiveMaster: live}, nil
+}
+
+// NewMaster is a node announcing that it is master at an epoch. Only the node
+// itself may say so: a belief that a third node is master comes through a
+// heartbeat, not through this call.
+func (s peerServer) NewMaster(ctx context.Context, req *pb.NewMasterNotice) (*pb.Result, error) {
+	caller, _ := CallerFrom(ctx)
+	if req.GetMasterId() != caller {
+		return nil, status.Errorf(codes.PermissionDenied, "node %q cannot announce node %q as master", caller, req.GetMasterId())
+	}
+	s.n.observe(caller, req.GetEpoch(), req.GetMasterId())
+	return &pb.Result{}, nil
+}
+
+// --- the liveness loop, on both ends ---
+
+type beatStream interface {
+	Send(*pb.Beat) error
+	Recv() (*pb.Beat, error)
+}
+
+// runLiveness sends a beat every interval and takes in the peer's until the stream
+// or the context ends. While it runs the peer counts as connected.
+func (n *Node) runLiveness(ctx context.Context, peerID string, bs beatStream) error {
+	n.mu.Lock()
+	ps := n.peerLocked(peerID)
+	ps.connected++
+	n.mu.Unlock()
+	defer func() {
+		n.mu.Lock()
+		ps.connected--
+		n.mu.Unlock()
+	}()
+
+	recvErr := make(chan error, 1)
+	go func() {
+		for {
+			b, err := bs.Recv()
+			if err != nil {
+				recvErr <- err
+				return
+			}
+			n.mu.Lock()
+			ps.lastBeat, ps.role, ps.epoch, ps.master = time.Now(), b.GetRole(), b.GetEpoch(), b.GetMasterId()
+			n.mu.Unlock()
+			n.observe(peerID, b.GetEpoch(), b.GetMasterId())
+		}
+	}()
+
+	var seq uint64
+	tick := time.NewTicker(n.beat)
+	defer tick.Stop()
+	send := func() error {
+		seq++
+		epoch, master := n.mem.View()
+		return bs.Send(&pb.Beat{Seq: seq, Role: n.selfRole(), Epoch: epoch, MasterId: master})
+	}
+	if err := send(); err != nil {
+		return err
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case err := <-recvErr:
+			if errors.Is(err, io.EOF) || status.Code(err) == codes.Canceled {
+				return nil
+			}
+			return err
+		case <-tick.C:
+			if err := send(); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func (n *Node) peerLocked(id string) *peerStatus {
+	ps := n.status[id]
+	if ps == nil {
+		ps = &peerStatus{}
+		n.status[id] = ps
+	}
+	return ps
+}
+
+func (n *Node) peerUp(id string) bool {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	s, ok := n.status[id]
+	return ok && s.connected > 0 && time.Since(s.lastBeat) < 3*n.beat
+}
+
+// keepLivenessOpen keeps the liveness stream to a higher-id node open, dialing
+// again with backoff whenever it drops, until ctx is done.
+func (n *Node) keepLivenessOpen(ctx context.Context, id string) {
+	delay := time.Second
+	for ctx.Err() == nil {
+		start := time.Now()
+		if err := n.liveOnce(ctx, id); err != nil && ctx.Err() == nil {
+			n.log.Warn("liveness stream to a peer ended", "peer", id, "error", err)
+		}
+		if time.Since(start) > 30*time.Second {
+			delay = time.Second
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(delay):
+		}
+		if delay < 15*time.Second {
+			delay = delay * 8 / 5
+		}
+	}
+}
+
+func (n *Node) liveOnce(ctx context.Context, id string) error {
+	conn, err := n.Dial(id)
+	if err != nil {
+		return err
+	}
+	client := pb.NewPeerClient(conn)
+
+	epoch, master := n.mem.View()
+	hctx, cancel := context.WithTimeout(ctx, DefaultCallTimeout)
+	reply, err := client.Hello(hctx, &pb.HelloRequest{Role: n.selfRole(), Epoch: epoch, MasterId: master, Minors: Minors})
+	cancel()
+	if err != nil {
+		return err
+	}
+	n.observe(id, reply.GetEpoch(), reply.GetMasterId())
+
+	sctx, stop := context.WithCancel(ctx)
+	defer stop()
+	stream, err := client.Liveness(sctx)
+	if err != nil {
+		return err
+	}
+	return n.runLiveness(sctx, id, clientBeats{stream})
+}
+
+type clientBeats struct {
+	grpc.BidiStreamingClient[pb.Beat, pb.Beat]
+}
