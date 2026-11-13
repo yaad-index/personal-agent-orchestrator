@@ -112,15 +112,17 @@ func other(base core.Entry, rec record) core.Entry {
 	if rec.Subtype != "" {
 		e.Type += "/" + rec.Subtype
 	}
-	var s string
-	if json.Unmarshal(rec.Content, &s) == nil {
-		e.Text = s
-	}
+	// A string is shown as is; structured content keeps its JSON, so an
+	// unfamiliar record's payload is still visible in a verbose view.
+	e.Text = resultText(rec.Content)
 	return e
 }
 
 // resultText flattens a tool result: a string, or a list of text blocks.
 func resultText(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
 	var s string
 	if json.Unmarshal(raw, &s) == nil {
 		return s
