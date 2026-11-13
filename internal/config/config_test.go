@@ -216,3 +216,22 @@ func TestValidateProfileAndDecodeFileAreTheSameRulesAsLoad(t *testing.T) {
 	write(t, path, "name: a\nunknown_key: 1\n")
 	assert.Error(t, DecodeFile(path, &p), "unknown keys are an error")
 }
+
+func TestTempThresholdsDefaultAndValidate(t *testing.T) {
+	path := setup(t, map[string]string{"a.yaml": "name: a\nbackend: b\n" + startup})
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	assert.Equal(t, DefaultUnusedAfter, cfg.Orchestrator.Temp.UnusedAfter)
+	assert.Equal(t, DefaultIdleAfter, cfg.Orchestrator.Temp.IdleAfter)
+
+	base := "node: n1\nprofiles_dir: profiles\nstate_dir: state\ntoken_env: PAO_TOKEN\n"
+	write(t, path, base+"temp:\n  unused_after: 2m\n  idle_after: 1h\n")
+	cfg, err = Load(path)
+	require.NoError(t, err)
+	assert.Equal(t, 2*time.Minute, cfg.Orchestrator.Temp.UnusedAfter)
+	assert.Equal(t, time.Hour, cfg.Orchestrator.Temp.IdleAfter)
+
+	write(t, path, base+"temp:\n  idle_after: -1m\n")
+	_, err = Load(path)
+	assert.Error(t, err)
+}

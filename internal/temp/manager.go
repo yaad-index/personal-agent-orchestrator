@@ -37,6 +37,9 @@ var (
 	ErrNotFound = errors.New("no such temporary agent")
 	// ErrDenied is returned when the approval gate refused an agent's request.
 	ErrDenied = errors.New("request denied")
+	// ErrBadRequest is returned for a request that is malformed: a bad name, or
+	// a channel that is missing or unknown.
+	ErrBadRequest = errors.New("bad request")
 	// ErrNoRecipe is returned for a recipe that is not installed.
 	ErrNoRecipe = errors.New("no such recipe")
 )
@@ -96,6 +99,10 @@ type Manager struct {
 	// Gate decides an agent's request after access allows it. A nil Gate denies
 	// every agent request.
 	Gate Gate
+	// Check refuses an instantiated profile the node cannot run (for example a
+	// transcript format it has no reader for) before anything is started. It
+	// may be nil.
+	Check func(core.Profile) error
 	// Follow stops transcript followers; Surface reports a kill to its
 	// requester. Both may be nil.
 	Follow  Follower
@@ -215,7 +222,7 @@ func (m *Manager) Spawn(ctx context.Context, req SpawnRequest) (core.Profile, er
 		}
 	}
 	if !namePattern.MatchString(name) {
-		return core.Profile{}, fmt.Errorf("agent name %q must be lowercase letters, digits, '-' or '_'", name)
+		return core.Profile{}, fmt.Errorf("%w: agent name %q must be lowercase letters, digits, '-' or '_'", ErrBadRequest, name)
 	}
 	if err := m.authorize(ctx, req.Requester, access.Spawn, access.Resource{Agent: name, Tags: rec.Profile.Tags},
 		map[string]string{"recipe": rec.Name, "agent": name}); err != nil {
@@ -241,6 +248,12 @@ func (m *Manager) Spawn(ctx context.Context, req SpawnRequest) (core.Profile, er
 	if err != nil {
 		undo()
 		return core.Profile{}, err
+	}
+	if m.Check != nil {
+		if err := m.Check(prof); err != nil {
+			undo()
+			return core.Profile{}, fmt.Errorf("%w: %v", ErrBadRequest, err)
+		}
 	}
 	if err := m.Registry.AddTemp(prof, registry.TempInfo{Created: m.now(), Channel: channel, Recipe: rec.Name}); err != nil {
 		undo()
@@ -272,18 +285,18 @@ func (m *Manager) Spawn(ctx context.Context, req SpawnRequest) (core.Profile, er
 func (m *Manager) pickChannel(want string) (string, error) {
 	if want != "" {
 		if !m.Channels.HasChannel(want) {
-			return "", fmt.Errorf("no channel %q", want)
+			return "", fmt.Errorf("%w: no channel %q", ErrBadRequest, want)
 		}
 		return want, nil
 	}
 	all := m.Channels.Channels()
 	switch len(all) {
 	case 0:
-		return "", errors.New("no channel is registered to bind the agent to")
+		return "", fmt.Errorf("%w: no channel is registered to bind the agent to", ErrBadRequest)
 	case 1:
 		return all[0], nil
 	default:
-		return "", fmt.Errorf("name a channel: one of %v", all)
+		return "", fmt.Errorf("%w: name a channel, one of %v", ErrBadRequest, all)
 	}
 }
 

@@ -46,16 +46,27 @@ done
 `
 
 type node struct {
-	gateSock string
-	stateDir string
-	client   *local.Client
-	cancel   context.CancelFunc
-	done     chan error
-	events   chan local.MessageJSON
+	dir        string
+	sock       string
+	scriptPath string
+	gateSock   string
+	stateDir   string
+	url        string
+	client     *local.Client
+	cancel     context.CancelFunc
+	done       chan error
+	events     chan local.MessageJSON
 }
 
 // startNode runs a daemon over real tmux with one agent per name.
 func startNode(t *testing.T, agents map[string]string) *node {
+	t.Helper()
+	return startNodeWith(t, agents, nil)
+}
+
+// startNodeWith is startNode with a hook to adjust the config before the node
+// starts. The node's directory is created first, so the hook can use it.
+func startNodeWith(t *testing.T, agents map[string]string, adjust func(dir, script string, cfg *config.Config)) *node {
 	t.Helper()
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not installed")
@@ -100,11 +111,16 @@ func startNode(t *testing.T, agents map[string]string) *node {
 		})
 	}
 
+	if adjust != nil {
+		adjust(dir, scriptPath, cfg)
+	}
+
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	n := &node{
+		dir: dir, sock: sock, scriptPath: scriptPath, url: "http://" + ln.Addr().String(),
 		gateSock: filepath.Join(cfg.Orchestrator.StateDir, "gate.sock"),
 		stateDir: cfg.Orchestrator.StateDir,
 		client:   &local.Client{URL: "http://" + ln.Addr().String(), Token: token},

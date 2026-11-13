@@ -53,6 +53,18 @@ type Orchestrator struct {
 	Level int `yaml:"level"`
 	// Gate configures the approval gate (ADR-0004).
 	Gate Gate `yaml:"gate"`
+	// Temp configures temporary agents (ADR-0006).
+	Temp Temp `yaml:"temp"`
+}
+
+// Temp is the temporary-agent settings.
+type Temp struct {
+	// UnusedAfter is how long after spawning an agent that never received a
+	// message is flagged unused. Default 10m.
+	UnusedAfter time.Duration `yaml:"unused_after"`
+	// IdleAfter is how long a used agent may be quiet before it is flagged
+	// idle. Default 30m. The flags only show; nothing is killed on them.
+	IdleAfter time.Duration `yaml:"idle_after"`
 }
 
 // Gate is the approval gate's settings.
@@ -66,6 +78,12 @@ type Gate struct {
 
 // DefaultAskTimeout is the gate's default time to wait for the operator.
 const DefaultAskTimeout = 5 * time.Minute
+
+// Defaults for when a temporary agent is flagged.
+const (
+	DefaultUnusedAfter = 10 * time.Minute
+	DefaultIdleAfter   = 30 * time.Minute
+)
 
 // Defaults for the optional orchestrator settings.
 const (
@@ -130,6 +148,15 @@ func Load(path string) (*Config, error) {
 		if !gate.Risk(r).Valid() {
 			return nil, fmt.Errorf("%s: gate.auto_allow: unknown risk %q", path, r)
 		}
+	}
+	if o.Temp.UnusedAfter == 0 {
+		o.Temp.UnusedAfter = DefaultUnusedAfter
+	}
+	if o.Temp.IdleAfter == 0 {
+		o.Temp.IdleAfter = DefaultIdleAfter
+	}
+	if o.Temp.UnusedAfter < 0 || o.Temp.IdleAfter < 0 {
+		return nil, fmt.Errorf("%s: temp.unused_after and temp.idle_after must be positive", path)
 	}
 	if o.Gate.AskTimeout == 0 {
 		o.Gate.AskTimeout = DefaultAskTimeout
