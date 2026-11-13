@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -89,6 +90,32 @@ func TestPasteMultiLine(t *testing.T) {
 	require.NoError(t, d.Paste(ctx, "a", "line one\nline two"))
 	pane := waitFor(t, d, "a", "line two")
 	assert.Contains(t, pane, "line one")
+}
+
+func TestConcurrentPastesToOneAgentDoNotInterleave(t *testing.T) {
+	d := newDriver(t)
+	ctx := context.Background()
+	require.NoError(t, d.NewSession(ctx, "a", "", "cat"))
+
+	const n = 8
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			assert.NoError(t, d.Paste(ctx, "a", fmt.Sprintf("<<msg-%d-%s>>", i, strings.Repeat("x", 40))))
+		}()
+	}
+	wg.Wait()
+
+	// Each message is typed once and echoed once by cat, whole.
+	for i := range n {
+		want := fmt.Sprintf("<<msg-%d-%s>>", i, strings.Repeat("x", 40))
+		require.Eventually(t, func() bool {
+			pane, err := d.Capture(ctx, "a")
+			return err == nil && strings.Count(pane, want) == 2
+		}, 5*time.Second, 50*time.Millisecond, "message %d did not arrive whole", i)
+	}
 }
 
 func TestOperationsOnMissingSession(t *testing.T) {

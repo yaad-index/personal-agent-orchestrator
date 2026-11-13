@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -30,6 +31,9 @@ type Driver struct {
 	// settle is how long to wait between a paste and the Enter that submits
 	// it, so the terminal has taken the paste before the key arrives.
 	settle time.Duration
+
+	mu         sync.Mutex
+	pasteLocks map[string]*sync.Mutex
 }
 
 // Option configures a Driver.
@@ -46,7 +50,7 @@ func WithPasteSettle(dur time.Duration) Option { return func(d *Driver) { d.sett
 
 // New returns a Driver.
 func New(opts ...Option) *Driver {
-	d := &Driver{bin: "tmux", socket: DefaultSocket, settle: 200 * time.Millisecond}
+	d := &Driver{bin: "tmux", socket: DefaultSocket, settle: 200 * time.Millisecond, pasteLocks: make(map[string]*sync.Mutex)}
 	for _, o := range opts {
 		o(d)
 	}
@@ -94,8 +98,15 @@ func (d *Driver) Capture(ctx context.Context, agent string) (string, error) {
 
 // Paste pastes text into the agent's terminal as one bracketed paste and then
 // submits it with Enter. The text goes through a tmux buffer, never through
-// shell or key parsing, so it arrives verbatim.
+// shell or key parsing, so it arrives verbatim. Pastes to one agent are
+// serialized: the buffer is per agent and a paste plus its Enter is one unit,
+// so two inputs arriving together reach the terminal one after the other
+// instead of interleaving.
 func (d *Driver) Paste(ctx context.Context, agent, text string) error {
+	lock := d.pasteLock(agent)
+	lock.Lock()
+	defer lock.Unlock()
+
 	buf := SessionName(agent)
 	if _, err := d.run(ctx, strings.NewReader(text), "load-buffer", "-b", buf, "-"); err != nil {
 		return err
@@ -110,6 +121,17 @@ func (d *Driver) Paste(ctx context.Context, agent, text string) error {
 	}
 	_, err := d.run(ctx, nil, "send-keys", "-t", pane(agent), "Enter")
 	return err
+}
+
+func (d *Driver) pasteLock(agent string) *sync.Mutex {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	l, ok := d.pasteLocks[agent]
+	if !ok {
+		l = &sync.Mutex{}
+		d.pasteLocks[agent] = l
+	}
+	return l
 }
 
 // exact makes tmux match the session name exactly rather than by prefix.
