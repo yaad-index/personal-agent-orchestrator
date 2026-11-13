@@ -40,7 +40,7 @@ tools: [Read]
 `, name, script, ready, format)
 }
 
-func startTempNode(t *testing.T, recipes map[string]string, thresholds config.Temp) *node {
+func startTempNode(t *testing.T, recipes map[string]string, thresholds config.Temp, optFns ...func(*Options)) *node {
 	t.Helper()
 	return startNodeWith(t, map[string]string{"boss": ""}, func(dir, script string, cfg *config.Config) {
 		rdir := filepath.Join(dir, "recipes")
@@ -51,7 +51,7 @@ func startTempNode(t *testing.T, recipes map[string]string, thresholds config.Te
 		}
 		cfg.Orchestrator.RecipesDir = rdir
 		cfg.Orchestrator.Temp = thresholds
-	})
+	}, optFns...)
 }
 
 func goodRecipe(name string) string { return tempRecipe("@@SCRIPT@@", name, "READY>", "claude-code") }

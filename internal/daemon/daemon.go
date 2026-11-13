@@ -15,9 +15,11 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/access"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/agenttoken"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/backend/claudecode"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/local"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/comm"
@@ -51,6 +53,10 @@ type Options struct {
 	MirrorPoll time.Duration
 	// PollInterval is how often startup checks for readiness.
 	PollInterval time.Duration
+	// Authorizer is the access seam every surface asks. Nil means operator-only:
+	// the operator may do anything and every agent nothing, until the access
+	// matrix exists to say otherwise.
+	Authorizer access.Authorizer
 }
 
 // Run serves the node until ctx is done. token is the local channel's bearer
@@ -91,9 +97,20 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		ctlOpts = append(ctlOpts, control.WithPollInterval(opts.PollInterval))
 	}
 	gateSock := filepath.Join(cfg.Orchestrator.StateDir, "gate.sock")
-	ctlOpts = append(ctlOpts, control.WithEnv(func(agent string) []string {
-		return []string{"PAO_AGENT=" + agent, "PAO_GATE_SOCKET=" + gateSock}
-	}))
+	// An agent calls pao as itself with a token minted when its session starts
+	// and revoked when the session ends; the MCP address is filled in once the
+	// node is listening.
+	tokens := agenttoken.New()
+	var mcpURL atomic.Pointer[string]
+	ctlOpts = append(ctlOpts,
+		control.WithEnv(func(agent string) []string {
+			env := []string{"PAO_AGENT=" + agent, "PAO_GATE_SOCKET=" + gateSock, "PAO_AGENT_TOKEN=" + tokens.Mint(agent)}
+			if u := mcpURL.Load(); u != nil {
+				env = append(env, "PAO_MCP_URL="+*u)
+			}
+			return env
+		}),
+		control.WithOnStop(tokens.Revoke))
 	plane := control.New(tmux.New(tmux.WithSocket(cfg.Orchestrator.TmuxSocket)), ctlOpts...)
 
 	hook := &launchHook{plane: plane}
@@ -128,19 +145,27 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	}
 	gateSrv := &http.Server{Handler: (&gate.Server{Gate: gt}).Handler(), ReadHeaderTimeout: 10 * time.Second}
 
-	harvests := harvest.New(filepath.Join(cfg.Orchestrator.StateDir, "harvest"), nil)
+	harvests := harvest.New(filepath.Join(cfg.Orchestrator.StateDir, "harvest"), opts.Authorizer)
 	mgr := &temp.Manager{
 		Registry: reg, Plane: plane, Starter: router, Channels: layer,
 		Workdirs: &workdir.Provisioner{Root: filepath.Join(cfg.Orchestrator.StateDir, "temp")},
-		Harvests: harvests,
-		Recipes:  func() (*recipe.Set, error) { return recipe.LoadDir(cfg.Orchestrator.RecipesDir) },
-		Locate:   locate, Check: checkProfile, Gate: gt, Follow: hook.follow,
+		Harvests: harvests, Auth: opts.Authorizer,
+		Recipes: func() (*recipe.Set, error) { return recipe.LoadDir(cfg.Orchestrator.RecipesDir) },
+		Locate:  locate, Check: checkProfile, Gate: gt, Follow: hook.follow,
 		Surface:    surface(layer, router),
 		Thresholds: registry.Thresholds{UnusedAfter: cfg.Orchestrator.Temp.UnusedAfter, IdleAfter: cfg.Orchestrator.Temp.IdleAfter},
 	}
 
-	ops := mcpOps{reg: reg, thresholds: mgr.Thresholds, recipes: mgr.Recipes, mgr: mgr, store: harvests, layer: layer}
-	mcpHandler := mcpsrv.New(ops, mcpsrv.NewOperatorResolver(token)).Handler()
+	ops := mcpOps{reg: reg, thresholds: mgr.Thresholds, recipes: mgr.Recipes, mgr: mgr, store: harvests, layer: layer, auth: opts.Authorizer}
+	resolver := mcpsrv.Chain{
+		mcpsrv.NewOperatorResolver(token),
+		mcpsrv.AgentResolver{Tokens: tokens, Alive: func(agent string) bool {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			return plane.Alive(ctx, agent)
+		}},
+	}
+	mcpHandler := mcpsrv.New(ops, resolver, mcpsrv.WithAuthorizer(opts.Authorizer)).Handler()
 
 	srv, err := local.New(layer, token, local.WithDecider(pending), local.WithTemp(tempAPI{mgr: mgr, store: harvests}),
 		local.WithMount("/mcp", mcpHandler))
@@ -156,6 +181,8 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		}
 	}
 	httpSrv := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
+	url := "http://" + ln.Addr().String() + "/mcp"
+	mcpURL.Store(&url)
 
 	serveErr := make(chan error, 2)
 	go func() { serveErr <- httpSrv.Serve(ln) }()

@@ -11,6 +11,7 @@ import (
 	"github.com/yaad-index/personal-agent-orchestrator/internal/mcpsrv"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/recipe"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/registry"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/route"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/temp"
 )
 
@@ -125,24 +126,35 @@ func (o mcpOps) HarvestFile(who access.Subject, id, path string) ([]byte, error)
 	return o.store.Read(who, id, path)
 }
 
-// senderName is the name recipients read a message as coming from. It comes
-// from the resolved subject and from nothing the caller supplies, so a caller
-// cannot speak as another agent. pao's reserved names keep an agent from being
-// called by the operator's.
-func senderName(who access.Subject) string {
-	if who.Kind == access.KindAgent {
-		return who.Name
+// senderName is the name recipients read a message as coming from, and false
+// for a subject that has none. It comes from the resolved subject and from
+// nothing the caller supplies, so a caller cannot speak as another agent;
+// pao's reserved names keep an agent from being called by the operator's. A
+// subject that is neither the operator nor an agent is nobody and has no name.
+func senderName(who access.Subject) (string, bool) {
+	switch who.Kind {
+	case access.KindOperator:
+		return "operator", true
+	case access.KindAgent:
+		return who.Name, who.Name != ""
+	default:
+		return "", false
 	}
-	return "operator"
 }
 
 func (o mcpOps) Send(ctx context.Context, who access.Subject, byTag bool, target, text string) ([]mcpsrv.Delivered, error) {
+	sender, ok := senderName(who)
+	if !ok {
+		// Nobody sends nothing; to whoever it was it is the same as an agent
+		// that is not there.
+		return nil, route.NoMatch(core.Target{Kind: targetKind(byTag), Value: target})
+	}
 	kind := core.ByName
 	if byTag {
 		kind = core.ByTag
 	}
 	d, err := o.layer.Receive(ctx, comm.Inbound{
-		Source: "mcp", Sender: senderName(who), Text: text, Kind: core.MessageContent,
+		Source: "mcp", Sender: sender, Text: text, Kind: core.MessageContent,
 		Target: core.Target{Kind: kind, Value: target},
 		// Routing is bounded by what the caller may address: an agent it may
 		// not is left out, and when none is left the target matches nothing.
@@ -162,4 +174,11 @@ func (o mcpOps) Send(ctx context.Context, who access.Subject, byTag bool, target
 		out = append(out, item)
 	}
 	return out, nil
+}
+
+func targetKind(byTag bool) core.TargetKind {
+	if byTag {
+		return core.ByTag
+	}
+	return core.ByName
 }

@@ -71,7 +71,7 @@ func startNode(t *testing.T, agents map[string]string) *node {
 
 // startNodeWith is startNode with a hook to adjust the config before the node
 // starts. The node's directory is created first, so the hook can use it.
-func startNodeWith(t *testing.T, agents map[string]string, adjust func(dir, script string, cfg *config.Config)) *node {
+func startNodeWith(t *testing.T, agents map[string]string, adjust func(dir, script string, cfg *config.Config), optFns ...func(*Options)) *node {
 	t.Helper()
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not installed")
@@ -136,7 +136,11 @@ func startNodeWith(t *testing.T, agents map[string]string, adjust func(dir, scri
 		events:   make(chan local.MessageJSON, 64),
 	}
 	go func() {
-		n.done <- Run(ctx, cfg, token, Options{Listener: ln, MirrorPoll: 10 * time.Millisecond, PollInterval: 20 * time.Millisecond})
+		o := Options{Listener: ln, MirrorPoll: 10 * time.Millisecond, PollInterval: 20 * time.Millisecond}
+		for _, f := range optFns {
+			f(&o)
+		}
+		n.done <- Run(ctx, cfg, token, o)
 	}()
 
 	// Stream from the start, once the server is up.

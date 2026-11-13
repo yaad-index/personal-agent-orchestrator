@@ -25,6 +25,7 @@ type CLI struct {
 	Harvests     HarvestsCmd     `cmd:"" help:"Outputs harvested from killed temporary agents."`
 	Hook         HookCmd         `cmd:"" help:"The backend's pre-tool-call hook: ask the node's gate about an action."`
 	HookSettings HookSettingsCmd `cmd:"" name:"hook-settings" help:"Print the backend settings JSON that installs the hook."`
+	McpConfig    McpConfigCmd    `cmd:"" name:"mcp-config" help:"Print the backend MCP configuration that points an agent at its node."`
 }
 
 // ConfigCmd groups the configuration commands.

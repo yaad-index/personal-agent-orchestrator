@@ -525,3 +525,36 @@ func TestSendMessageReportsPerAgentOutcomesAndRefusals(t *testing.T) {
 	assert.True(t, failed)
 	assert.Contains(t, text, "no agent matches")
 }
+
+type fakeTokens map[string]string
+
+func (f fakeTokens) Resolve(token string) (string, bool) {
+	n, ok := f[token]
+	return n, ok
+}
+
+func TestAnAgentTokenResolvesToTheAgentOnlyWhileItsSessionIsAlive(t *testing.T) {
+	alive := map[string]bool{"a": true}
+	r := AgentResolver{Tokens: fakeTokens{"tok-a": "a", "tok-b": "b"}, Alive: func(n string) bool { return alive[n] }}
+
+	s, ok := r.Resolve("tok-a")
+	require.True(t, ok)
+	assert.Equal(t, access.Agent("a"), s)
+
+	_, ok = r.Resolve("tok-b")
+	assert.False(t, ok, "its session is gone: the token no longer identifies anyone")
+	_, ok = r.Resolve("unknown")
+	assert.False(t, ok)
+	alive["a"] = false
+	_, ok = r.Resolve("tok-a")
+	assert.False(t, ok, "and it stops the moment the session does, with nothing revoked")
+}
+
+func TestAnAgentResolverWithNothingToCheckRefusesEverything(t *testing.T) {
+	_, ok := AgentResolver{Tokens: fakeTokens{"t": "a"}}.Resolve("t")
+	assert.False(t, ok, "no liveness check means no identity: liveness is part of it, not an option")
+	_, ok = AgentResolver{Alive: func(string) bool { return true }}.Resolve("t")
+	assert.False(t, ok)
+	_, ok = AgentResolver{Tokens: fakeTokens{"t": ""}, Alive: func(string) bool { return true }}.Resolve("t")
+	assert.False(t, ok, "a token that names no agent identifies nobody")
+}

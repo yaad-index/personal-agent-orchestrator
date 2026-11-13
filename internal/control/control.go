@@ -46,6 +46,8 @@ type Plane struct {
 	term Terminal
 	poll time.Duration
 	env  func(agent string) []string
+	// onStop is called when an agent's session is known to be over.
+	onStop func(agent string)
 }
 
 // Option configures a Plane.
@@ -58,6 +60,11 @@ func WithPollInterval(d time.Duration) Option { return func(p *Plane) { p.poll =
 // f is called with the agent's name. It is how an agent learns who it is and
 // where its node's gate is.
 func WithEnv(f func(agent string) []string) Option { return func(p *Plane) { p.env = f } }
+
+// WithOnStop sets a function called with an agent's name once its session is
+// ended by Kill, whether Kill ended it or found it already gone. It is how what
+// is tied to a live session (an agent's credential) ends with it.
+func WithOnStop(f func(agent string)) Option { return func(p *Plane) { p.onStop = f } }
 
 // New returns a Plane.
 func New(term Terminal, opts ...Option) *Plane {
@@ -131,10 +138,23 @@ func (p *Plane) Kill(ctx context.Context, prof core.Profile) error {
 	if err != nil {
 		return err
 	}
-	if !exists {
-		return nil
+	if exists {
+		if err := p.term.KillSession(ctx, prof.Name); err != nil {
+			return err
+		}
 	}
-	return p.term.KillSession(ctx, prof.Name)
+	if p.onStop != nil {
+		p.onStop(prof.Name)
+	}
+	return nil
+}
+
+// Alive reports whether the agent has a session. An error counts as not alive:
+// it is asked to decide whether something may be trusted, and a question that
+// cannot be answered is not a yes.
+func (p *Plane) Alive(ctx context.Context, agent string) bool {
+	ok, err := p.term.HasSession(ctx, agent)
+	return err == nil && ok
 }
 
 // Restart kills the agent's session and launches it again.
