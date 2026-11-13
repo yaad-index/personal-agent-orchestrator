@@ -1,6 +1,6 @@
 # ADR 0003: Routing
 
-**Status:** Proposed (2026-11-12)
+**Status:** Accepted (2026-11-12)
 
 ## Context
 
