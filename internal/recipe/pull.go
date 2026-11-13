@@ -93,16 +93,42 @@ func Pull(ctx context.Context, opts PullOptions) ([]string, error) {
 		return nil, err
 	}
 
-	if opts.Replace {
-		if err := os.RemoveAll(dest); err != nil {
-			return nil, err
-		}
-	}
-	if err := os.Rename(asideDir, dest); err != nil {
+	if err := install(asideDir, dest, filepath.Join(opts.Dir, ".old-"+set), opts.Replace); err != nil {
 		return nil, err
 	}
 	installed = true
 	return fresh.Names(), nil
+}
+
+// rename is os.Rename, a variable so a test can make one step fail.
+var rename = os.Rename
+
+// install moves a checked set into place. Replacing sets the old one aside
+// first and puts it back if the new one cannot be moved in, so a replace that
+// fails part way leaves the old set installed, never neither.
+func install(from, dest, old string, replace bool) error {
+	if !replace {
+		return rename(from, dest)
+	}
+	if err := os.RemoveAll(old); err != nil {
+		return err
+	}
+	_, statErr := os.Lstat(dest)
+	hadOld := statErr == nil
+	if hadOld {
+		if err := rename(dest, old); err != nil {
+			return err
+		}
+	}
+	if err := rename(from, dest); err != nil {
+		if hadOld {
+			if rerr := rename(old, dest); rerr != nil {
+				return fmt.Errorf("%w; the previous set is at %s: %v", err, old, rerr)
+			}
+		}
+		return err
+	}
+	return os.RemoveAll(old)
 }
 
 // loadOne loads the recipes directly inside one set directory.
