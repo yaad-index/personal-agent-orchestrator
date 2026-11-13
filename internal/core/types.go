@@ -103,11 +103,46 @@ type Target struct {
 	Value string
 }
 
-// Message is the source-agnostic input handed to routing. The message model
-// (ADR-0010) extends it with an id, kind, attachments and the rest.
+// MessageKind says what a message is (ADR-0010 point 1).
+type MessageKind string
+
+const (
+	// MessageContent is ordinary content from a human or an agent.
+	MessageContent MessageKind = "content"
+	// MessageSystemEvent is a message pao raised itself (an approval prompt, a
+	// control-plane alert, an expanded reminder).
+	MessageSystemEvent MessageKind = "system_event"
+)
+
+// Attachment is a normalized attachment. The normalization format is left open
+// by ADR-0010; this is the minimal common shape.
+type Attachment struct {
+	Name string
+	MIME string
+	// Ref locates the content (a path or a store key), never the content itself.
+	Ref string
+}
+
+// Reaction is who reacted to a message with which emoji (ADR-0010 point 4).
+type Reaction struct {
+	By    string
+	Emoji string
+}
+
+// Message is the source-agnostic message pao carries across all sources
+// (ADR-0010 point 1). The agent reads only Line(); everything else is
+// orchestrator-side.
 type Message struct {
+	// ID is pao's identifier for the message, assigned when it is stored.
+	ID     string
+	Time   time.Time
 	Sender string
+	Kind   MessageKind
 	Text   string
+	// Reply is the ID of the message this one answers, if any.
+	Reply       string
+	Attachments []Attachment
+	Reactions   []Reaction
 }
 
 // Line renders the message as the one line the agent reads: `[sender]: text`
