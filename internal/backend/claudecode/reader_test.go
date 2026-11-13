@@ -105,6 +105,13 @@ func TestOtherRecordsAreKept(t *testing.T) {
 	noted := parse(t, `{"type":"system","subtype":"notice","uuid":"u13","content":"compacted"}`)
 	assert.Equal(t, "compacted", noted[0].Text)
 
+	structured := parse(t, `{"type":"system","subtype":"notice","uuid":"u13b","content":{"code":7}}`)
+	require.Len(t, structured, 1)
+	assert.JSONEq(t, `{"code":7}`, structured[0].Text, "structured content is kept as JSON, not dropped")
+
+	noContent := parse(t, `{"type":"system","uuid":"u13c"}`)
+	assert.Empty(t, noContent[0].Text)
+
 	unknown := parse(t, `{"type":"brand-new-thing","uuid":"u14"}`)
 	require.Len(t, unknown, 1)
 	assert.Equal(t, core.KindOther, unknown[0].Kind)
