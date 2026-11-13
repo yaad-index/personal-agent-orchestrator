@@ -26,11 +26,14 @@ type masterServer struct {
 // directory) and is acknowledged.
 func (s masterServer) Session(stream pb.Master_SessionServer) error {
 	caller, _ := CallerFrom(stream.Context())
-	// What a node reported is only good while it is reporting: when the stream
-	// ends, whether the node left or was cut off, the master forgets it and waits for
-	// the node's next full report.
+	gen := s.n.beginSession(caller)
+	// What a node reported is only good while it is reporting: when its current
+	// stream ends, whether the node left or was cut off, the master forgets it and
+	// waits for the node's next full report. A stream that has been superseded by a
+	// newer one from the same node (the node reconnected while this one was still
+	// waiting to notice it was dead) does not: the newer stream's report is the truth.
 	defer func() {
-		if s.n.sink != nil {
+		if s.n.sink != nil && s.n.endSession(caller, gen) {
 			s.n.sink.Drop(caller)
 		}
 	}()
@@ -42,12 +45,38 @@ func (s masterServer) Session(stream pb.Master_SessionServer) error {
 		if err != nil {
 			return err
 		}
+		if !s.n.isCurrentSession(caller, gen) {
+			return status.Error(codes.Aborted, "superseded by a newer session from this node")
+		}
 		s.n.apply(caller, r)
 		s.n.noteReport(caller, r.GetSeq())
 		if err := stream.Send(&pb.Ack{Seq: r.GetSeq()}); err != nil {
 			return err
 		}
 	}
+}
+
+// beginSession registers a new report stream from a node and returns its
+// generation. A node has one current stream: the newest.
+func (n *Node) beginSession(caller string) uint64 {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.gens[caller]++
+	return n.gens[caller]
+}
+
+func (n *Node) isCurrentSession(caller string, gen uint64) bool {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.gens[caller] == gen
+}
+
+// endSession ends a stream and reports whether it was still the node's current
+// one, which is when the node's reports should be dropped with it.
+func (n *Node) endSession(caller string, gen uint64) bool {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.gens[caller] == gen
 }
 
 func (n *Node) noteReport(caller string, seq uint64) {

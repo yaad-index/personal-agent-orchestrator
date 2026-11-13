@@ -9,6 +9,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	pb "github.com/yaad-index/personal-agent-orchestrator/internal/mesh/meshpb"
 )
@@ -283,4 +285,61 @@ func TestAPartialReportAddsOrChangesAndDoesNotReplace(t *testing.T) {
 	assert.Equal(t, []string{"x", "y"}, sink.names("b"), "a partial report adds y without forgetting x")
 	assert.Equal(t, []string{"replace:b", "upsert:b:y"}, sink.seen())
 	_ = stream.CloseSend()
+}
+
+func TestASupersededSessionCannotDropOrOverwriteTheNewOnesReport(t *testing.T) {
+	c := newCluster(t, "a", "b")
+	a := c.node("a", nil)
+	sink := newRecSink()
+	a.SetSink(sink)
+	c.node("b", nil)
+	c.start("a")
+	c.start("b")
+
+	conn, err := c.nodes["b"].Dial("a")
+	require.NoError(t, err)
+	open := func() (pb.Master_SessionClient, context.CancelFunc) {
+		ctx, cancel := context.WithCancel(context.Background())
+		s, err := pb.NewMasterClient(conn).Session(ctx)
+		require.NoError(t, err)
+		return s, cancel
+	}
+	report := func(s pb.Master_SessionClient, seq uint64, full bool, names ...string) error {
+		var as []*pb.AgentInfo
+		for _, n := range names {
+			as = append(as, info(n))
+		}
+		if err := s.Send(&pb.Report{Seq: seq, Body: &pb.Report_Agents{Agents: &pb.AgentsReport{Full: full, Agents: as}}}); err != nil {
+			return err
+		}
+		_, err := s.Recv()
+		return err
+	}
+
+	// The node's old stream is still open on the master (a half-open connection the
+	// master has not noticed is dead) when the node reconnects and reports in full.
+	old, cancelOld := open()
+	require.NoError(t, report(old, 1, true, "x"))
+	fresh, cancelFresh := open()
+	defer cancelFresh()
+	require.NoError(t, report(fresh, 1, true, "x", "y"))
+	require.Equal(t, []string{"x", "y"}, sink.names("b"))
+
+	// A late report on the old stream, still open, is refused rather than applied over
+	// the new one.
+	err = report(old, 2, true, "stale")
+	require.Error(t, err)
+	assert.Equal(t, codes.Aborted, status.Code(err))
+	assert.Equal(t, []string{"x", "y"}, sink.names("b"), "a superseded stream cannot overwrite the current report")
+
+	// The old stream finally ends. It must not take the new stream's agents with it.
+	cancelOld()
+	time.Sleep(200 * time.Millisecond)
+	assert.Equal(t, []string{"x", "y"}, sink.names("b"), "the superseded stream ending did not drop the new stream's report")
+	assert.NotContains(t, sink.seen(), "drop:b")
+
+	// The current stream ending still drops, as it should.
+	cancelFresh()
+	require.Eventually(t, func() bool { return len(sink.names("b")) == 0 }, 5*time.Second, 10*time.Millisecond)
+	assert.Contains(t, sink.seen(), "drop:b")
 }

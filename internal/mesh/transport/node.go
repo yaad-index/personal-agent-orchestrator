@@ -74,6 +74,7 @@ type Node struct {
 	sink     Sink
 	lost     []LostNotice
 	sessions map[string]*session
+	gens     map[string]uint64 // the newest report stream from each node
 	cache    *idempotency
 	addr     net.Addr
 }
@@ -118,7 +119,7 @@ func New(cfg Config) (*Node, error) {
 	n := &Node{
 		cfg: cfg, peers: cfg.Doc.Peers(), mem: mem, log: cfg.Logger, beat: cfg.BeatEvery,
 		status: make(map[string]*peerStatus), conns: make(map[string]*grpc.ClientConn),
-		nodeSrv: pb.UnimplementedNodeServer{}, sessions: make(map[string]*session),
+		nodeSrv: pb.UnimplementedNodeServer{}, sessions: make(map[string]*session), gens: make(map[string]uint64),
 		cache: newIdempotency(1024, 10*time.Minute),
 	}
 	if n.log == nil {
