@@ -32,6 +32,10 @@ func Agent(name string) Subject { return Subject{Kind: KindAgent, Name: name} }
 type Action string
 
 const (
+	// List shows that an agent exists (name, tags, state).
+	List Action = "list"
+	// ListRecipes shows which recipes a temporary agent can be spawned from.
+	ListRecipes Action = "list_recipes"
 	// Spawn starts a temporary agent (ADR-0006 point 2).
 	Spawn Action = "spawn"
 	// Kill tears a temporary agent down (ADR-0006 point 3).

@@ -193,3 +193,23 @@ func TestTempOfFindsOnlyTemporaryAgents(t *testing.T) {
 	_, ok = r.TempOf("missing")
 	assert.False(t, ok)
 }
+
+func TestAllListsEveryAgentByNameWithTempDetail(t *testing.T) {
+	r := New()
+	require.NoError(t, r.Add(core.Profile{Name: "b", Tags: []string{"x"}}))
+	require.NoError(t, r.AddTemp(core.Profile{Name: "a"}, TempInfo{Channel: "local", Recipe: "r"}))
+	require.NoError(t, r.SetState("b", core.Running))
+
+	got := r.All()
+	require.Len(t, got, 2)
+	assert.Equal(t, "a", got[0].Profile.Name)
+	require.NotNil(t, got[0].Temp)
+	assert.Equal(t, "r", got[0].Temp.Info.Recipe)
+	assert.Equal(t, "b", got[1].Profile.Name)
+	assert.Nil(t, got[1].Temp, "a configured agent has no temporary detail")
+	assert.Equal(t, core.Running, got[1].State)
+
+	got[1].Profile.Tags[0] = "mutated"
+	assert.Equal(t, []string{"x"}, r.All()[1].Profile.Tags, "a snapshot does not alias the registry")
+	assert.Empty(t, New().All())
+}

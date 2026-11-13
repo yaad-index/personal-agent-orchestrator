@@ -201,6 +201,33 @@ func (v TempView) Flag(now time.Time, th Thresholds) Flag {
 	return FlagActive
 }
 
+// AgentView is a snapshot of one registered agent.
+type AgentView struct {
+	Profile core.Profile
+	State   core.State
+	// Temp is set for a temporary agent.
+	Temp *TempView
+}
+
+// All returns a snapshot of every registered agent, configured and temporary,
+// ordered by name.
+func (r *Registry) All() []AgentView {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]AgentView, 0, len(r.agents))
+	for _, e := range r.agents {
+		p := e.profile
+		p.Tags = slices.Clone(p.Tags)
+		v := AgentView{Profile: p, State: e.state}
+		if e.temp != nil {
+			v.Temp = &TempView{Profile: p, State: e.state, Info: *e.temp, LastActivity: e.lastActive, Received: e.received}
+		}
+		out = append(out, v)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Profile.Name < out[j].Profile.Name })
+	return out
+}
+
 // TempOf returns a snapshot of the named temporary agent. ok is false for an
 // agent that is unknown or declared in configuration.
 func (r *Registry) TempOf(name string) (TempView, bool) {

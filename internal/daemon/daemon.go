@@ -26,6 +26,7 @@ import (
 	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/gate"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/harvest"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/mcpsrv"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/mirror"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/msgstore"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/recipe"
@@ -138,7 +139,11 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		Thresholds: registry.Thresholds{UnusedAfter: cfg.Orchestrator.Temp.UnusedAfter, IdleAfter: cfg.Orchestrator.Temp.IdleAfter},
 	}
 
-	srv, err := local.New(layer, token, local.WithDecider(pending), local.WithTemp(tempAPI{mgr: mgr, store: harvests}))
+	ops := mcpOps{reg: reg, thresholds: mgr.Thresholds, recipes: mgr.Recipes}
+	mcpHandler := mcpsrv.New(ops, mcpsrv.NewOperatorResolver(token)).Handler()
+
+	srv, err := local.New(layer, token, local.WithDecider(pending), local.WithTemp(tempAPI{mgr: mgr, store: harvests}),
+		local.WithMount("/mcp", mcpHandler))
 	if err != nil {
 		return err
 	}
