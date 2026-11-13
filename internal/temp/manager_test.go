@@ -693,3 +693,19 @@ func TestSpawnRefusesAProfileTheNodeCannotRunBeforeStartingAnything(t *testing.T
 	assert.Empty(t, e.reg.Temps())
 	assert.Empty(t, e.ev.all())
 }
+
+func TestAnUnknownRecipeLooksLikeADeniedOneToAnyoneButTheOperator(t *testing.T) {
+	e := newEnv(t, map[string]string{"researcher": recipeYAML})
+	e.m.Auth = allowAgents{}
+	e.gate.allow = true
+
+	_, unknown := e.m.Spawn(context.Background(), SpawnRequest{Recipe: "nope", Name: "a", Requester: access.Agent("boss")})
+	e.m.Auth = nil
+	_, denied := e.m.Spawn(context.Background(), SpawnRequest{Recipe: "researcher", Name: "a", Requester: access.Agent("boss")})
+	assert.Equal(t, denied, unknown, "an agent cannot tell a recipe that does not exist from one it may not use")
+
+	_, err := e.m.Spawn(context.Background(), SpawnRequest{Recipe: "nope", Name: "a", Requester: access.Subject{}})
+	assert.ErrorIs(t, err, ErrNotFound)
+	_, err = e.m.Spawn(context.Background(), SpawnRequest{Recipe: "nope", Name: "a", Requester: access.Operator})
+	assert.ErrorIs(t, err, ErrNoRecipe, "the operator is told which")
+}
