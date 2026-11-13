@@ -9,10 +9,10 @@ Architecture Decision Records for **pao** (personal-agent-orchestrator). Convent
 - **0003** — Routing (agent name + tags)
 - **0004** — The approval gate (risk-level policy; fail-closed; judge for fuzzy cases)
 - **0005** — Access model + management UI (localhost-default)
+- **0006** — Temporary agents (ephemeral, first-class, explicit teardown, recipes)
 
 ## Planned (one ADR each, broad spine first then detail)
-- **0006** — Temporary agents (ephemeral, first-class, explicit teardown, recipes)
-- Control plane (lifecycle, context watch, liveness)
+- **0007** — Control plane (lifecycle, context watch, liveness)
 - Mirror + verbosity levels + retention
 - Communication channels (human↔pao)
 - Message model (ids/quote; buttons over reactions)
