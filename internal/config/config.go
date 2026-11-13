@@ -86,6 +86,18 @@ func validate(p core.Profile) error {
 	if p.Backend == "" {
 		return errors.New("backend is required")
 	}
+	if p.Startup.Command == "" {
+		return errors.New("startup.command is required")
+	}
+	if p.Startup.ReadyPattern == "" {
+		return errors.New("startup.ready_pattern is required")
+	}
+	if _, err := regexp.Compile(p.Startup.ReadyPattern); err != nil {
+		return fmt.Errorf("startup.ready_pattern: %w", err)
+	}
+	if p.Startup.ReadyTimeout <= 0 {
+		return errors.New("startup.ready_timeout must be positive")
+	}
 	for _, t := range p.Tags {
 		if !namePattern.MatchString(t) {
 			return fmt.Errorf("tag %q must be lowercase letters, digits, '-' or '_'", t)

@@ -27,10 +27,10 @@ func TestConfigCheckRunsAgainstALoadableConfig(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "profiles"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "pao.yaml"), []byte("node: n1\nprofiles_dir: profiles\n"), 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "profiles", "a.yaml"), []byte("name: a\nbackend: claude-code\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "profiles", "a.yaml"), []byte("name: a\nbackend: claude-code\nstartup:\n  command: run\n  ready_pattern: ready\n  ready_timeout: 30s\n"), 0o600))
 
 	assert.NoError(t, ConfigCheckCmd{Path: filepath.Join(dir, "pao.yaml")}.Run())
 
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "profiles", "b.yaml"), []byte("name: a\nbackend: x\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "profiles", "b.yaml"), []byte("name: a\nbackend: x\nstartup:\n  command: run\n  ready_pattern: ready\n  ready_timeout: 30s\n"), 0o600))
 	assert.Error(t, ConfigCheckCmd{Path: filepath.Join(dir, "pao.yaml")}.Run(), "a duplicate agent name fails the check")
 }
