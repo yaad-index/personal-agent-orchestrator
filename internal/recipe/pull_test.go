@@ -206,3 +206,51 @@ func TestDefaultSetName(t *testing.T) {
 	assert.Equal(t, "a-b", DefaultSetName("https://example.com/a b"))
 	assert.Equal(t, "", DefaultSetName("https://example.com/.git"))
 }
+
+func TestAReplaceThatFailsToInstallPutsTheOldSetBack(t *testing.T) {
+	v1 := makeRepo(t, map[string]string{"researcher.yaml": validRecipe}, nil)
+	v2 := makeRepo(t, map[string]string{"researcher.yaml": strings.Replace(validRecipe, "reads and reports", "version two", 1)}, nil)
+	dir := t.TempDir()
+	_, err := pull(t, dir, v1, func(o *PullOptions) { o.Set = "team" })
+	require.NoError(t, err)
+
+	calls := 0
+	real := rename
+	rename = func(from, to string) error {
+		calls++
+		if calls == 2 { // the new set moving into place, after the old one was set aside
+			return os.ErrPermission
+		}
+		return real(from, to)
+	}
+	t.Cleanup(func() { rename = real })
+
+	_, err = pull(t, dir, v2, func(o *PullOptions) { o.Set = "team"; o.Replace = true })
+	require.Error(t, err)
+
+	s, err := LoadDir(dir)
+	require.NoError(t, err, "the old set is installed again")
+	r, ok := s.Get("researcher")
+	require.True(t, ok)
+	assert.Equal(t, "reads and reports", r.Description)
+	assert.NoDirExists(t, filepath.Join(dir, ".old-team"))
+}
+
+func TestAReplaceLeavesNoSetAsideBehind(t *testing.T) {
+	v1 := makeRepo(t, map[string]string{"researcher.yaml": validRecipe}, nil)
+	dir := t.TempDir()
+	_, err := pull(t, dir, v1, func(o *PullOptions) { o.Set = "team" })
+	require.NoError(t, err)
+	_, err = pull(t, dir, v1, func(o *PullOptions) { o.Set = "team"; o.Replace = true })
+	require.NoError(t, err)
+	assert.NoDirExists(t, filepath.Join(dir, ".old-team"))
+	assert.NoDirExists(t, filepath.Join(dir, ".pull", "team"))
+}
+
+func TestReplacingASetThatIsNotInstalledJustInstalls(t *testing.T) {
+	v1 := makeRepo(t, map[string]string{"researcher.yaml": validRecipe}, nil)
+	dir := t.TempDir()
+	_, err := pull(t, dir, v1, func(o *PullOptions) { o.Set = "team"; o.Replace = true })
+	require.NoError(t, err)
+	assert.FileExists(t, filepath.Join(dir, "team", "researcher.yaml"))
+}

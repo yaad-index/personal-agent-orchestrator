@@ -175,3 +175,21 @@ func TestZeroThresholdsNeverFlag(t *testing.T) {
 	v := r.Temps()[0]
 	assert.Equal(t, FlagActive, v.Flag(created.Add(1000*time.Hour), Thresholds{}))
 }
+
+func TestTempOfFindsOnlyTemporaryAgents(t *testing.T) {
+	r := New()
+	require.NoError(t, r.Add(core.Profile{Name: "static"}))
+	require.NoError(t, r.AddTemp(core.Profile{Name: "tmp", Tags: []string{"x"}}, TempInfo{Channel: "local", Recipe: "r"}))
+
+	v, ok := r.TempOf("tmp")
+	require.True(t, ok)
+	assert.Equal(t, "local", v.Info.Channel)
+	v.Profile.Tags[0] = "mutated"
+	again, _ := r.TempOf("tmp")
+	assert.Equal(t, []string{"x"}, again.Profile.Tags, "a snapshot does not alias the registry")
+
+	_, ok = r.TempOf("static")
+	assert.False(t, ok, "a configured agent is not a temporary one")
+	_, ok = r.TempOf("missing")
+	assert.False(t, ok)
+}

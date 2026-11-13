@@ -105,6 +105,13 @@ func (r *Router) deliver(ctx context.Context, p core.Profile, m core.Message) Re
 	return res
 }
 
+// Ensure launches the agent if it is not running and reports whether it did. It
+// is the router's launch path without a message, for a caller that brings an
+// agent up on its own (spawning a temporary agent).
+func (r *Router) Ensure(ctx context.Context, p core.Profile) (bool, error) {
+	return r.ensureRunning(ctx, p)
+}
+
 // ensureRunning launches the agent if it is not running. It serializes per
 // agent, so two inputs racing for a stopped agent start it once.
 func (r *Router) ensureRunning(ctx context.Context, p core.Profile) (bool, error) {

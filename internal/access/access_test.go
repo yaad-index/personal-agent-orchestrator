@@ -9,7 +9,7 @@ import (
 func TestOperatorOnlyAllowsTheOperatorAndNoOneElse(t *testing.T) {
 	var a Authorizer = OperatorOnly{}
 	r := Resource{Agent: "t", Tags: []string{"x"}}
-	for _, act := range []Action{Kill, ReadHarvest} {
+	for _, act := range []Action{Spawn, Kill, ReadHarvest} {
 		assert.True(t, a.Allow(Operator, act, r), "operator %s", act)
 		assert.False(t, a.Allow(Agent("other"), act, r), "agent %s", act)
 		assert.False(t, a.Allow(Agent("t"), act, r), "an agent on itself %s", act)
