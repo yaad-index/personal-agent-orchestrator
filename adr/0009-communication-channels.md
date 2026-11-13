@@ -1,10 +1,10 @@
 # ADR 0009: Communication channels (human ↔ pao)
 
-**Status:** Proposed (2026-11-13)
+**Status:** Accepted (2026-11-13)
 
 ## Context
 
-pao drives several agents, across machines, behind one human-facing front (ADR-0001). This ADR fixes the channel layer: what a channel is, how inbound sources reach pao, and how the single human-in-the-loop line is kept unified and reliable.
+pao drives several agents, across machines, behind one human-facing front (ADR-0001). This ADR fixes the communication layer: what a channel is, how inbound sources reach pao, and how the single human-in-the-loop line is kept unified and reliable.
 
 ## Decision
 
