@@ -46,6 +46,33 @@ func (r OperatorResolver) Resolve(token string) (access.Subject, bool) {
 	return access.Operator, true
 }
 
+// AgentTokens says which agent a live token belongs to.
+type AgentTokens interface {
+	Resolve(token string) (agent string, ok bool)
+}
+
+// AgentResolver resolves an agent's token to that agent as a subject, and only
+// while Alive says the agent's session is still there: an identity tied to a
+// session ends with it, even before anyone has revoked the token.
+type AgentResolver struct {
+	Tokens AgentTokens
+	// Alive reports whether the agent's session exists. A nil Alive refuses
+	// every token: liveness is part of the identity, not an option.
+	Alive func(agent string) bool
+}
+
+// Resolve implements Resolver.
+func (r AgentResolver) Resolve(token string) (access.Subject, bool) {
+	if r.Tokens == nil || r.Alive == nil {
+		return access.Subject{}, false
+	}
+	name, ok := r.Tokens.Resolve(token)
+	if !ok || name == "" || !r.Alive(name) {
+		return access.Subject{}, false
+	}
+	return access.Agent(name), true
+}
+
 // Chain tries each resolver in turn and returns the first subject found.
 type Chain []Resolver
 

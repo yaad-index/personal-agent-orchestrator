@@ -17,6 +17,8 @@ import (
 const (
 	envAgent      = "PAO_AGENT"
 	envGateSocket = "PAO_GATE_SOCKET"
+	envMCPURL     = "PAO_MCP_URL"
+	envAgentToken = "PAO_AGENT_TOKEN"
 )
 
 // HookCmd is the backend's pre-tool-call hook. It reads the hook payload on

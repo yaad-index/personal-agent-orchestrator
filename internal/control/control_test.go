@@ -236,3 +236,43 @@ func TestRealReadinessTimeoutShowsThePane(t *testing.T) {
 	_, ok = AsReadinessError(err)
 	assert.True(t, ok, "got %v", err)
 }
+
+func TestKillTellsTheOwnerOfAnythingTiedToTheSessionThatItEnded(t *testing.T) {
+	ft := &fakeTerm{sessions: map[string]bool{"a": true}}
+	var stopped []string
+	p := New(ft, WithOnStop(func(a string) { stopped = append(stopped, a) }))
+
+	require.NoError(t, p.Kill(context.Background(), profile(0)))
+	assert.Equal(t, []string{"a"}, stopped)
+	require.NoError(t, p.Kill(context.Background(), profile(0)))
+	assert.Equal(t, []string{"a", "a"}, stopped, "also when the session was already gone: it is over either way")
+}
+
+type failingKill struct{ *fakeTerm }
+
+func (failingKill) KillSession(context.Context, string) error { return errors.New("tmux says no") }
+
+func TestAKillThatFailsDoesNotSayTheSessionEnded(t *testing.T) {
+	ft := &fakeTerm{sessions: map[string]bool{"a": true}}
+	var stopped []string
+	p := New(failingKill{ft}, WithOnStop(func(a string) { stopped = append(stopped, a) }))
+	require.Error(t, p.Kill(context.Background(), profile(0)))
+	assert.Empty(t, stopped, "the session is still there, so what is tied to it must not be ended")
+}
+
+func TestAliveIsTrueOnlyForAnAgentWithASession(t *testing.T) {
+	ft := &fakeTerm{sessions: map[string]bool{"a": true}}
+	p := New(ft)
+	assert.True(t, p.Alive(context.Background(), "a"))
+	assert.False(t, p.Alive(context.Background(), "b"))
+}
+
+type erroringHas struct{ *fakeTerm }
+
+func (erroringHas) HasSession(context.Context, string) (bool, error) {
+	return true, errors.New("tmux unreachable")
+}
+
+func TestAnErrorAskingIsNotAlive(t *testing.T) {
+	assert.False(t, New(erroringHas{&fakeTerm{}}).Alive(context.Background(), "a"), "a question that cannot be answered is not a yes")
+}
