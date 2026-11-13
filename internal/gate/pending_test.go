@@ -163,3 +163,29 @@ func TestLongInputsAreClippedInTheQuestion(t *testing.T) {
 	assert.Less(t, len(n.last()), 1500)
 	assert.Contains(t, n.last(), "…")
 }
+
+func TestTwoAnswersInARowTheSecondIsRefusedImmediately(t *testing.T) {
+	n := newNotes()
+	p := NewPending(n.notify)
+	res := ask(p, context.Background(), "a", "Bash", `{}`)
+	waitSent(t, n)
+	id := idIn(t, n.last())
+
+	// Both answers arrive before the waiter has woken: the first is taken, the
+	// second must be refused rather than overwrite it or block.
+	done := make(chan error, 1)
+	go func() {
+		if err := p.Answer(id, Answer{Allow: true}); err != nil {
+			done <- err
+			return
+		}
+		done <- p.Answer(id, Answer{Allow: false})
+	}()
+	select {
+	case err := <-done:
+		assert.ErrorIs(t, err, ErrNoSuchQuestion)
+	case <-time.After(2 * time.Second):
+		t.Fatal("the second answer blocked")
+	}
+	assert.True(t, (<-res).Allow, "the first answer stands")
+}
