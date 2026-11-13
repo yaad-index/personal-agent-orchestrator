@@ -18,6 +18,8 @@ pao drives coding agents that run real, side-effecting tools: writing files, she
 
 5. **Fuzzy cases route to a judge agent.** When the policy rules give no clear verdict, pao routes the decision to a judge agent for one (ADR-0003: a judge is an ordinary routing target), instead of always falling back to the operator.
 
+6. **The policy grows over time.** When an agent requests an action the policy does not yet cover, the gate asks (point 3), and on the operator's approval pao can record that action into the policy so it is recognized next time. The policy is accruing data, not a fixed table baked into the code.
+
 ## What this ADR deliberately does NOT decide
 
 The concrete risk taxonomy and policy schema; how an attended session and an unattended one differ in strictness; the judge agent's prompt and how its verdict is phrased; gate timeouts and what a timeout means; and how a denied action is surfaced back to the agent so it stays actionable. Each is deferred to its own later ADR or to implementation.
