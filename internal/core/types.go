@@ -28,6 +28,10 @@ type Profile struct {
 	// Transcript says where the backend writes its transcript and how to read
 	// it (ADR-0008, ADR-0011).
 	Transcript Transcript `yaml:"transcript"`
+	// Node names the node that hosts the agent when it is not this one. It is set
+	// only on the profile of an agent the master knows from the mesh directory, never
+	// read from a profile file.
+	Node string `yaml:"-"`
 	// Levels overrides DefaultLevels per kind (ADR-0008 point 2). Kinds it
 	// leaves out keep their default level.
 	Levels Levels `yaml:"levels"`

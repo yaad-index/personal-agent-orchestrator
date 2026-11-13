@@ -116,9 +116,27 @@ func (c MeshStatusCmd) run(w io.Writer) error {
 		if p.Master != "" {
 			believes = fmt.Sprintf("%s@%d", p.Master, p.Epoch)
 		}
-		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", p.ID, state, p.Role, believes, p.Addr); err != nil {
+		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d agent(s)\t%s\n", p.ID, state, p.Role, believes, p.Agents, p.Addr); err != nil {
 			return err
 		}
 	}
-	return tw.Flush()
+	if err := tw.Flush(); err != nil {
+		return err
+	}
+	if len(st.Conflicts) == 0 {
+		return nil
+	}
+	if _, err := fmt.Fprintln(w, "\nname conflicts (these agents are not addressable through the mesh):"); err != nil {
+		return err
+	}
+	for _, c := range st.Conflicts {
+		holder := "the master itself"
+		if c.HeldBy != "" {
+			holder = "node " + c.HeldBy
+		}
+		if _, err := fmt.Fprintf(w, "  %s on node %s: the name is held by %s\n", c.Name, c.Node, holder); err != nil {
+			return err
+		}
+	}
+	return nil
 }

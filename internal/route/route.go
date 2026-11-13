@@ -7,6 +7,7 @@ package route
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -21,6 +22,18 @@ type Result struct {
 	Err      error
 }
 
+// Remote is the agents on other nodes of a mesh, as the master knows them, and the
+// way to hand one a message. The router asks it after its own registry.
+type Remote interface {
+	// Lookup returns the remote agent a name addresses.
+	Lookup(name string) (core.Profile, bool)
+	// ByTag returns the remote agents carrying a tag.
+	ByTag(tag string) []core.Profile
+	// Deliver hands the agent a message on its node and reports whether it had to be
+	// started to receive it.
+	Deliver(ctx context.Context, p core.Profile, m core.Message) (launched bool, err error)
+}
+
 // Router routes inputs against a registry. Launching and delivering are
 // collaborators so the terminal driver stays swappable (ADR-0002).
 type Router struct {
@@ -29,6 +42,8 @@ type Router struct {
 	deliverer core.Deliverer
 
 	now func() time.Time
+
+	remote Remote
 
 	mu    sync.Mutex
 	locks map[string]*sync.Mutex
@@ -39,6 +54,10 @@ type Option func(*Router)
 
 // WithClock replaces the clock used to stamp agent activity.
 func WithClock(now func() time.Time) Option { return func(r *Router) { r.now = now } }
+
+// SetRemote lets the router address agents on other nodes. Call it before the
+// router is used.
+func (r *Router) SetRemote(remote Remote) { r.remote = remote }
 
 // New returns a Router.
 func New(reg *registry.Registry, l core.Launcher, d core.Deliverer, opts ...Option) *Router {
@@ -89,13 +108,21 @@ func (r *Router) Resolve(t core.Target) ([]core.Profile, error) {
 	}
 	switch t.Kind {
 	case core.ByName:
-		p, _, ok := r.reg.Lookup(t.Value)
-		if !ok {
-			return nil, NoMatch(t)
+		if p, _, ok := r.reg.Lookup(t.Value); ok {
+			return []core.Profile{p}, nil
 		}
-		return []core.Profile{p}, nil
+		if r.remote != nil {
+			if p, ok := r.remote.Lookup(t.Value); ok {
+				return []core.Profile{p}, nil
+			}
+		}
+		return nil, NoMatch(t)
 	case core.ByTag:
 		ps := r.reg.ByTag(t.Value)
+		if r.remote != nil {
+			ps = append(ps, r.remote.ByTag(t.Value)...)
+			sort.Slice(ps, func(i, j int) bool { return ps[i].Name < ps[j].Name })
+		}
 		if len(ps) == 0 {
 			return nil, NoMatch(t)
 		}
@@ -107,6 +134,20 @@ func (r *Router) Resolve(t core.Target) ([]core.Profile, error) {
 
 func (r *Router) deliver(ctx context.Context, p core.Profile, m core.Message) Result {
 	res := Result{Agent: p.Name}
+	if p.Node != "" {
+		// An agent on another node starts itself when the message reaches it; there
+		// is no launch lock to take here and no activity of ours to note.
+		if r.remote == nil {
+			res.Err = fmt.Errorf("deliver to %q on node %q: no way to reach other nodes", p.Name, p.Node)
+			return res
+		}
+		launched, err := r.remote.Deliver(ctx, p, m)
+		res.Launched = launched
+		if err != nil {
+			res.Err = fmt.Errorf("deliver to %q on node %q: %w", p.Name, p.Node, err)
+		}
+		return res
+	}
 
 	launched, err := r.ensureRunning(ctx, p)
 	if err != nil {

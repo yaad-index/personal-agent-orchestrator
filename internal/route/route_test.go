@@ -243,3 +243,120 @@ func TestDeliverReachesExactlyTheGivenAgentsAndIsolatesFailures(t *testing.T) {
 	assert.Len(t, d.got["b"], 1)
 	assert.Empty(t, d.got["c"], "an agent not given is not delivered to")
 }
+
+// fakeRemote is the agents on other nodes, and a record of what was handed to them.
+type fakeRemote struct {
+	mu       sync.Mutex
+	agents   map[string]core.Profile
+	got      []string
+	launched bool
+	failFor  string
+}
+
+func (f *fakeRemote) Lookup(name string) (core.Profile, bool) {
+	p, ok := f.agents[name]
+	return p, ok
+}
+
+func (f *fakeRemote) ByTag(tag string) []core.Profile {
+	var out []core.Profile
+	for _, p := range f.agents {
+		if p.HasTag(tag) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func (f *fakeRemote) Deliver(_ context.Context, p core.Profile, m core.Message) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if p.Name == f.failFor {
+		return false, errors.New("node unreachable")
+	}
+	f.got = append(f.got, p.Node+"/"+p.Name+": "+m.Line())
+	return f.launched, nil
+}
+
+func remoteRouter(t *testing.T, remote *fakeRemote, local ...core.Profile) (*Router, *fakeLauncher, *fakeDeliverer) {
+	t.Helper()
+	r, _, l, d := newRouter(t, local...)
+	r.SetRemote(remote)
+	return r, l, d
+}
+
+func TestAnAgentOnAnotherNodeIsReachedByName(t *testing.T) {
+	remote := &fakeRemote{agents: map[string]core.Profile{"bee": {Name: "bee", Node: "n2", Tags: []string{"team"}}}, launched: true}
+	r, l, d := remoteRouter(t, remote, core.Profile{Name: "a"})
+
+	res, err := r.Route(context.Background(), core.Target{Kind: core.ByName, Value: "bee"}, msg)
+	require.NoError(t, err)
+	require.Len(t, res, 1)
+	assert.Equal(t, "bee", res[0].Agent)
+	assert.True(t, res[0].Launched, "the node said it had to start the agent")
+	assert.NoError(t, res[0].Err)
+	assert.Equal(t, []string{"n2/bee: [h]: hi"}, remote.got)
+	assert.EqualValues(t, 0, l.launches.Load(), "the master did not try to launch an agent that is not its own")
+	assert.Empty(t, d.got)
+}
+
+func TestALocalNameIsNeverAnsweredByTheRemote(t *testing.T) {
+	remote := &fakeRemote{agents: map[string]core.Profile{"a": {Name: "a", Node: "n2"}}}
+	r, _, d := remoteRouter(t, remote, core.Profile{Name: "a"})
+	_, err := r.Route(context.Background(), core.Target{Kind: core.ByName, Value: "a"}, msg)
+	require.NoError(t, err)
+	assert.Empty(t, remote.got)
+	assert.Len(t, d.got["a"], 1, "the master's own agent holds the name")
+}
+
+func TestATagFansOutAcrossLocalAndRemoteAgentsInNameOrder(t *testing.T) {
+	remote := &fakeRemote{agents: map[string]core.Profile{
+		"b": {Name: "b", Node: "n2", Tags: []string{"team"}},
+		"d": {Name: "d", Node: "n3", Tags: []string{"team"}},
+	}}
+	r, _, d := remoteRouter(t, remote, core.Profile{Name: "a", Tags: []string{"team"}}, core.Profile{Name: "c", Tags: []string{"team"}})
+
+	res, err := r.Route(context.Background(), core.Target{Kind: core.ByTag, Value: "team"}, msg)
+	require.NoError(t, err)
+	var names []string
+	for _, x := range res {
+		names = append(names, x.Agent)
+		assert.NoError(t, x.Err)
+	}
+	assert.Equal(t, []string{"a", "b", "c", "d"}, names)
+	assert.ElementsMatch(t, []string{"n2/b: [h]: hi", "n3/d: [h]: hi"}, remote.got)
+	assert.Len(t, d.got["a"], 1)
+	assert.Len(t, d.got["c"], 1)
+}
+
+func TestARemoteFailureIsReportedAndDoesNotStopTheOthers(t *testing.T) {
+	remote := &fakeRemote{agents: map[string]core.Profile{
+		"b": {Name: "b", Node: "n2", Tags: []string{"team"}},
+		"d": {Name: "d", Node: "n3", Tags: []string{"team"}},
+	}, failFor: "b"}
+	r, _, _ := remoteRouter(t, remote)
+
+	res, err := r.Route(context.Background(), core.Target{Kind: core.ByTag, Value: "team"}, msg)
+	require.NoError(t, err)
+	require.Len(t, res, 2)
+	require.Error(t, res[0].Err)
+	assert.Contains(t, res[0].Err.Error(), `"b" on node "n2"`)
+	assert.NoError(t, res[1].Err)
+	assert.Equal(t, []string{"n3/d: [h]: hi"}, remote.got)
+}
+
+func TestAnUnknownNameIsStillNoMatchWithARemote(t *testing.T) {
+	r, _, _ := remoteRouter(t, &fakeRemote{agents: map[string]core.Profile{}})
+	_, err := r.Resolve(core.Target{Kind: core.ByName, Value: "ghost"})
+	assert.Equal(t, NoMatch(core.Target{Kind: core.ByName, Value: "ghost"}).Error(), err.Error())
+	_, err = r.Resolve(core.Target{Kind: core.ByTag, Value: "ghosts"})
+	assert.ErrorIs(t, err, core.ErrNoMatch)
+}
+
+func TestARemoteProfileWithNoWayToReachItIsAnErrorNotALocalLaunch(t *testing.T) {
+	r, _, l, _ := newRouter(t)
+	res := r.Deliver(context.Background(), []core.Profile{{Name: "bee", Node: "n2"}}, msg)
+	require.Len(t, res, 1)
+	require.Error(t, res[0].Err)
+	assert.EqualValues(t, 0, l.launches.Load())
+}

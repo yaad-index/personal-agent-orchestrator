@@ -17,6 +17,7 @@ type AgentInfo struct {
 	Name    string   `json:"name" jsonschema:"the agent's name"`
 	Tags    []string `json:"tags" jsonschema:"the tags the agent carries"`
 	Backend string   `json:"backend" jsonschema:"the coding-agent harness that runs it"`
+	Node    string   `json:"node,omitempty" jsonschema:"the node that hosts it, when it is not this one"`
 	State   string   `json:"state" jsonschema:"running or stopped"`
 	// Temporary agents also say where they came from and how they are doing.
 	Temporary bool   `json:"temporary" jsonschema:"whether it is a temporary agent"`

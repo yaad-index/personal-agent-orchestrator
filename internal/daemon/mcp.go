@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"sort"
 	"time"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/access"
@@ -9,6 +10,8 @@ import (
 	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/harvest"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/mcpsrv"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/mesh/directory"
+	pb "github.com/yaad-index/personal-agent-orchestrator/internal/mesh/meshpb"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/recipe"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/registry"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/route"
@@ -29,6 +32,8 @@ type mcpOps struct {
 	store      *harvest.Store
 	layer      *comm.Layer
 	auth       access.Authorizer
+	// dir is the master's directory of agents on other nodes; nil off the mesh.
+	dir *directory.Directory
 }
 
 func (o mcpOps) Agents() []mcpsrv.AgentInfo {
@@ -48,6 +53,20 @@ func (o mcpOps) Agents() []mcpsrv.AgentInfo {
 			info.Flag = string(a.Temp.Flag(now, o.thresholds))
 		}
 		out = append(out, info)
+	}
+	if o.dir != nil {
+		for _, e := range o.dir.All() {
+			a := e.Agent
+			info := mcpsrv.AgentInfo{Name: a.GetName(), Tags: a.GetTags(), Node: e.Node, State: "stopped", Temporary: a.GetTemporary(), Recipe: a.GetRecipe(), Channel: a.GetChannel(), Flag: a.GetFlag()}
+			if a.GetState() == pb.AgentState_AGENT_STATE_RUNNING {
+				info.State = "running"
+			}
+			if info.Tags == nil {
+				info.Tags = []string{}
+			}
+			out = append(out, info)
+		}
+		sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	}
 	return out
 }

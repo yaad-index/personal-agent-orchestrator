@@ -15,6 +15,16 @@ type MeshPeerJSON struct {
 	Role     string    `json:"role"`
 	Epoch    uint64    `json:"epoch"`
 	Master   string    `json:"master"`
+	// Agents is how many of the peer's agents the master has in its directory.
+	Agents int `json:"agents"`
+}
+
+// MeshConflictJSON is an agent left out of the directory because another holds its name.
+type MeshConflictJSON struct {
+	Name string `json:"name"`
+	Node string `json:"node"`
+	// HeldBy is the node that holds the name; empty when the master itself does.
+	HeldBy string `json:"held_by"`
 }
 
 // MeshJSON is a node's view of the mesh.
@@ -24,6 +34,9 @@ type MeshJSON struct {
 	Epoch  uint64         `json:"epoch"`
 	Master string         `json:"master"`
 	Peers  []MeshPeerJSON `json:"peers"`
+	// Conflicts lists agents the master left out of its directory, with who holds
+	// the name.
+	Conflicts []MeshConflictJSON `json:"conflicts"`
 }
 
 // WithMesh serves the node's view of the mesh at GET /v1/mesh. Without it the

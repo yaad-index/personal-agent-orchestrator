@@ -3,7 +3,9 @@ package daemon
 import (
 	"context"
 	"net"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -45,11 +47,27 @@ func newMeshFixture(t *testing.T, names ...string) *meshFixture {
 
 func (f *meshFixture) start(t *testing.T, name string) *node {
 	t.Helper()
-	return startNodeWith(t, nil, func(_, _ string, cfg *config.Config) {
+	return f.startWith(t, name, nil, nil)
+}
+
+// startWith starts a node of the mesh hosting the given agents, and with the given
+// recipes if any.
+func (f *meshFixture) startWith(t *testing.T, name string, agents map[string]string, recipes map[string]string) *node {
+	t.Helper()
+	return startNodeWith(t, agents, func(dir, script string, cfg *config.Config) {
 		cfg.Orchestrator.Node = name
 		cfg.Orchestrator.MeshKey = f.keys[name]
 		cfg.Orchestrator.MeshListen = f.lns[name].Addr().String()
 		cfg.Mesh = f.doc
+		if recipes != nil {
+			rdir := filepath.Join(dir, "recipes")
+			require.NoError(t, os.MkdirAll(rdir, 0o700))
+			for rn, body := range recipes {
+				body = strings.ReplaceAll(body, "@@SCRIPT@@", script)
+				require.NoError(t, os.WriteFile(filepath.Join(rdir, rn+".yaml"), []byte(body), 0o600))
+			}
+			cfg.Orchestrator.RecipesDir = rdir
+		}
 	}, func(o *Options) { o.MeshListener = f.lns[name] })
 }
 

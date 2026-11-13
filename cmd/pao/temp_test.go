@@ -165,9 +165,10 @@ func TestMeshStatusShowsTheMasterAndEachPeer(t *testing.T) {
 		writeJSON(w, 200, local.MeshJSON{
 			Node: "n-b", Role: "secondary", Epoch: 2, Master: "n-a",
 			Peers: []local.MeshPeerJSON{
-				{ID: "n-a", Addr: "10.0.0.1:7745", Up: true, Role: "master", Epoch: 2, Master: "n-a"},
+				{ID: "n-a", Addr: "10.0.0.1:7745", Up: true, Role: "master", Epoch: 2, Master: "n-a", Agents: 3},
 				{ID: "n-c", Addr: "10.0.0.3:7745", Up: false, Role: "unknown"},
 			},
+			Conflicts: []local.MeshConflictJSON{{Name: "dup", Node: "n-c", HeldBy: "n-a"}, {Name: "boss", Node: "n-a"}},
 		})
 	})
 	var out bytes.Buffer
@@ -175,8 +176,11 @@ func TestMeshStatusShowsTheMasterAndEachPeer(t *testing.T) {
 	assert.Equal(t, "GET /v1/mesh", s.path)
 	assert.Contains(t, out.String(), "node:   n-b (secondary)")
 	assert.Contains(t, out.String(), "master: n-a at epoch 2")
-	assert.Regexp(t, `n-a\s+up\s+master\s+n-a@2\s+10\.0\.0\.1:7745`, out.String())
-	assert.Regexp(t, `n-c\s+DOWN\s+unknown\s+-\s+10\.0\.0\.3:7745`, out.String(), "a peer never heard from is DOWN with no belief")
+	assert.Regexp(t, `n-a\s+up\s+master\s+n-a@2\s+3 agent\(s\)\s+10\.0\.0\.1:7745`, out.String())
+	assert.Regexp(t, `n-c\s+DOWN\s+unknown\s+-\s+0 agent\(s\)\s+10\.0\.0\.3:7745`, out.String(), "a peer never heard from is DOWN with no belief")
+	assert.Contains(t, out.String(), "name conflicts")
+	assert.Contains(t, out.String(), "dup on node n-c: the name is held by node n-a")
+	assert.Contains(t, out.String(), "boss on node n-a: the name is held by the master itself")
 }
 
 func TestMeshStatusOnANodeNotInAMeshIsAnError(t *testing.T) {
