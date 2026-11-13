@@ -14,10 +14,10 @@ func bytesReader(b []byte) io.Reader { return bytes.NewReader(b) }
 
 // Request is one action an agent is about to take.
 type Request struct {
-	Agent string
-	Tool  string
+	Agent string `json:"agent"`
+	Tool  string `json:"tool"`
 	// Input is the tool's arguments as the backend gave them (JSON).
-	Input json.RawMessage
+	Input json.RawMessage `json:"input"`
 }
 
 // Verdict is a judge's answer.
@@ -54,10 +54,10 @@ type Asker interface {
 
 // Decision is the gate's final answer to the backend's hook.
 type Decision struct {
-	Allow  bool
-	Reason string
+	Allow  bool   `json:"allow"`
+	Reason string `json:"reason"`
 	// Via says how it was decided: "rule", "judge", "operator" or "closed".
-	Via string
+	Via string `json:"via"`
 }
 
 // Gate decides actions. Judge may be nil (no judge configured): an uncovered
