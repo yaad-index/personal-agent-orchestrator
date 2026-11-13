@@ -92,6 +92,45 @@ func TestPasteMultiLine(t *testing.T) {
 	assert.Contains(t, pane, "line one")
 }
 
+func TestCancelledPasteStillSubmitsSoTheNextOneIsNotGlued(t *testing.T) {
+	d := newDriver(t)
+	d.settle = 300 * time.Millisecond
+	bg := context.Background()
+	require.NoError(t, d.NewSession(bg, "a", "", "cat"))
+
+	// The first paste's context ends during the settle pause, after the text
+	// reached the pane and before the Enter.
+	ctx, cancel := context.WithTimeout(bg, 100*time.Millisecond)
+	defer cancel()
+	require.NoError(t, d.Paste(ctx, "a", "FIRST-line"))
+	require.NoError(t, d.Paste(bg, "a", "SECOND-line"))
+
+	for _, want := range []string{"FIRST-line", "SECOND-line"} {
+		require.Eventually(t, func() bool {
+			pane, err := d.Capture(bg, "a")
+			return err == nil && strings.Count(pane, want) == 2
+		}, 5*time.Second, 50*time.Millisecond, "%s should be typed once and echoed once", want)
+	}
+	pane, err := d.Capture(bg, "a")
+	require.NoError(t, err)
+	assert.NotContains(t, pane, "FIRST-lineSECOND-line", "the two pastes must not be glued into one line")
+}
+
+func TestPasteWithAnAlreadyCancelledContextPastesNothing(t *testing.T) {
+	d := newDriver(t)
+	bg := context.Background()
+	require.NoError(t, d.NewSession(bg, "a", "", "cat"))
+
+	ctx, cancel := context.WithCancel(bg)
+	cancel()
+	assert.Error(t, d.Paste(ctx, "a", "NEVER-SENT"))
+
+	time.Sleep(200 * time.Millisecond)
+	pane, err := d.Capture(bg, "a")
+	require.NoError(t, err)
+	assert.NotContains(t, pane, "NEVER-SENT")
+}
+
 func TestConcurrentPastesToOneAgentDoNotInterleave(t *testing.T) {
 	d := newDriver(t)
 	ctx := context.Background()

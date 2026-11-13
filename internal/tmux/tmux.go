@@ -18,6 +18,10 @@ import (
 // DefaultSocket is the tmux server socket name pao uses.
 const DefaultSocket = "pao"
 
+// commitTimeout bounds the tail of a paste that must complete once the text is
+// in the pane (the settle pause and the submitting Enter).
+const commitTimeout = 5 * time.Second
+
 // SessionPrefix namespaces pao's sessions on the server.
 const SessionPrefix = "pao-"
 
@@ -98,7 +102,9 @@ func (d *Driver) Capture(ctx context.Context, agent string) (string, error) {
 
 // Paste pastes text into the agent's terminal as one bracketed paste and then
 // submits it with Enter. The text goes through a tmux buffer, never through
-// shell or key parsing, so it arrives verbatim. Pastes to one agent are
+// shell or key parsing, so it arrives verbatim. Once the text is pasted the
+// Enter is sent even if ctx is cancelled meanwhile; a cancelled ctx only stops a
+// paste that has not started. Pastes to one agent are
 // serialized: the buffer is per agent and a paste plus its Enter is one unit,
 // so two inputs arriving together reach the terminal one after the other
 // instead of interleaving.
@@ -114,12 +120,14 @@ func (d *Driver) Paste(ctx context.Context, agent, text string) error {
 	if _, err := d.run(ctx, nil, "paste-buffer", "-p", "-d", "-b", buf, "-t", pane(agent)); err != nil {
 		return err
 	}
-	select {
-	case <-time.After(d.settle):
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-	_, err := d.run(ctx, nil, "send-keys", "-t", pane(agent), "Enter")
+	// The text is now in the pane, unsubmitted. From here the paste is one unit
+	// that must finish: abandoning it on a cancelled context would leave the
+	// text sitting in the input for the next paste to land on top of. So the
+	// settle pause and the Enter run detached from ctx, bounded by commitTimeout.
+	commit, cancel := context.WithTimeout(context.WithoutCancel(ctx), commitTimeout)
+	defer cancel()
+	time.Sleep(d.settle)
+	_, err := d.run(commit, nil, "send-keys", "-t", pane(agent), "Enter")
 	return err
 }
 
