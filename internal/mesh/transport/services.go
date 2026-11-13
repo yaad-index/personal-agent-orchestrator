@@ -22,10 +22,18 @@ type masterServer struct {
 }
 
 // Session is where a secondary reports to the master. The interceptor has already
-// refused it unless this node is master. For now each report is acknowledged and
-// counted; the directory the reports build is the next step.
+// refused it unless this node is master. Each report goes to the sink (the
+// directory) and is acknowledged.
 func (s masterServer) Session(stream pb.Master_SessionServer) error {
 	caller, _ := CallerFrom(stream.Context())
+	// What a node reported is only good while it is reporting: when the stream
+	// ends, whether the node left or was cut off, the master forgets it and waits for
+	// the node's next full report.
+	defer func() {
+		if s.n.sink != nil {
+			s.n.sink.Drop(caller)
+		}
+	}()
 	for {
 		r, err := stream.Recv()
 		if errors.Is(err, io.EOF) {
@@ -34,6 +42,7 @@ func (s masterServer) Session(stream pb.Master_SessionServer) error {
 		if err != nil {
 			return err
 		}
+		s.n.apply(caller, r)
 		s.n.noteReport(caller, r.GetSeq())
 		if err := stream.Send(&pb.Ack{Seq: r.GetSeq()}); err != nil {
 			return err
@@ -256,4 +265,40 @@ func (n *Node) liveOnce(ctx context.Context, id string) error {
 
 type clientBeats struct {
 	grpc.BidiStreamingClient[pb.Beat, pb.Beat]
+}
+
+// Sink is where the master puts what secondaries report. The directory implements it.
+type Sink interface {
+	Replace(node string, agents []*pb.AgentInfo)
+	Upsert(node string, a *pb.AgentInfo)
+	Remove(node, name string)
+	Drop(node string)
+}
+
+// SetSink sets where reports go. It must be called before Serve. Without one, the
+// master acknowledges reports and keeps nothing.
+func (n *Node) SetSink(s Sink) { n.sink = s }
+
+// apply puts one report from a node into the sink.
+func (n *Node) apply(caller string, r *pb.Report) {
+	if n.sink == nil {
+		return
+	}
+	switch b := r.GetBody().(type) {
+	case *pb.Report_Agents:
+		if b.Agents.GetFull() {
+			n.sink.Replace(caller, b.Agents.GetAgents())
+			return
+		}
+		for _, a := range b.Agents.GetAgents() {
+			n.sink.Upsert(caller, a)
+		}
+	case *pb.Report_Event:
+		switch c := b.Event.GetChange().(type) {
+		case *pb.StateEvent_Changed:
+			n.sink.Upsert(caller, c.Changed)
+		case *pb.StateEvent_Removed:
+			n.sink.Remove(caller, c.Removed)
+		}
+	}
 }
