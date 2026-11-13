@@ -184,6 +184,41 @@ func TestInconclusiveOrFailedJudgeFallsToTheOperator(t *testing.T) {
 	}
 }
 
+// hangingJudge never answers, and ignores its context, like a wedged agent.
+type hangingJudge struct{ release chan struct{} }
+
+func (h hangingJudge) Judge(context.Context, Request) (Verdict, string, error) {
+	<-h.release
+	return VerdictAllow, "too late", nil
+}
+
+func TestAJudgeThatNeverAnswersFallsThroughToTheOperator(t *testing.T) {
+	release := make(chan struct{})
+	defer close(release)
+	asker := &fakeAsker{ans: Answer{Allow: false, Reason: "operator says no"}}
+	g, _ := newGate(t, "", hangingJudge{release}, asker)
+	g.JudgeTimeout = 50 * time.Millisecond
+
+	start := time.Now()
+	d := g.Decide(context.Background(), req("Bash", `{"command":"date"}`))
+	assert.Less(t, time.Since(start), time.Second, "the decision must not wait on a wedged judge")
+	assert.False(t, d.Allow)
+	assert.Equal(t, "operator", d.Via)
+	assert.Equal(t, "operator says no", d.Reason)
+	assert.Len(t, asker.asked(), 1)
+}
+
+func TestAJudgeVerdictThatArrivesTooLateIsIgnored(t *testing.T) {
+	release := make(chan struct{})
+	asker := &fakeAsker{ans: Answer{Allow: false}}
+	g, _ := newGate(t, "", hangingJudge{release}, asker)
+	g.JudgeTimeout = 20 * time.Millisecond
+
+	d := g.Decide(context.Background(), req("Bash", `{"command":"date"}`))
+	close(release) // the judge answers "allow" after the gate moved on
+	assert.False(t, d.Allow, "a late allow from the judge must not turn into an allow")
+}
+
 func TestAJudgeErrorNeverAllows(t *testing.T) {
 	g, _ := newGate(t, "", &fakeJudge{err: errors.New("x")}, nil)
 	d := g.Decide(context.Background(), req("Bash", `{"command":"date"}`))

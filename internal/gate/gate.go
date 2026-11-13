@@ -72,7 +72,15 @@ type Gate struct {
 	// AskTimeout bounds how long the operator is waited for. An unanswered
 	// question is a denial: the gate fails closed.
 	AskTimeout time.Duration
+	// JudgeTimeout bounds how long a judge is waited for. A judge is an
+	// ordinary routed agent and can be wedged; one that does not answer in time
+	// counts as inconclusive, so the operator is asked instead of the decision
+	// stalling. Zero means DefaultJudgeTimeout.
+	JudgeTimeout time.Duration
 }
+
+// DefaultJudgeTimeout is how long a judge is waited for when none is set.
+const DefaultJudgeTimeout = 30 * time.Second
 
 // DefaultAutoAllow is the risk levels that auto-allow when none are configured:
 // reads only.
@@ -103,7 +111,7 @@ func (g *Gate) Decide(ctx context.Context, req Request) Decision {
 
 	// Uncovered: a judge first, if there is one.
 	if g.Judge != nil {
-		v, reason, err := g.Judge.Judge(ctx, req)
+		v, reason, err := g.judge(ctx, req)
 		switch {
 		case err != nil || v == Inconclusive:
 			// fall through to the operator
@@ -114,6 +122,34 @@ func (g *Gate) Decide(ctx context.Context, req Request) Decision {
 		}
 	}
 	return g.askOperator(ctx, req, canon)
+}
+
+// judge asks the judge with its own time limit.
+func (g *Gate) judge(ctx context.Context, req Request) (Verdict, string, error) {
+	timeout := g.JudgeTimeout
+	if timeout <= 0 {
+		timeout = DefaultJudgeTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	type answer struct {
+		v      Verdict
+		reason string
+		err    error
+	}
+	done := make(chan answer, 1)
+	go func() {
+		v, reason, err := g.Judge.Judge(ctx, req)
+		done <- answer{v, reason, err}
+	}()
+	select {
+	case a := <-done:
+		return a.v, a.reason, a.err
+	case <-ctx.Done():
+		// A judge that ignores its context cannot hold the decision up either.
+		return Inconclusive, "", ctx.Err()
+	}
 }
 
 func (g *Gate) askOperator(ctx context.Context, req Request, canon string) Decision {
