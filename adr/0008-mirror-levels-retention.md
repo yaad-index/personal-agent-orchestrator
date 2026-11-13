@@ -8,13 +8,13 @@ pao has to show what an agent is doing, reliably and at a verbosity the viewer c
 
 ## Decision
 
-1. **The mirror reads the agent's transcript, not the terminal.** pao reads the structured session transcript the backend writes (its JSONL; the path is in the agent profile, ADR-0001), never by scraping the terminal pane or trusting the agent to emit. Because the transcript captures every turn and every tool call, a turn that reaches no viewer is structurally impossible, which a scrape or an after-the-fact hook cannot guarantee.
+1. **The mirror reads the agent's transcript, not the terminal.** pao reads the structured session transcript the backend writes (its JSONL; the path is in the agent profile, ADR-0001), never by scraping the terminal pane or trusting the agent to emit. Because the transcript captures every turn and every tool call, a turn cannot be lost the way a terminal scrape or an after-the-fact emit hook can lose one.
 
 2. **Verbosity is a per-kind level map in the agent profile.** The transcript has kinds (message, reasoning, tool call, tool result, other). The profile assigns a level to each kind, and viewing at level N shows every kind whose level is at most N. "Basic" is whatever the profile puts at the lowest level; raising the level pulls in reasoning and tool detail.
 
-3. **A viewer can pause, resume, and backtrack with more detail.** Because the full transcript is always kept, the level controls only what is shown, live or replayed; backtracking re-renders a past window at a higher level than it was first shown.
+3. **A viewer can pause, resume, and backtrack their own view with more detail.** This acts on the rendered stream only; pausing the agent itself is a separate control-plane concern, deferred. Because pao renders from the retained transcript, the level controls only what is shown, live or replayed; backtracking re-renders a past window at a higher level than it was first shown.
 
-4. **Retention is the transcript on disk.** The transcript files are themselves the full-fidelity store for replay and backtrack, so retention is largely free. The level never changes what is stored, only what is rendered.
+4. **Retention is the transcript on disk.** The transcript files are themselves the full-fidelity store for replay and backtrack for as long as the backend keeps them, so retention is largely free; preserving history past a backend's own pruning is a deferred policy (below). The level never changes what is stored, only what is rendered.
 
 5. **A contract test pins the transcript format.** A small test runs the real backend CLI and fails loudly if its transcript format changes, so a backend upgrade cannot silently break the mirror.
 
@@ -24,4 +24,4 @@ The exact kind taxonomy beyond the five named; the level numbers and what each p
 
 ## Consequences
 
-What an agent does is mirrored from the one source that cannot miss a turn, so a terminal-only slip is gone. Verbosity is a view, not a filter on what is captured, so a quiet stream can always be reopened in full detail. Retention costs almost nothing because the transcript is the store, and a contract test keeps a backend upgrade from breaking the mirror unnoticed.
+What an agent does is mirrored from the source the backend itself writes, so the terminal-only slip that motivated this does not happen. Verbosity is a view, not a filter on what is captured, so a quiet stream can be reopened in full detail as long as the transcript is retained. Retention costs almost nothing while the backend keeps its transcripts, with preservation past that left to a deferred policy, and a contract test keeps a backend upgrade from breaking the mirror unnoticed.
