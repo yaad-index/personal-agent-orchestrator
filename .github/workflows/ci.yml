@@ -24,6 +24,35 @@ jobs:
           # Track the version pinned in go.mod so CI and the module stay in lockstep.
           go-version-file: go.mod
 
+      # The wire between nodes is generated from proto/ and the result is committed.
+      # These steps regenerate it with the tool versions scripts/genproto.sh pins and
+      # fail if the committed files are not what the generator produces.
+      - name: Install protoc
+        env:
+          PROTOC_VERSION: "36.2"
+          PROTOC_SHA256: 121f6c7afe1d4d0e3ea6aab9432038599250134cbf4474cb1167d2c7decd4278
+        run: |
+          curl -sSfL -o "$RUNNER_TEMP/protoc.zip" \
+            "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-x86_64.zip"
+          echo "${PROTOC_SHA256}  $RUNNER_TEMP/protoc.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/protoc.zip" -d "$RUNNER_TEMP/protoc"
+          echo "$RUNNER_TEMP/protoc/bin" >> "$GITHUB_PATH"
+
+      - name: Install protoc plugins
+        run: |
+          GOBIN="$RUNNER_TEMP/protoc/bin" go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12
+          GOBIN="$RUNNER_TEMP/protoc/bin" go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2
+
+      - name: Generated code is current
+        run: |
+          go generate ./internal/mesh/meshpb
+          if [ -n "$(git status --porcelain -- internal/mesh/meshpb)" ]; then
+            echo "The generated code under internal/mesh/meshpb is not what the generator produces:"
+            git status --porcelain -- internal/mesh/meshpb
+            git diff -- internal/mesh/meshpb | head -50
+            exit 1
+          fi
+
       - name: Build
         run: go build ./...
 

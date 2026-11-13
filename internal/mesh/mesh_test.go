@@ -76,6 +76,46 @@ func TestGenerateNeverReplacesAKey(t *testing.T) {
 	assert.Equal(t, first.Fingerprint, loaded.Fingerprint)
 }
 
+func TestGenerateLeavesOnlyTheKeyBehind(t *testing.T) {
+	path := keyPath(t)
+	_, err := Generate(path, "n1")
+	require.NoError(t, err)
+	entries, err := os.ReadDir(filepath.Dir(path))
+	require.NoError(t, err)
+	require.Len(t, entries, 1, "no temporary file is left beside the key")
+	assert.Equal(t, "mesh.key", entries[0].Name())
+
+	_, err = Generate(path, "n1")
+	require.ErrorIs(t, err, ErrKeyExists)
+	entries, err = os.ReadDir(filepath.Dir(path))
+	require.NoError(t, err)
+	assert.Len(t, entries, 1, "a refused generate leaves nothing behind either")
+}
+
+func TestTheKeyFileIsNeverSeenHalfWritten(t *testing.T) {
+	// A key that appears at its final name appears whole: a reader racing the
+	// generator either finds no file or a loadable one.
+	path := keyPath(t)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = Generate(path, "n1")
+	}()
+	for {
+		select {
+		case <-done:
+			_, err := Load(path, "n1")
+			require.NoError(t, err)
+			return
+		default:
+			if _, err := os.Stat(path); err == nil {
+				_, lerr := Load(path, "n1")
+				require.NoError(t, lerr, "a file at the final name is a complete key")
+			}
+		}
+	}
+}
+
 func TestLoadRefusesAKeyOthersCanRead(t *testing.T) {
 	path := keyPath(t)
 	_, err := Generate(path, "n1")
