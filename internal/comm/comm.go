@@ -163,13 +163,30 @@ func (l *Layer) Send(ctx context.Context, from string, m core.Message) (core.Mes
 	if err != nil {
 		return core.Message{}, err
 	}
+	return stored, l.fanOut(ctx, stored)
+}
+
+// Notify sends pao's own message to the human (an alert, a raw pane). Unlike
+// Send it is stored in no agent's scope, so an agent can neither quote nor fetch
+// it: what is for the operator alone (ADR-0007 point 2) never reaches an agent
+// through the message map.
+func (l *Layer) Notify(ctx context.Context, m core.Message) (core.Message, error) {
+	m.Kind = core.MessageSystemEvent
+	stored, err := l.store.Add(m)
+	if err != nil {
+		return core.Message{}, err
+	}
+	return stored, l.fanOut(ctx, stored)
+}
+
+func (l *Layer) fanOut(ctx context.Context, m core.Message) error {
 	var errs []error
 	for _, c := range l.channels {
-		if err := c.Send(ctx, stored); err != nil {
+		if err := c.Send(ctx, m); err != nil {
 			errs = append(errs, fmt.Errorf("channel %q: %w", c.Name(), err))
 		}
 	}
-	return stored, errors.Join(errs...)
+	return errors.Join(errs...)
 }
 
 // ResolveQuote resolves a quote the agent used to reference a message. An

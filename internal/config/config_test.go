@@ -21,7 +21,7 @@ func write(t *testing.T, path, body string) {
 func setup(t *testing.T, profiles map[string]string) string {
 	t.Helper()
 	dir := t.TempDir()
-	write(t, filepath.Join(dir, "pao.yaml"), "node: n1\nprofiles_dir: profiles\n")
+	write(t, filepath.Join(dir, "pao.yaml"), "node: n1\nprofiles_dir: profiles\nstate_dir: state\ntoken_env: PAO_TOKEN\n")
 	for name, body := range profiles {
 		write(t, filepath.Join(dir, "profiles", name), body)
 	}
@@ -107,14 +107,58 @@ func TestLoadRejects(t *testing.T) {
 	}
 }
 
+func TestOrchestratorDefaultsAndResolution(t *testing.T) {
+	path := setup(t, map[string]string{"a.yaml": "name: a\nbackend: b\n" + startup})
+
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	o := cfg.Orchestrator
+	assert.Equal(t, DefaultListen, o.Listen)
+	assert.Equal(t, DefaultTmuxSocket, o.TmuxSocket)
+	assert.Equal(t, DefaultMessageWindow, o.MessageWindow)
+	assert.Equal(t, DefaultLevel, o.Level)
+	assert.Equal(t, filepath.Join(filepath.Dir(path), "state"), o.StateDir, "a relative state_dir is resolved against the config")
+	assert.Equal(t, "PAO_TOKEN", o.TokenEnv)
+}
+
+func TestOrchestratorRejects(t *testing.T) {
+	base := "node: n\nprofiles_dir: p\nstate_dir: s\ntoken_env: T\n"
+	cases := map[string]struct{ body, want string }{
+		"no state dir":     {"node: n\nprofiles_dir: p\ntoken_env: T\n", "state_dir is required"},
+		"no token env":     {"node: n\nprofiles_dir: p\nstate_dir: s\n", "token_env is required"},
+		"public listen":    {base + "listen: 0.0.0.0:7744\n", "not a loopback address"},
+		"hostname listen":  {base + "listen: example.com:7744\n", "not a loopback address"},
+		"listen no port":   {base + "listen: 127.0.0.1\n", "listen"},
+		"window below one": {base + "message_window: -1\n", "message_window"},
+		"level below one":  {base + "level: -2\n", "level"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			write(t, filepath.Join(dir, "pao.yaml"), tc.body)
+			_, err := Load(filepath.Join(dir, "pao.yaml"))
+			require.Error(t, err)
+			assert.ErrorContains(t, err, tc.want)
+		})
+	}
+
+	for _, ok := range []string{"127.0.0.1:1", "[::1]:1", "localhost:1"} {
+		dir := t.TempDir()
+		write(t, filepath.Join(dir, "pao.yaml"), base+"listen: \""+ok+"\"\n")
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, "p"), 0o755))
+		_, err := Load(filepath.Join(dir, "pao.yaml"))
+		assert.NoError(t, err, ok)
+	}
+}
+
 func TestLoadOrchestratorErrors(t *testing.T) {
 	dir := t.TempDir()
 
-	write(t, filepath.Join(dir, "nonode.yaml"), "profiles_dir: p\n")
+	write(t, filepath.Join(dir, "nonode.yaml"), "profiles_dir: p\nstate_dir: s\ntoken_env: T\n")
 	_, err := Load(filepath.Join(dir, "nonode.yaml"))
 	assert.ErrorContains(t, err, "node is required")
 
-	write(t, filepath.Join(dir, "nodir.yaml"), "node: n\n")
+	write(t, filepath.Join(dir, "nodir.yaml"), "node: n\nstate_dir: s\ntoken_env: T\n")
 	_, err = Load(filepath.Join(dir, "nodir.yaml"))
 	assert.ErrorContains(t, err, "profiles_dir is required")
 

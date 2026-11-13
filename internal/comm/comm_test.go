@@ -300,3 +300,21 @@ func TestAgentReactionIsScoped(t *testing.T) {
 
 	require.NoError(t, l.React(theirs.ID, "human", "👍"), "the human may react to any message")
 }
+
+func TestNotifyReachesTheHumanButNoAgent(t *testing.T) {
+	l, _, st := setup(t)
+	ch := &fakeChannel{name: "c"}
+	l.AddChannel(ch)
+
+	m, err := l.Notify(context.Background(), core.Message{Sender: "pao", Text: "raw pane: enter your token"})
+	require.NoError(t, err)
+
+	require.Len(t, ch.got, 1)
+	assert.Equal(t, core.MessageSystemEvent, ch.got[0].Kind)
+	for _, agent := range []string{"a", "b"} {
+		_, err := st.Resolve(agent, "enter your token")
+		assert.ErrorIs(t, err, msgstore.ErrUnresolved, "agent %s must not be able to quote it", agent)
+		_, err = st.GetScoped(agent, m.ID)
+		assert.ErrorIs(t, err, msgstore.ErrNotFound, "agent %s must not be able to fetch it", agent)
+	}
+}
