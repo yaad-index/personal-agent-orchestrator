@@ -20,6 +20,31 @@ type Profile struct {
 	Workdir string `yaml:"workdir"`
 	// Startup is the backend's startup procedure (ADR-0007 point 2).
 	Startup Startup `yaml:"startup"`
+	// Transcript says where the backend writes its transcript and how to read
+	// it (ADR-0008, ADR-0011).
+	Transcript Transcript `yaml:"transcript"`
+	// Levels overrides DefaultLevels per kind (ADR-0008 point 2). Kinds it
+	// leaves out keep their default level.
+	Levels Levels `yaml:"levels"`
+}
+
+// Transcript locates and names the format of a backend's transcript.
+type Transcript struct {
+	// Format names the reader for the backend's transcript format.
+	Format string `yaml:"format"`
+	// Path is the transcript file, or a directory whose most recently written
+	// .jsonl file is the live transcript.
+	Path string `yaml:"path"`
+}
+
+// EffectiveLevels returns the profile's levels: the defaults with the profile's
+// own entries laid over them.
+func (p Profile) EffectiveLevels() Levels {
+	out := DefaultLevels()
+	for k, v := range p.Levels {
+		out[k] = v
+	}
+	return out
 }
 
 // Startup declares how a backend is brought to a ready prompt.

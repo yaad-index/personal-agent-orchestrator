@@ -8,6 +8,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
 )
 
 func write(t *testing.T, path, body string) {
@@ -42,10 +44,25 @@ func TestLoad(t *testing.T) {
 	assert.Equal(t, 30*time.Second, cfg.Profiles[1].Startup.ReadyTimeout)
 }
 
-const startup = "startup:\n  command: run\n  ready_pattern: ready\n  ready_timeout: 30s\n"
+const startup = "startup:\n  command: run\n  ready_pattern: ready\n  ready_timeout: 30s\n" + transcript
+
+const transcript = "transcript:\n  format: claude-code\n  path: /tmp/t\n"
 
 // TestLoadRejects gives each case exactly one defect and checks the error names
 // it, so a case cannot pass by failing for some other reason.
+func TestLoadLevelsOverrideDefaults(t *testing.T) {
+	path := setup(t, map[string]string{
+		"a.yaml": "name: a\nbackend: b\n" + startup + "levels:\n  reasoning: 1\n",
+	})
+
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	got := cfg.Profiles[0].EffectiveLevels()
+	assert.Equal(t, 1, got[core.KindReasoning], "the profile's level wins")
+	assert.Equal(t, 1, got[core.KindMessage], "kinds the profile leaves out keep the default")
+	assert.Equal(t, 4, got[core.KindOther])
+}
+
 func TestLoadRejects(t *testing.T) {
 	cases := map[string]struct {
 		profiles map[string]string
@@ -70,8 +87,16 @@ func TestLoadRejects(t *testing.T) {
 			"a.yaml": "name: a\nbackend: b\nstartup:\n  command: c\n  ready_pattern: \"(\"\n  ready_timeout: 1s\n",
 		}, "startup.ready_pattern"},
 		"no ready timeout": {map[string]string{
-			"a.yaml": "name: a\nbackend: b\nstartup:\n  command: c\n  ready_pattern: r\n",
+			"a.yaml": "name: a\nbackend: b\nstartup:\n  command: c\n  ready_pattern: r\n" + transcript,
 		}, "startup.ready_timeout"},
+		"no transcript format": {map[string]string{
+			"a.yaml": "name: a\nbackend: b\nstartup:\n  command: c\n  ready_pattern: r\n  ready_timeout: 1s\ntranscript:\n  path: /t\n",
+		}, "transcript.format"},
+		"no transcript path": {map[string]string{
+			"a.yaml": "name: a\nbackend: b\nstartup:\n  command: c\n  ready_pattern: r\n  ready_timeout: 1s\ntranscript:\n  format: f\n",
+		}, "transcript.path"},
+		"unknown level kind": {map[string]string{"a.yaml": "name: a\nbackend: b\n" + startup + "levels:\n  gossip: 1\n"}, "unknown kind"},
+		"level below one":    {map[string]string{"a.yaml": "name: a\nbackend: b\n" + startup + "levels:\n  message: 0\n"}, "at least 1"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
