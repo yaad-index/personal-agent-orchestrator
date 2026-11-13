@@ -169,7 +169,7 @@ Message types (the first build needs all of them):
 |---|---|---|
 | `hello` | both, on connect | node id, epoch, role, config version, protocol version, capabilities |
 | `heartbeat` | all pairs | sequence, role, epoch, sent time |
-| `agents` | secondary to master | the node's agents: name, tags, state, flags; full on connect, then deltas |
+| `agents` | secondary to master | the node's agents: name, tags, state, flags and each agent's active stream bindings (channel, level, viewer); full on connect, then deltas |
 | `cmd.launch`, `cmd.kill`, `cmd.restart` | master to node | ADR-0007 lifecycle for a named agent |
 | `cmd.spawn`, `cmd.kill_temp` | master to node | ADR-0006 temporary agents on that node |
 | `cmd.deliver` | master to node | deliver one message to a named agent (G1) |
@@ -177,7 +177,7 @@ Message types (the first build needs all of them):
 | `cmd.view` | master to node | pause, resume or backtrack a viewer's rendering (ADR-0008) |
 | `cmd.decide` | master to node | the operator's answer to a gate question (G2) |
 | `query.posted` | master to nodes | who posted channel message P (section 11) |
-| `event.state` | node to master | an agent's state or flag changed, a temporary agent was spawned or killed |
+| `event.state` | node to master | an agent's state, flag or stream binding changed, a temporary agent was spawned or killed |
 | `config.push`, `config.ack` | master to node, back | a new configuration version (section 7) |
 | `alert.master_lost` | node to nodes | a node has announced the master lost for an epoch |
 | `promote.*` | node to nodes | the steps of section 9 |
@@ -248,7 +248,10 @@ agent to the channel (the binding the communication layer already has) and its
 transcript follower posts there directly, rendered at the requested level, using
 the credentials it holds. `cmd.stream` with no channel clears it. A secondary keeps
 streaming to the channels it was told to if the master is lost: the binding is
-local state.
+local state. Because it is local, the master does not know it unless told, so every
+binding is reported in the node's `agents` announcement and in `event.state` when it
+changes. That is how a master rebuilt by promotion (section 9) learns which streams
+are live, and can clear or re-level one that it did not itself set.
 
 **View controls.** `cmd.view` carries the viewer's pause, resume and backtrack to
 the node that renders for that viewer. As ADR-0008 says, these act on the rendered
@@ -261,6 +264,14 @@ carries the sender's belief. A node persists the highest epoch it has seen and t
 id of that epoch's master. A command from a lower epoch is refused. This is not an
 election: nothing here chooses a master. It only lets a node tell a current master
 from a stale one.
+
+**Equal epochs.** Two nodes on opposite sides of a clean partition each see no peer
+that reports a master, so neither refuses, and both can promote to the same epoch.
+The order is therefore on the pair (epoch, node id), not the epoch alone. At equal
+epochs the master whose node id sorts lower stays master and the other yields on
+contact. The rule is arbitrary, and that is the point: any fixed total order makes a
+heal deterministic, and this one is easy to state and to test. The yielding node
+takes the same path as a lower-epoch master in the rejoin rules below.
 
 **Promotion.** `pao promote` is run by the operator on the node to become master.
 
@@ -275,13 +286,17 @@ from a stale one.
    peer.
 4. Each peer closes its command connection to the old master, dials the new one, and
    announces its agents. The new master's directory is complete as the
-   announcements arrive.
+   announcements arrive, and because each announcement carries the node's active
+   stream bindings (section 8), the new master also knows which streams are live and
+   can clear or re-level them. It reconciles them against what it holds nothing for:
+   a binding it did not set is reported to the operator and left running until told
+   otherwise, not silently dropped.
 
 Promotion changes the role, not the data: per-agent data stays where it is. The
 agents that were local to the old master are not available through the new one
 while the old master is down, and come back when it rejoins.
 
-**Rejoin.** A node that starts, or reconnects, with a lower epoch than the mesh
+**Rejoin.** A node that starts, or reconnects, with a lower (epoch, node id) than the mesh
 holds becomes a secondary on contact, without anyone's action. It releases the
 human channels' inbound side (stops receiving from them), dials the current master,
 announces its agents, and takes the current configuration. This is deterministic
