@@ -243,3 +243,77 @@ func TestAProfileMayNotBeNamedLikePao(t *testing.T) {
 		assert.ErrorContains(t, err, "reserved")
 	}
 }
+
+const meshFp1 = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+const meshFp2 = "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+
+func meshSetup(t *testing.T, node, orch, doc string) string {
+	t.Helper()
+	path := setup(t, map[string]string{"a.yaml": "name: a\nbackend: b\n" + startup})
+	dir := filepath.Dir(path)
+	write(t, path, "node: "+node+"\nprofiles_dir: profiles\nstate_dir: state\ntoken_env: PAO_TOKEN\n"+orch)
+	if doc != "" {
+		write(t, filepath.Join(dir, "mesh.yaml"), doc)
+	}
+	return path
+}
+
+const meshDoc = "nodes:\n  - id: n1\n    addr: 10.0.0.1:7745\n    fingerprint: " + meshFp1 + "\n  - id: n2\n    addr: 10.0.0.2:7745\n    fingerprint: " + meshFp2 + "\n"
+
+func TestAMeshIsLoadedAlongsideTheConfig(t *testing.T) {
+	path := meshSetup(t, "n1", "mesh_file: mesh.yaml\nmesh_listen: 0.0.0.0:7745\n", meshDoc)
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	require.NotNil(t, cfg.Mesh)
+	assert.Len(t, cfg.Mesh.Nodes, 2)
+	assert.Equal(t, filepath.Join(filepath.Dir(path), "mesh.yaml"), cfg.Orchestrator.MeshFile, "a relative path is resolved against the config")
+	assert.Equal(t, "0.0.0.0:7745", cfg.Orchestrator.MeshListen, "the mesh listener is for other machines: not limited to loopback")
+	assert.Equal(t, filepath.Join(filepath.Dir(path), "state", "mesh.key"), cfg.Orchestrator.MeshKey, "by default the key lives in the state dir")
+}
+
+func TestAConfigWithoutAMeshFileIsASingleNode(t *testing.T) {
+	cfg, err := Load(meshSetup(t, "n1", "", ""))
+	require.NoError(t, err)
+	assert.Nil(t, cfg.Mesh)
+}
+
+func TestMeshSettingsMustBeConsistent(t *testing.T) {
+	cases := map[string]struct{ orch, doc, want string }{
+		"file without listen":  {"mesh_file: mesh.yaml\n", meshDoc, "mesh_listen is required"},
+		"listen without file":  {"mesh_listen: 0.0.0.0:7745\n", "", "mesh_file is not"},
+		"bad listen":           {"mesh_file: mesh.yaml\nmesh_listen: nowhere\n", meshDoc, "host:port"},
+		"this node not listed": {"mesh_file: mesh.yaml\nmesh_listen: 0.0.0.0:7745\n", "nodes:\n  - id: n2\n    addr: h:1\n    fingerprint: " + meshFp2 + "\n", `this node ("n1") is not in the mesh document`},
+		"missing document":     {"mesh_file: gone.yaml\nmesh_listen: 0.0.0.0:7745\n", "", "gone.yaml"},
+		"invalid document":     {"mesh_file: mesh.yaml\nmesh_listen: 0.0.0.0:7745\n", "nodes: []\n", "lists no nodes"},
+	}
+	for name, c := range cases {
+		_, err := Load(meshSetup(t, "n1", c.orch, c.doc))
+		require.Error(t, err, name)
+		assert.ErrorContains(t, err, c.want, name)
+	}
+}
+
+func TestLoadWithoutMeshDoesNotNeedTheNodeToBeListedYet(t *testing.T) {
+	// The command that creates the node's key runs before the node can be in a
+	// document that names its key.
+	path := meshSetup(t, "n3", "mesh_file: mesh.yaml\nmesh_listen: 0.0.0.0:7745\n", meshDoc)
+	_, err := Load(path)
+	require.Error(t, err, "n3 is not in the document")
+	cfg, err := LoadWithoutMesh(path)
+	require.NoError(t, err)
+	assert.Equal(t, "n3", cfg.Orchestrator.Node)
+	assert.Nil(t, cfg.Mesh, "it did not read the document")
+	assert.Equal(t, filepath.Join(filepath.Dir(path), "mesh.yaml"), cfg.Orchestrator.MeshFile)
+
+	path = meshSetup(t, "n3", "mesh_file: nowhere.yaml\nmesh_listen: 0.0.0.0:7745\n", "")
+	_, err = LoadWithoutMesh(path)
+	assert.NoError(t, err, "a document that is not there yet is not an error for keygen")
+}
+
+func TestMeshKeyAndFileResolution(t *testing.T) {
+	path := meshSetup(t, "n1", "mesh_file: /abs/mesh.yaml\nmesh_listen: 0.0.0.0:7745\nmesh_key: keys/n1.key\n", "")
+	cfg, err := LoadWithoutMesh(path)
+	require.NoError(t, err)
+	assert.Equal(t, "/abs/mesh.yaml", cfg.Orchestrator.MeshFile)
+	assert.Equal(t, filepath.Join(filepath.Dir(path), "keys", "n1.key"), cfg.Orchestrator.MeshKey)
+}

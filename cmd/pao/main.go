@@ -18,6 +18,7 @@ type CLI struct {
 	Config       ConfigCmd       `cmd:"" help:"Inspect pao configuration."`
 	Run          RunCmd          `cmd:"" help:"Run the node daemon."`
 	Chat         ChatCmd         `cmd:"" help:"Talk to agents through the node's local channel."`
+	Mesh         MeshCmd         `cmd:"" help:"This node's place in a mesh: its key and the nodes it trusts."`
 	Recipes      RecipesCmd      `cmd:"" help:"Recipes that temporary agents are spawned from."`
 	Spawn        SpawnCmd        `cmd:"" help:"Start a temporary agent from a recipe."`
 	Kill         KillCmd         `cmd:"" help:"Tear a temporary agent down, harvesting its outputs first."`

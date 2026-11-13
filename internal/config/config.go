@@ -20,6 +20,7 @@ import (
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/gate"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/mesh"
 )
 
 // Orchestrator is the node-level config. Sources, channels, routing and
@@ -52,6 +53,18 @@ type Orchestrator struct {
 	// Level is the verbosity level agent output is mirrored to the human at
 	// (ADR-0008). Default 1.
 	Level int `yaml:"level"`
+	// MeshFile is the mesh document: the list of nodes in the mesh, the same on
+	// every node (ADR-0017 point 9). Empty means this node is not part of a mesh.
+	// A relative path is resolved against the directory of the orchestrator config.
+	MeshFile string `yaml:"mesh_file"`
+	// MeshListen is the host:port this node accepts other nodes on. Required when
+	// MeshFile is set. Unlike the local channel it is meant to be reached from
+	// other machines, so it is not limited to loopback.
+	MeshListen string `yaml:"mesh_listen"`
+	// MeshKey is this node's private key, created by `pao mesh keygen`. Default:
+	// mesh.key in the state dir. A relative path is resolved against the directory
+	// of the orchestrator config.
+	MeshKey string `yaml:"mesh_key"`
 	// Gate configures the approval gate (ADR-0004).
 	Gate Gate `yaml:"gate"`
 	// Temp configures temporary agents (ADR-0006).
@@ -98,13 +111,22 @@ const (
 type Config struct {
 	Orchestrator Orchestrator
 	Profiles     []core.Profile
+	// Mesh is the mesh document, nil when the node is not part of a mesh.
+	Mesh *mesh.Document
 }
 
 var namePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
 
 // Load reads the orchestrator config at path and every profile in its
 // profiles directory.
-func Load(path string) (*Config, error) {
+func Load(path string) (*Config, error) { return load(path, true) }
+
+// LoadWithoutMesh is Load without reading or checking the mesh document. It is
+// for the command that creates this node's key, which has to run before the node
+// can be listed in a mesh document that names its key.
+func LoadWithoutMesh(path string) (*Config, error) { return load(path, false) }
+
+func load(path string, withMesh bool) (*Config, error) {
 	var o Orchestrator
 	if err := decodeFile(path, &o); err != nil {
 		return nil, err
@@ -173,6 +195,36 @@ func Load(path string) (*Config, error) {
 	} else if !filepath.IsAbs(o.RecipesDir) {
 		o.RecipesDir = filepath.Join(filepath.Dir(path), o.RecipesDir)
 	}
+	if o.MeshKey == "" {
+		o.MeshKey = filepath.Join(o.StateDir, "mesh.key")
+	} else if !filepath.IsAbs(o.MeshKey) {
+		o.MeshKey = filepath.Join(filepath.Dir(path), o.MeshKey)
+	}
+	var meshDoc *mesh.Document
+	if o.MeshFile != "" && !withMesh {
+		if !filepath.IsAbs(o.MeshFile) {
+			o.MeshFile = filepath.Join(filepath.Dir(path), o.MeshFile)
+		}
+	} else if o.MeshFile != "" {
+		if !filepath.IsAbs(o.MeshFile) {
+			o.MeshFile = filepath.Join(filepath.Dir(path), o.MeshFile)
+		}
+		if o.MeshListen == "" {
+			return nil, fmt.Errorf("%s: mesh_listen is required when mesh_file is set", path)
+		}
+		if _, _, err := net.SplitHostPort(o.MeshListen); err != nil {
+			return nil, fmt.Errorf("%s: mesh_listen %q must be host:port", path, o.MeshListen)
+		}
+		var err error
+		if meshDoc, err = mesh.LoadDocument(o.MeshFile); err != nil {
+			return nil, err
+		}
+		if _, ok := meshDoc.Entry(o.Node); !ok {
+			return nil, fmt.Errorf("%s: this node (%q) is not in the mesh document %s", path, o.Node, o.MeshFile)
+		}
+	} else if o.MeshListen != "" {
+		return nil, fmt.Errorf("%s: mesh_listen is set but mesh_file is not", path)
+	}
 	dir := o.ProfilesDir
 	if !filepath.IsAbs(dir) {
 		dir = filepath.Join(filepath.Dir(path), dir)
@@ -184,7 +236,7 @@ func Load(path string) (*Config, error) {
 	}
 	sort.Strings(files)
 
-	cfg := &Config{Orchestrator: o}
+	cfg := &Config{Orchestrator: o, Mesh: meshDoc}
 	seen := make(map[string]string)
 	for _, f := range files {
 		var p core.Profile
