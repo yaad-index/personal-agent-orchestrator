@@ -12,7 +12,7 @@ ADR-0004 gates each action at the moment it runs. Separately, pao needs to say w
 
 2. **This is a different axis from the approval gate (ADR-0004).** The matrix is static authorization, who may touch what at all; the gate is the per-action decision, whether a specific action may run now. An action must pass both.
 
-3. **The matrix and the rest of pao's configuration are administered through pao's own management surface: a web app plus an HTTP API.** This is the configuration and control plane, not the way pao is driven day to day, which is chat (ADR-0001).
+3. **The matrix and the rest of pao's configuration are administered through pao's own management surface: a web app plus an HTTP API.** This is the configuration and control surface, not the way pao is driven day to day, which is chat (ADR-0001). (The term "control plane" is reserved for agent lifecycle in a later ADR.)
 
 4. **The management surface is private and access-gated, and binds to localhost on the master node by default.** It is not exposed automatically. Exposing it beyond localhost is the operator's own choice and is not prescribed by pao.
 
