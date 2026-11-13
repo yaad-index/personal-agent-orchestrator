@@ -1,6 +1,6 @@
 # ADR 0008: Mirror, verbosity levels, and retention
 
-**Status:** Proposed (2026-11-13)
+**Status:** Accepted (2026-11-13)
 
 ## Context
 
