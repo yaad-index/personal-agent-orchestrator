@@ -19,7 +19,8 @@ A superseded ADR is never edited or deleted: it keeps a **Superseded-by** header
 - **0011** — Pluggable backends (profile declares per-backend specifics; contract test; startup)
 - **0012** — Multiple humans + tag-scoped access (extends 0005)
 - **0013** — Node transport + failover (coordination/stream split; manual promotion)
+- **0014** — Budget + outbound notifications (one notifier; gate exempt; per-account budget)
 
 ## Planned (one ADR each, broad spine first then detail)
-- **0014** — Budget + outbound notifications (one notifier; gate exempt; budget off subscription usage)
+- **0015** — Profile inheritance + the account field (extends 0011)
 - Audit log
