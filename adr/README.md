@@ -16,7 +16,6 @@ Architecture Decision Records for **pao** (personal-agent-orchestrator). Convent
 
 ## Planned (one ADR each, broad spine first then detail)
 - **0010** — The message model (ids/quote; reactions target an id; buttons over reactions)
-- Message model (ids/quote; buttons over reactions)
 - Pluggable backends (profile; transcript contract test; startup)
 - Node transport + failover
 - Budget + outbound notifications
