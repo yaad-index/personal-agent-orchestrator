@@ -1,6 +1,6 @@
 # ADR 0014: Budget and outbound notifications
 
-**Status:** Proposed (2026-11-13)
+**Status:** Accepted (2026-11-13)
 
 ## Context
 
