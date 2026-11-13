@@ -12,10 +12,10 @@ Architecture Decision Records for **pao** (personal-agent-orchestrator). Convent
 - **0006** — Temporary agents (ephemeral, first-class, explicit teardown, recipes)
 - **0007** — Control plane (lifecycle, context watch, liveness)
 - **0008** — Mirror + verbosity levels + retention
+- **0009** — Communication channels (human↔pao)
 
 ## Planned (one ADR each, broad spine first then detail)
-- **0009** — Communication channels (human↔pao)
-- Message model (ids/quote; buttons over reactions)
+- **0010** — The message model (ids/quote; reactions target an id; buttons over reactions)
 - Pluggable backends (profile; transcript contract test; startup)
 - Node transport + failover
 - Budget + outbound notifications
