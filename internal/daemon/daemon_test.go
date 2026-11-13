@@ -27,6 +27,10 @@ const token = "test-token"
 // reportEnv is a startup value that makes the fake agent report its environment.
 const reportEnv = "report-env"
 
+// reportToken is a startup value that makes the fake agent report the value of
+// the environment variable the node's token came from.
+const reportToken = "report-token"
+
 // oldSession is a startup value for an agent whose transcript path is a
 // directory that already holds an earlier session's transcript. The agent
 // reports its environment first, into a new file, like a fresh session.
@@ -37,6 +41,7 @@ const oldSession = "old-session"
 // transcript file, the way a real backend would.
 const fakeAgent = `echo 'READY>'
 [ -n "$REPORT_ENV" ] && printf '{"type":"assistant","uuid":"env","message":{"role":"assistant","content":[{"type":"text","text":"agent=%s gate=%s"}]}}\n' "$PAO_AGENT" "$PAO_GATE_SOCKET" >> "$TRANSCRIPT"
+[ -n "$REPORT_TOKEN" ] && printf '{"type":"assistant","uuid":"tok","message":{"role":"assistant","content":[{"type":"text","text":"token=[%s]"}]}}\n' "$PAO_TEST_NODE_TOKEN" >> "$TRANSCRIPT"
 n=0
 while IFS= read -r line; do
   n=$((n+1))
@@ -101,6 +106,8 @@ func startNodeWith(t *testing.T, agents map[string]string, adjust func(dir, scri
 			cmd = fmt.Sprintf("env REPORT_ENV=1 TRANSCRIPT=%s sh %s", file, scriptPath)
 		case "":
 			cmd = fmt.Sprintf("env TRANSCRIPT=%s sh %s", file, scriptPath)
+		case reportToken:
+			cmd = fmt.Sprintf("env REPORT_TOKEN=1 TRANSCRIPT=%s sh %s", file, scriptPath)
 		case reportEnv:
 			cmd = fmt.Sprintf("env REPORT_ENV=1 TRANSCRIPT=%s sh %s", file, scriptPath)
 		}
@@ -383,4 +390,18 @@ func TestRunRefusesAnUnknownTranscriptFormat(t *testing.T) {
 	err := Run(context.Background(), cfg, token, Options{})
 	require.Error(t, err)
 	assert.True(t, strings.Contains(err.Error(), "unknown transcript format"))
+}
+
+func TestAgentsDoNotInheritTheOperatorsToken(t *testing.T) {
+	t.Setenv("PAO_TEST_NODE_TOKEN", "operator-secret")
+	n := startNodeWith(t, map[string]string{"a": reportToken}, func(_, _ string, cfg *config.Config) {
+		cfg.Orchestrator.TokenEnv = "PAO_TEST_NODE_TOKEN"
+	})
+
+	_, err := n.client.Post(context.Background(), "human", "hi", "name", "a")
+	require.NoError(t, err)
+
+	got := n.next(t)
+	assert.Equal(t, "token=[]", got.Text, "the variable the node's token came from is not in the agent's environment")
+	assert.NotContains(t, got.Text, "operator-secret")
 }

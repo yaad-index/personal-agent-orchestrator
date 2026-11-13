@@ -55,6 +55,14 @@ type Options struct {
 // Run serves the node until ctx is done. token is the local channel's bearer
 // token.
 func Run(ctx context.Context, cfg *config.Config, token string, opts Options) error {
+	// Agents run under a tmux server this process starts, and a session inherits
+	// the server's environment. The operator's token must not be in it: an agent
+	// could otherwise read it from its own environment and speak as the operator.
+	// This keeps it out of what agents inherit; it does not make it unreadable
+	// to another process of the same user.
+	if name := cfg.Orchestrator.TokenEnv; name != "" {
+		_ = os.Unsetenv(name)
+	}
 	for _, p := range cfg.Profiles {
 		if _, ok := readers[p.Transcript.Format]; !ok {
 			return fmt.Errorf("agent %q: unknown transcript format %q", p.Name, p.Transcript.Format)
