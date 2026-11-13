@@ -29,6 +29,11 @@ type Orchestrator struct {
 	// ProfilesDir holds one YAML profile per agent. A relative path is
 	// resolved against the directory of the orchestrator config.
 	ProfilesDir string `yaml:"profiles_dir"`
+	// RecipesDir holds recipes for temporary agents (ADR-0006 point 5): *.yaml
+	// files directly in it and in each set directory pulled from a git
+	// repository. A relative path is resolved against the directory of the
+	// orchestrator config. Default: recipes under the state dir.
+	RecipesDir string `yaml:"recipes_dir"`
 	// StateDir holds pao's own state (the message store). A relative path is
 	// resolved against the directory of the orchestrator config.
 	StateDir string `yaml:"state_dir"`
@@ -135,6 +140,11 @@ func Load(path string) (*Config, error) {
 	if !filepath.IsAbs(o.StateDir) {
 		o.StateDir = filepath.Join(filepath.Dir(path), o.StateDir)
 	}
+	if o.RecipesDir == "" {
+		o.RecipesDir = filepath.Join(o.StateDir, "recipes")
+	} else if !filepath.IsAbs(o.RecipesDir) {
+		o.RecipesDir = filepath.Join(filepath.Dir(path), o.RecipesDir)
+	}
 	dir := o.ProfilesDir
 	if !filepath.IsAbs(dir) {
 		dir = filepath.Join(filepath.Dir(path), dir)
@@ -181,6 +191,9 @@ func checkLoopback(addr string) error {
 	return nil
 }
 
+// ValidateProfile reports whether p is a complete, valid agent profile.
+func ValidateProfile(p core.Profile) error { return validate(p) }
+
 func validate(p core.Profile) error {
 	if !namePattern.MatchString(p.Name) {
 		return fmt.Errorf("name %q must be lowercase letters, digits, '-' or '_'", p.Name)
@@ -216,6 +229,10 @@ func validate(p core.Profile) error {
 	}
 	return nil
 }
+
+// DecodeFile decodes the YAML file at path into into. Unknown keys are an
+// error, so a typo is not silently ignored.
+func DecodeFile(path string, into any) error { return decodeFile(path, into) }
 
 func decodeFile(path string, into any) error {
 	b, err := os.ReadFile(path)

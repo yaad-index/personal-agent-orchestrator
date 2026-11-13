@@ -258,3 +258,12 @@ func TestRedact(t *testing.T) {
 	assert.Equal(t, "https://example.com/x.git", redact("https://example.com/x.git"))
 	assert.Equal(t, "git@example.com:x/y.git", redact("git@example.com:x/y.git"))
 }
+
+func TestValidateChecksASourceWithoutTouchingTheFileSystem(t *testing.T) {
+	require.NoError(t, Validate(Source{Files: map[string][]byte{"a/b.txt": []byte("x")}}))
+	require.NoError(t, Validate(Source{Git: &Git{URL: "https://example.com/x.git", Ref: "v1"}}))
+	require.ErrorIs(t, Validate(Source{}), ErrBadSource)
+	require.ErrorIs(t, Validate(Source{Files: map[string][]byte{"../x": nil}}), ErrBadSource)
+	require.ErrorIs(t, Validate(Source{Git: &Git{URL: "-x"}}), ErrBadSource)
+	require.ErrorIs(t, Validate(Source{Git: &Git{URL: "https://example.com/x.git"}, Files: map[string][]byte{}}), ErrBadSource)
+}

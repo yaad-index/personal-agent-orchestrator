@@ -79,7 +79,7 @@ func (p *Provisioner) Provision(ctx context.Context, name string, src Source) (s
 	if !namePattern.MatchString(name) {
 		return "", fmt.Errorf("%w: agent name %q", ErrBadSource, name)
 	}
-	if err := checkSource(src); err != nil {
+	if err := Validate(src); err != nil {
 		return "", err
 	}
 	if err := os.MkdirAll(p.Root, 0o700); err != nil {
@@ -116,7 +116,11 @@ func (p *Provisioner) Remove(name string) error {
 	return os.RemoveAll(p.Dir(name))
 }
 
-func checkSource(src Source) error {
+// Validate reports whether src could be provisioned, without touching the file
+// system: the source is exactly one kind, a git location cannot be read as an
+// option, and pushed files are clean relative paths within the limits. A
+// recipe uses it to refuse a bad source when it is loaded, not when it spawns.
+func Validate(src Source) error {
 	switch {
 	case src.Git != nil && src.Files != nil:
 		return fmt.Errorf("%w: give a git source or files, not both", ErrBadSource)
@@ -131,6 +135,9 @@ func checkSource(src Source) error {
 		if strings.HasPrefix(src.Git.URL, "-") || strings.HasPrefix(src.Git.Ref, "-") {
 			return fmt.Errorf("%w: git url and ref must not start with '-'", ErrBadSource)
 		}
+	}
+	if src.Files != nil {
+		return checkFiles(src.Files)
 	}
 	return nil
 }
@@ -200,7 +207,7 @@ func isLocal(url string) bool {
 	return true
 }
 
-func writeFiles(dir string, files map[string][]byte) error {
+func checkFiles(files map[string][]byte) error {
 	if len(files) > MaxFiles {
 		return fmt.Errorf("%w: %d files, at most %d", ErrBadSource, len(files), MaxFiles)
 	}
@@ -213,6 +220,13 @@ func writeFiles(dir string, files map[string][]byte) error {
 		if total > MaxBytes {
 			return fmt.Errorf("%w: files exceed %d bytes", ErrBadSource, MaxBytes)
 		}
+	}
+	return nil
+}
+
+func writeFiles(dir string, files map[string][]byte) error {
+	if err := checkFiles(files); err != nil {
+		return err
 	}
 	for name, content := range files {
 		target := filepath.Join(dir, filepath.FromSlash(name))
