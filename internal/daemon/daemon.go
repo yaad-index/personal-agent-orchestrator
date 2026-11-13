@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/yaad-index/personal-agent-orchestrator/internal/access"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/backend/claudecode"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/local"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/comm"
@@ -24,11 +25,15 @@ import (
 	"github.com/yaad-index/personal-agent-orchestrator/internal/control"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/gate"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/harvest"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/mirror"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/msgstore"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/recipe"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/registry"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/route"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/temp"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/tmux"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/workdir"
 )
 
 // readers maps a profile's transcript format to its reader. A backend joins
@@ -92,7 +97,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		reg:   reg,
 		level: cfg.Orchestrator.Level,
 		poll:  opts.MirrorPoll,
-		seen:  make(map[string]bool),
+		seen:  make(map[string]context.CancelFunc),
 	}
 
 	policy, err := gate.LoadPolicy(filepath.Join(cfg.Orchestrator.StateDir, "policy.json"))
@@ -114,7 +119,18 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	}
 	gateSrv := &http.Server{Handler: (&gate.Server{Gate: gt}).Handler(), ReadHeaderTimeout: 10 * time.Second}
 
-	srv, err := local.New(layer, token, local.WithDecider(pending))
+	harvests := harvest.New(filepath.Join(cfg.Orchestrator.StateDir, "harvest"), nil)
+	mgr := &temp.Manager{
+		Registry: reg, Plane: plane, Starter: router, Channels: layer,
+		Workdirs: &workdir.Provisioner{Root: filepath.Join(cfg.Orchestrator.StateDir, "temp")},
+		Harvests: harvests,
+		Recipes:  func() (*recipe.Set, error) { return recipe.LoadDir(cfg.Orchestrator.RecipesDir) },
+		Locate:   locate, Check: checkProfile, Gate: gt, Follow: hook.follow,
+		Surface:    surface(layer, router),
+		Thresholds: registry.Thresholds{UnusedAfter: cfg.Orchestrator.Temp.UnusedAfter, IdleAfter: cfg.Orchestrator.Temp.IdleAfter},
+	}
+
+	srv, err := local.New(layer, token, local.WithDecider(pending), local.WithTemp(tempAPI{mgr: mgr, store: harvests}))
 	if err != nil {
 		return err
 	}
@@ -165,6 +181,9 @@ type launchHook struct {
 }
 
 func (h *launchHook) Launch(ctx context.Context, p core.Profile) error {
+	if err := checkProfile(p); err != nil {
+		return fmt.Errorf("agent %q: %w", p.Name, err)
+	}
 	// Follow before launching: the transcript a fresh agent writes then arrives
 	// whole (a file that appears after following began is read from its start),
 	// instead of losing whatever the agent wrote before the follower caught up.
@@ -182,6 +201,23 @@ func (h *launchHook) Launch(ctx context.Context, p core.Profile) error {
 	return err
 }
 
+// surface reports what a kill harvested to whoever asked for it: to the
+// operator as an operator-only message, to an agent as a message from pao.
+func surface(layer *comm.Layer, router *route.Router) temp.Surface {
+	return func(ctx context.Context, who access.Subject, text string) {
+		switch who.Kind {
+		case access.KindOperator:
+			if _, err := layer.Notify(ctx, core.Message{Sender: "pao", Text: text}); err != nil {
+				slog.Warn("could not report a harvest to the operator", "error", err)
+			}
+		case access.KindAgent:
+			if _, err := router.Route(ctx, core.Target{Kind: core.ByName, Value: who.Name}, core.Message{Sender: "pao", Kind: core.MessageSystemEvent, Text: text}); err != nil {
+				slog.Warn("could not report a harvest to the requesting agent", "agent", who.Name, "error", err)
+			}
+		}
+	}
+}
+
 // followers runs one mirror per agent, started the first time the agent is
 // up, and sends what the agent says to the human.
 type followers struct {
@@ -192,17 +228,29 @@ type followers struct {
 	poll  time.Duration
 
 	mu   sync.Mutex
-	seen map[string]bool
+	seen map[string]context.CancelFunc
 	wg   sync.WaitGroup
+}
+
+// Stop ends the follower of the named agent, so a name that is spawned again
+// later is followed afresh. Stopping one that is not followed does nothing.
+func (f *followers) Stop(name string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if cancel, ok := f.seen[name]; ok {
+		cancel()
+		delete(f.seen, name)
+	}
 }
 
 func (f *followers) start(p core.Profile) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.seen[p.Name] {
+	if _, ok := f.seen[p.Name]; ok {
 		return
 	}
-	f.seen[p.Name] = true
+	ctx, cancel := context.WithCancel(f.ctx)
+	f.seen[p.Name] = cancel
 
 	m := &mirror.Mirror{
 		Reader:  readers[p.Transcript.Format],
@@ -215,14 +263,14 @@ func (f *followers) start(p core.Profile) {
 	f.wg.Add(1)
 	go func() {
 		defer f.wg.Done()
-		err := m.Follow(f.ctx, path, mirror.FromEnd, func(e core.Entry) {
+		err := m.Follow(ctx, path, mirror.FromEnd, func(e core.Entry) {
 			// Any line the agent writes is activity, shown to the human or not.
 			f.reg.Touch(p.Name, time.Now(), false)
 			text, ok := render(e, levels, f.level)
 			if !ok {
 				return
 			}
-			if _, err := f.layer.Send(f.ctx, p.Name, core.Message{Sender: p.Name, Kind: core.MessageContent, Text: text, Time: e.Time}); err != nil {
+			if _, err := f.layer.Send(ctx, p.Name, core.Message{Sender: p.Name, Kind: core.MessageContent, Text: text, Time: e.Time}); err != nil {
 				slog.Warn("could not send agent output", "agent", p.Name, "error", err)
 			}
 		})

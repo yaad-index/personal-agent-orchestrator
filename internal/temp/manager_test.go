@@ -292,7 +292,7 @@ func TestSpawnChannelChoice(t *testing.T) {
 			e := newEnv(t, map[string]string{"researcher": recipeYAML}, func(e *env) { e.channels.names = c.names })
 			_, err := e.m.Spawn(context.Background(), SpawnRequest{Recipe: "researcher", Name: "a", Channel: c.want, Requester: access.Operator})
 			if c.wantErr {
-				require.Error(t, err)
+				require.ErrorIs(t, err, ErrBadRequest)
 				assert.Empty(t, dirs(t, e.prov.Root), "a refused channel provisions nothing")
 				assert.Empty(t, e.reg.Temps())
 				return
@@ -307,7 +307,7 @@ func TestSpawnRefusesABadName(t *testing.T) {
 	e := newEnv(t, map[string]string{"researcher": recipeYAML})
 	for _, name := range []string{"Bad", "a/b", "../x", "a b"} {
 		_, err := e.m.Spawn(context.Background(), SpawnRequest{Recipe: "researcher", Name: name, Requester: access.Operator})
-		require.Error(t, err, name)
+		require.ErrorIs(t, err, ErrBadRequest, name)
 	}
 	assert.Empty(t, dirs(t, e.prov.Root))
 }
@@ -317,7 +317,7 @@ func TestSpawnOverAConfiguredAgentsNameChangesNothing(t *testing.T) {
 	require.NoError(t, e.reg.Add(core.Profile{Name: "boss"}))
 
 	_, err := e.m.Spawn(context.Background(), SpawnRequest{Recipe: "researcher", Name: "boss", Requester: access.Operator})
-	require.Error(t, err)
+	require.ErrorIs(t, err, registry.ErrDuplicate)
 	assert.Empty(t, dirs(t, e.prov.Root), "the workdir made for the refused agent is removed")
 	assert.Empty(t, e.channels.bound)
 	_, _, ok := e.reg.Lookup("boss")
@@ -680,4 +680,16 @@ func TestListUsesConfiguredThresholds(t *testing.T) {
 	e.spawn(t, "a")
 	*e.now = e.now.Add(2 * time.Minute)
 	assert.Equal(t, registry.FlagUnused, e.m.List()[0].Flag)
+}
+
+func TestSpawnRefusesAProfileTheNodeCannotRunBeforeStartingAnything(t *testing.T) {
+	e := newEnv(t, map[string]string{"researcher": recipeYAML})
+	e.m.Check = func(p core.Profile) error { return errors.New("no reader for " + p.Transcript.Format) }
+
+	_, err := e.m.Spawn(context.Background(), SpawnRequest{Recipe: "researcher", Name: "a", Requester: access.Operator})
+	require.ErrorIs(t, err, ErrBadRequest)
+	assert.Contains(t, err.Error(), "no reader for harness-jsonl")
+	assert.Empty(t, dirs(t, e.prov.Root))
+	assert.Empty(t, e.reg.Temps())
+	assert.Empty(t, e.ev.all())
 }

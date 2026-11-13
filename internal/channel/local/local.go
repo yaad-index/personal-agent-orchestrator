@@ -49,6 +49,7 @@ type Decider interface {
 type Server struct {
 	layer     Layer
 	decider   Decider
+	temp      TempAPI
 	token     []byte
 	heartbeat time.Duration
 
@@ -113,6 +114,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/reactions", s.auth(s.postReaction))
 	mux.HandleFunc("POST /v1/decisions", s.auth(s.postDecision))
 	mux.HandleFunc("GET /v1/stream", s.auth(s.stream))
+	s.registerTemp(mux)
 	return mux
 }
 

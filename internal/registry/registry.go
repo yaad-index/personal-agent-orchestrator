@@ -14,6 +14,9 @@ import (
 	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
 )
 
+// ErrDuplicate is returned when a name is already registered.
+var ErrDuplicate = errors.New("agent already registered")
+
 // ErrNotTemporary is returned when a temporary-agent operation names an agent
 // that is not one. Agents declared in configuration are never removed.
 var ErrNotTemporary = errors.New("agent is not a temporary agent")
@@ -56,7 +59,7 @@ func (r *Registry) Add(p core.Profile) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, ok := r.agents[p.Name]; ok {
-		return fmt.Errorf("agent %q already registered", p.Name)
+		return fmt.Errorf("%w: %q", ErrDuplicate, p.Name)
 	}
 	p.Tags = slices.Clone(p.Tags)
 	r.agents[p.Name] = &entry{profile: p}
@@ -106,7 +109,7 @@ func (r *Registry) AddTemp(p core.Profile, info TempInfo) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, ok := r.agents[p.Name]; ok {
-		return fmt.Errorf("agent %q already registered", p.Name)
+		return fmt.Errorf("%w: %q", ErrDuplicate, p.Name)
 	}
 	p.Tags = slices.Clone(p.Tags)
 	r.agents[p.Name] = &entry{profile: p, temp: &info, lastActive: info.Created}
