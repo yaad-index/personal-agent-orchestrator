@@ -40,7 +40,7 @@ func New(reg *registry.Registry, l core.Launcher, d core.Deliverer) *Router {
 // Result per agent. A failure for one agent does not stop the others; the
 // returned error is non-nil only when the target itself cannot be resolved.
 func (r *Router) Route(ctx context.Context, t core.Target, m core.Message) ([]Result, error) {
-	profiles, err := r.resolve(t)
+	profiles, err := r.Resolve(t)
 	if err != nil {
 		return nil, err
 	}
@@ -51,7 +51,8 @@ func (r *Router) Route(ctx context.Context, t core.Target, m core.Message) ([]Re
 	return out, nil
 }
 
-func (r *Router) resolve(t core.Target) ([]core.Profile, error) {
+// Resolve returns the agents a target addresses, without delivering anything.
+func (r *Router) Resolve(t core.Target) ([]core.Profile, error) {
 	if t.Value == "" {
 		return nil, core.ErrNoTarget
 	}
