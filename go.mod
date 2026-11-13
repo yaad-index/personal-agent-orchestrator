@@ -3,14 +3,14 @@ module github.com/yaad-index/personal-agent-orchestrator
 go 1.26.0
 
 require (
-	github.com/alecthomas/kong v1.16.1
+	github.com/alecthomas/kong v1.17.0
 	github.com/stretchr/testify v1.12.1
 )
 
 require (
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	go.etcd.io/bbolt v1.5.0
-	go.yaml.in/yaml/v3 v3.0.5
+	go.yaml.in/yaml/v3 v3.0.6
 	google.golang.org/grpc v1.85.0
 	google.golang.org/protobuf v1.36.12
 )
