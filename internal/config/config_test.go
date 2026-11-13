@@ -185,3 +185,34 @@ func TestLoadOrchestratorErrors(t *testing.T) {
 	_, err = Load(filepath.Join(dir, "absent.yaml"))
 	assert.Error(t, err)
 }
+
+func TestRecipesDirDefaultsAndResolution(t *testing.T) {
+	path := setup(t, map[string]string{"a.yaml": "name: a\nbackend: b\n" + startup})
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(filepath.Dir(path), "state", "recipes"), cfg.Orchestrator.RecipesDir, "by default under the state dir")
+
+	dir := filepath.Dir(path)
+	write(t, path, "node: n1\nprofiles_dir: profiles\nstate_dir: state\ntoken_env: PAO_TOKEN\nrecipes_dir: my-recipes\n")
+	cfg, err = Load(path)
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(dir, "my-recipes"), cfg.Orchestrator.RecipesDir, "a relative recipes_dir is resolved against the config")
+
+	write(t, path, "node: n1\nprofiles_dir: profiles\nstate_dir: state\ntoken_env: PAO_TOKEN\nrecipes_dir: /srv/recipes\n")
+	cfg, err = Load(path)
+	require.NoError(t, err)
+	assert.Equal(t, "/srv/recipes", cfg.Orchestrator.RecipesDir)
+}
+
+func TestValidateProfileAndDecodeFileAreTheSameRulesAsLoad(t *testing.T) {
+	var p core.Profile
+	path := filepath.Join(t.TempDir(), "p.yaml")
+	write(t, path, "name: a\nbackend: b\n"+startup)
+	require.NoError(t, DecodeFile(path, &p))
+	assert.NoError(t, ValidateProfile(p))
+	p.Backend = ""
+	assert.Error(t, ValidateProfile(p))
+
+	write(t, path, "name: a\nunknown_key: 1\n")
+	assert.Error(t, DecodeFile(path, &p), "unknown keys are an error")
+}

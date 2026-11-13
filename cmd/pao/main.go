@@ -18,6 +18,7 @@ type CLI struct {
 	Config       ConfigCmd       `cmd:"" help:"Inspect pao configuration."`
 	Run          RunCmd          `cmd:"" help:"Run the node daemon."`
 	Chat         ChatCmd         `cmd:"" help:"Talk to agents through the node's local channel."`
+	Recipes      RecipesCmd      `cmd:"" help:"Recipes that temporary agents are spawned from."`
 	Hook         HookCmd         `cmd:"" help:"The backend's pre-tool-call hook: ask the node's gate about an action."`
 	HookSettings HookSettingsCmd `cmd:"" name:"hook-settings" help:"Print the backend settings JSON that installs the hook."`
 }
