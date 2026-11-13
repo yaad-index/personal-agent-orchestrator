@@ -38,7 +38,7 @@ func (f *fakeRouter) Resolve(t core.Target) ([]core.Profile, error) {
 	return ps, nil
 }
 
-func (f *fakeRouter) Route(_ context.Context, t core.Target, m core.Message) ([]route.Result, error) {
+func (f *fakeRouter) Deliver(_ context.Context, ps []core.Profile, m core.Message) []route.Result {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.atRoute != nil {
@@ -46,10 +46,10 @@ func (f *fakeRouter) Route(_ context.Context, t core.Target, m core.Message) ([]
 	}
 	f.routed = append(f.routed, m)
 	var rs []route.Result
-	for _, n := range f.agents[t.Value] {
-		rs = append(rs, route.Result{Agent: n})
+	for _, p := range ps {
+		rs = append(rs, route.Result{Agent: p.Name})
 	}
-	return rs, nil
+	return rs
 }
 
 type fakeChannel struct {
@@ -420,4 +420,38 @@ func TestBindAndSendRace(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+func TestAllowNarrowsWhoIsAddressedAndWhoTheMessageIsStoredFor(t *testing.T) {
+	store, err := msgstore.Open(filepath.Join(t.TempDir(), "m.db"), 100)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+	r := &fakeRouter{agents: map[string][]string{"team": {"a", "b"}}}
+	l := New(store, r)
+
+	d, err := l.Receive(context.Background(), Inbound{
+		Sender: "h", Text: "hi", Target: core.Target{Kind: core.ByTag, Value: "team"},
+		Allow: func(p core.Profile) bool { return p.Name == "b" },
+	})
+	require.NoError(t, err)
+	require.Len(t, d.Results, 1)
+	assert.Equal(t, "b", d.Results[0].Agent, "only the allowed agent is delivered to")
+	_, err = l.Fetch("b", d.Message.ID)
+	assert.NoError(t, err)
+	_, err = l.Fetch("a", d.Message.ID)
+	assert.Error(t, err, "and the message is in no scope but theirs")
+}
+
+func TestAllowRefusingEveryoneIsTheSameErrorAsNoMatch(t *testing.T) {
+	store, err := msgstore.Open(filepath.Join(t.TempDir(), "m.db"), 100)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+	l := New(store, &fakeRouter{agents: map[string][]string{"a": {"a"}}})
+
+	_, err = l.Receive(context.Background(), Inbound{
+		Sender: "h", Text: "hi", Target: core.Target{Kind: core.ByName, Value: "a"},
+		Allow: func(core.Profile) bool { return false },
+	})
+	require.ErrorIs(t, err, core.ErrNoMatch)
+	assert.Equal(t, route.NoMatch(core.Target{Kind: core.ByName, Value: "a"}).Error(), err.Error(), "word for word what the router says for an agent that does not exist")
 }

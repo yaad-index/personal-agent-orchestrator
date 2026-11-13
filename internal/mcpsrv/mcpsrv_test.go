@@ -30,6 +30,8 @@ type fakeOps struct {
 	harvest   HarvestInfo
 	file      []byte
 	opErr     error
+	sent      []Delivered
+	sendErr   error
 
 	calls *[]opCall
 }
@@ -65,6 +67,14 @@ func (f fakeOps) Harvests(who access.Subject) ([]HarvestInfo, error) {
 func (f fakeOps) Harvest(who access.Subject, id string) (HarvestInfo, error) {
 	f.rec("harvest", who, id)
 	return f.harvest, f.opErr
+}
+func (f fakeOps) Send(_ context.Context, who access.Subject, byTag bool, target, text string) ([]Delivered, error) {
+	kind := "name"
+	if byTag {
+		kind = "tag"
+	}
+	f.rec("send", who, kind, target, text)
+	return f.sent, f.sendErr
 }
 func (f fakeOps) HarvestFile(who access.Subject, id, path string) ([]byte, error) {
 	f.rec("file", who, id, path)
@@ -153,14 +163,14 @@ func TestTheServerOffersItsTools(t *testing.T) {
 	for _, tool := range res.Tools {
 		got = append(got, tool.Name)
 		switch tool.Name {
-		case "spawn_agent", "kill_agent":
+		case "spawn_agent", "kill_agent", "send_message":
 			assert.False(t, tool.Annotations.ReadOnlyHint, tool.Name)
 		default:
 			assert.True(t, tool.Annotations.ReadOnlyHint, "%s only reads", tool.Name)
 		}
 		assert.NotEmpty(t, tool.Description)
 	}
-	assert.ElementsMatch(t, []string{"list_agents", "list_recipes", "spawn_agent", "kill_agent", "list_harvests", "read_harvest"}, got)
+	assert.ElementsMatch(t, []string{"list_agents", "list_recipes", "spawn_agent", "kill_agent", "list_harvests", "read_harvest", "send_message"}, got)
 }
 
 func TestTheOperatorSeesEverything(t *testing.T) {
@@ -461,4 +471,57 @@ func TestAnOperationErrorOnReadIsAToolError(t *testing.T) {
 	}
 	failed, _ := toolText(t, cs, "list_harvests", nil)
 	assert.True(t, failed)
+}
+
+func TestSendMessageRunsAsTheResolvedSubjectAndNeverAsAnotherName(t *testing.T) {
+	var calls []opCall
+	ops := fakeOps{sent: []Delivered{{Agent: "tmp-a", Launched: true}}, calls: &calls}
+	url := serve(t, ops, Chain{NewOperatorResolver("op"), staticResolver{"agent-tok": access.Agent("boss")}})
+	op, ag := connect(t, url, "op"), connect(t, url, "agent-tok")
+
+	out := structured[sendOutput](t, op, "send_message", map[string]any{"name": "tmp-a", "text": "hello"})
+	require.Len(t, out.Delivered, 1)
+	assert.True(t, out.Delivered[0].Launched)
+	_ = structured[sendOutput](t, ag, "send_message", map[string]any{"tag": "team", "text": "all hands"})
+
+	assert.Equal(t, []opCall{
+		{"send", access.Operator, []string{"name", "tmp-a", "hello"}},
+		{"send", access.Agent("boss"), []string{"tag", "team", "all hands"}},
+	}, calls)
+
+	// There is no way to say who the message is from: a caller that tries is refused.
+	calls = nil
+	res, err := ag.CallTool(context.Background(), &mcp.CallToolParams{Name: "send_message", Arguments: map[string]any{"name": "x", "text": "hi", "sender": "operator"}})
+	if err == nil {
+		assert.True(t, res.IsError, "an unknown argument is refused")
+	}
+	assert.Empty(t, calls, "and nothing was sent")
+}
+
+func TestSendMessageNeedsExactlyOneTargetAndSomeText(t *testing.T) {
+	var calls []opCall
+	cs := connect(t, serve(t, fakeOps{calls: &calls}, NewOperatorResolver("tok")), "tok")
+	for _, args := range []map[string]any{
+		{"text": "hi"},
+		{"name": "a", "tag": "b", "text": "hi"},
+		{"name": "a", "text": ""},
+		{"name": "a"},
+	} {
+		failed, _ := toolText(t, cs, "send_message", args)
+		assert.True(t, failed, "%v", args)
+	}
+	assert.Empty(t, calls, "nothing malformed reaches the operation")
+}
+
+func TestSendMessageReportsPerAgentOutcomesAndRefusals(t *testing.T) {
+	ops := fakeOps{sent: []Delivered{{Agent: "a"}, {Agent: "b", Error: "paste failed"}}}
+	cs := connect(t, serve(t, ops, NewOperatorResolver("tok")), "tok")
+	out := structured[sendOutput](t, cs, "send_message", map[string]any{"tag": "team", "text": "hi"})
+	assert.Equal(t, ops.sent, out.Delivered, "one agent failing is reported without hiding the other")
+
+	ops = fakeOps{sendErr: errors.New("no agent matches: tag \"team\"")}
+	cs = connect(t, serve(t, ops, NewOperatorResolver("tok")), "tok")
+	failed, text := toolText(t, cs, "send_message", map[string]any{"tag": "team", "text": "hi"})
+	assert.True(t, failed)
+	assert.Contains(t, text, "no agent matches")
 }

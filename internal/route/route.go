@@ -57,11 +57,29 @@ func (r *Router) Route(ctx context.Context, t core.Target, m core.Message) ([]Re
 	if err != nil {
 		return nil, err
 	}
+	return r.Deliver(ctx, profiles, m), nil
+}
+
+// Deliver delivers m to exactly the given agents, launching any that are not
+// running, and returns one Result per agent. A failure for one does not stop
+// the others.
+func (r *Router) Deliver(ctx context.Context, profiles []core.Profile, m core.Message) []Result {
 	out := make([]Result, 0, len(profiles))
 	for _, p := range profiles {
 		out = append(out, r.deliver(ctx, p, m))
 	}
-	return out, nil
+	return out
+}
+
+// NoMatch is the error for a target that addresses no agent. Whoever filters
+// the agents a target resolves to uses it when nothing is left, so that an
+// agent the caller may not address and one that does not exist are reported
+// in exactly the same words.
+func NoMatch(t core.Target) error {
+	if t.Kind == core.ByTag {
+		return fmt.Errorf("%w: tag %q", core.ErrNoMatch, t.Value)
+	}
+	return fmt.Errorf("%w: agent %q", core.ErrNoMatch, t.Value)
 }
 
 // Resolve returns the agents a target addresses, without delivering anything.
@@ -73,13 +91,13 @@ func (r *Router) Resolve(t core.Target) ([]core.Profile, error) {
 	case core.ByName:
 		p, _, ok := r.reg.Lookup(t.Value)
 		if !ok {
-			return nil, fmt.Errorf("%w: agent %q", core.ErrNoMatch, t.Value)
+			return nil, NoMatch(t)
 		}
 		return []core.Profile{p}, nil
 	case core.ByTag:
 		ps := r.reg.ByTag(t.Value)
 		if len(ps) == 0 {
-			return nil, fmt.Errorf("%w: tag %q", core.ErrNoMatch, t.Value)
+			return nil, NoMatch(t)
 		}
 		return ps, nil
 	default:

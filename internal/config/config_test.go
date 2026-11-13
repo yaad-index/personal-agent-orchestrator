@@ -235,3 +235,11 @@ func TestTempThresholdsDefaultAndValidate(t *testing.T) {
 	_, err = Load(path)
 	assert.Error(t, err)
 }
+
+func TestAProfileMayNotBeNamedLikePao(t *testing.T) {
+	for _, name := range core.ReservedNames {
+		_, err := Load(setup(t, map[string]string{"a.yaml": "name: " + name + "\nbackend: b\n" + startup}))
+		require.Error(t, err, name)
+		assert.ErrorContains(t, err, "reserved")
+	}
+}

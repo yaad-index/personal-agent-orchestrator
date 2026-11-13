@@ -220,3 +220,26 @@ func TestEnsureFailureLeavesTheAgentStopped(t *testing.T) {
 	_, st, _ := reg.Lookup("a")
 	assert.Equal(t, core.Stopped, st)
 }
+
+func TestNoMatchSaysTheSameThingTheRouterDoes(t *testing.T) {
+	r, _, _, _ := newRouter(t)
+	_, err := r.Resolve(core.Target{Kind: core.ByName, Value: "ghost"})
+	assert.Equal(t, NoMatch(core.Target{Kind: core.ByName, Value: "ghost"}).Error(), err.Error())
+	_, err = r.Resolve(core.Target{Kind: core.ByTag, Value: "ghosts"})
+	assert.Equal(t, NoMatch(core.Target{Kind: core.ByTag, Value: "ghosts"}).Error(), err.Error())
+	assert.ErrorIs(t, NoMatch(core.Target{Kind: core.ByTag, Value: "x"}), core.ErrNoMatch)
+}
+
+func TestDeliverReachesExactlyTheGivenAgentsAndIsolatesFailures(t *testing.T) {
+	r, reg, l, d := newRouter(t, core.Profile{Name: "a"}, core.Profile{Name: "b"}, core.Profile{Name: "c"})
+	l.failFor = "a"
+	pa, _, _ := reg.Lookup("a")
+	pb, _, _ := reg.Lookup("b")
+
+	res := r.Deliver(context.Background(), []core.Profile{pa, pb}, msg)
+	require.Len(t, res, 2)
+	assert.Error(t, res[0].Err)
+	assert.NoError(t, res[1].Err)
+	assert.Len(t, d.got["b"], 1)
+	assert.Empty(t, d.got["c"], "an agent not given is not delivered to")
+}

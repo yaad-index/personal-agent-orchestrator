@@ -6,6 +6,11 @@ import (
 	"time"
 )
 
+// ReservedNames are sender names pao itself speaks as. An agent must not carry
+// one: what an agent reads is the `[sender]: text` line, so an agent named like
+// pao or the operator could pass its words off as theirs.
+var ReservedNames = []string{"pao", "operator"}
+
 // Profile is the agent-intrinsic configuration of one agent (ADR-0001 point 4).
 // Only the fields the built milestones consume are present; later milestones
 // add the per-backend specifics ADR-0011 lists (transcript, hooks, startup).
