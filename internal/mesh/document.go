@@ -35,7 +35,11 @@ type NodeEntry struct {
 // Document is the mesh document: what every node in the mesh holds the same
 // copy of (ADR-0017 point 9). It never contains a secret.
 type Document struct {
-	Nodes []NodeEntry `yaml:"nodes"`
+	// Master is the node that is master when the mesh starts, before any node has
+	// been promoted. Once a node is promoted the mesh follows the epochs, not this
+	// field, which is only where a node with no history begins.
+	Master string      `yaml:"master"`
+	Nodes  []NodeEntry `yaml:"nodes"`
 }
 
 // LoadDocument reads and validates the mesh document at path. Unknown keys are
@@ -86,6 +90,9 @@ func (d *Document) Validate() error {
 			return fmt.Errorf("%s (%s): the same key is listed for %q", where, n.ID, other)
 		}
 		fps[n.Fingerprint] = n.ID
+	}
+	if !ids[d.Master] {
+		return fmt.Errorf("master: %q is not a node listed here; name the node that is master when the mesh starts", d.Master)
 	}
 	return nil
 }

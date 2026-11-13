@@ -63,7 +63,7 @@ func TestShowReportsTheNodeAndWhetherItsKeyMatchesTheMeshDocument(t *testing.T) 
 	other := "sha256:" + string(bytes.Repeat([]byte("2"), 64))
 
 	doc := func(fp string) {
-		require.NoError(t, os.WriteFile(filepath.Join(dir, "mesh.yaml"), []byte("nodes:\n  - id: n1\n    addr: 10.0.0.1:7745\n    fingerprint: "+fp+"\n  - id: n2\n    addr: 10.0.0.2:7745\n    fingerprint: "+other+"\n"), 0o600))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "mesh.yaml"), []byte("master: n1\nnodes:\n  - id: n1\n    addr: 10.0.0.1:7745\n    fingerprint: "+fp+"\n  - id: n2\n    addr: 10.0.0.2:7745\n    fingerprint: "+other+"\n"), 0o600))
 	}
 	doc(id.Fingerprint)
 	out.Reset()
@@ -88,7 +88,7 @@ func TestShowOnASingleNode(t *testing.T) {
 
 func TestShowWithoutAKeyIsAnError(t *testing.T) {
 	cfgPath, dir := meshNode(t, "n1", "mesh_file: mesh.yaml\nmesh_listen: 0.0.0.0:7745\n")
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "mesh.yaml"), []byte("nodes:\n  - id: n1\n    addr: h:1\n    fingerprint: sha256:"+string(bytes.Repeat([]byte("1"), 64))+"\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "mesh.yaml"), []byte("master: n1\nnodes:\n  - id: n1\n    addr: h:1\n    fingerprint: sha256:"+string(bytes.Repeat([]byte("1"), 64))+"\n"), 0o600))
 	var out bytes.Buffer
 	assert.Error(t, MeshShowCmd{Config: cfgPath}.run(&out))
 }
