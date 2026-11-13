@@ -98,6 +98,15 @@ func validate(p core.Profile) error {
 	if p.Startup.ReadyTimeout <= 0 {
 		return errors.New("startup.ready_timeout must be positive")
 	}
+	if p.Transcript.Format == "" {
+		return errors.New("transcript.format is required")
+	}
+	if p.Transcript.Path == "" {
+		return errors.New("transcript.path is required")
+	}
+	if err := p.Levels.Validate(); err != nil {
+		return fmt.Errorf("levels: %w", err)
+	}
 	for _, t := range p.Tags {
 		if !namePattern.MatchString(t) {
 			return fmt.Errorf("tag %q must be lowercase letters, digits, '-' or '_'", t)
