@@ -4,11 +4,11 @@
 
 ## Context
 
-ADR-0001 fixed a node daemon per machine in a master/secondary mesh, the human talking only to the master, and that pao provides its own inter-node transport. This ADR fixes that transport's shape and how the mesh fails over: what the transport carries, how a secondary's output reaches the human, and what happens when the master dies.
+ADR-0001 fixed a node daemon per machine in a master/secondary mesh, with the human talking only to the master, and left the inter-node transport and failover to a later ADR. This is that ADR: what the transport carries (and that pao provides it, point 5), how a secondary's output reaches the human, and what happens when the master dies.
 
 ## Decision
 
-1. **One master, the rest secondary; the human talks only to the master.** Every machine runs a node; exactly one is the master, the single user-facing coordinator and the only node bound to the human channels. The master may be a pure coordinator or also host a local agent.
+1. **One master, the rest secondary; the human talks only to the master.** Every machine runs a node; exactly one is the master, the single user-facing coordinator: it is the only node that receives the human's input, the one front the human addresses. A secondary may post outbound to a channel (point 3), but the human never talks to a secondary. The master may be a pure coordinator or also host a local agent.
 
 2. **The transport carries coordination between nodes, not the stream.** Between nodes, pao's own transport carries only light coordination: the master directing an agent on another node (the lifecycle commands of ADR-0007, now crossing a node boundary), telling a node to stream a given agent to a given channel at a given level, and the view controls (pause, resume, backtrack). The heavy agent stream does not travel the transport. This ADR carries ADR-0007's commands across nodes; it does not redefine them.
 
@@ -18,11 +18,11 @@ ADR-0001 fixed a node daemon per machine in a master/secondary mesh, the human t
 
 5. **The transport is pao's own, encrypted, and the wire choice is deferred.** pao provides the inter-node transport itself rather than reusing an external bus; it is encrypted and configurable. Whether it is a broker or direct node-to-node is left open, as long as it carries the coordination of point 2.
 
-6. **Failover is detected and announced automatically, but promotion is manual.** Secondaries detect the master's death through mesh liveness, and one announces it to the human out of band. The human then promotes a node by hand, and the promoted node takes over the human channels. Detection and the alert are automatic; promotion is deliberately a human act, so there is no automatic election to go wrong.
+6. **Failover is detected and announced automatically, but promotion is manual.** Secondaries detect the master's death through mesh liveness, and one announces it to the human by an alert path that does not depend on the master (since the master, the normal inbound front, is what died); that path's mechanism is deferred. The human then promotes a node by hand, and the promoted node takes over as the front. Detection and the alert are automatic; promotion is deliberately a human act, so there is no automatic election to go wrong.
 
 ## What this ADR deliberately does NOT decide
 
-The wire protocol and the transport implementation (broker versus direct, the encryption scheme). How channel credentials are distributed to the nodes and kept current. The liveness-detection and promotion mechanisms in detail, and how a demoted old master rejoins. Split-brain beyond what manual promotion avoids. How a stream is addressed and served to a channel across nodes. The single-node MVP already on main needs none of this; it arrives when the mesh is built.
+The wire protocol and the transport implementation (broker versus direct, the encryption scheme). How channel credentials are distributed to the nodes and kept current. The liveness-detection and promotion mechanisms in detail, and how a demoted old master rejoins. Split-brain beyond what manual promotion avoids. The mechanism of the master-independent alert path (point 6). How a stream is addressed and served to a channel across nodes, and how a human's quote of a message a secondary pushed directly resolves given each node's message store is local (relates ADR-0010). The single-node MVP already on main needs none of this; it arrives when the mesh is built.
 
 ## Consequences
 
