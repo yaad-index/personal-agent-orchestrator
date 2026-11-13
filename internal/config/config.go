@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -26,7 +27,32 @@ type Orchestrator struct {
 	// ProfilesDir holds one YAML profile per agent. A relative path is
 	// resolved against the directory of the orchestrator config.
 	ProfilesDir string `yaml:"profiles_dir"`
+	// StateDir holds pao's own state (the message store). A relative path is
+	// resolved against the directory of the orchestrator config.
+	StateDir string `yaml:"state_dir"`
+	// Listen is the address of the local channel. It must be a loopback
+	// address; exposing it further is the operator's own choice and is not
+	// supported yet. Default 127.0.0.1:7744.
+	Listen string `yaml:"listen"`
+	// TokenEnv names the environment variable that holds the channel's bearer
+	// token. The token itself never lives in a config file.
+	TokenEnv string `yaml:"token_env"`
+	// TmuxSocket names pao's tmux server socket. Default "pao".
+	TmuxSocket string `yaml:"tmux_socket"`
+	// MessageWindow is how many recent messages the id map keeps. Default 500.
+	MessageWindow int `yaml:"message_window"`
+	// Level is the verbosity level agent output is mirrored to the human at
+	// (ADR-0008). Default 1.
+	Level int `yaml:"level"`
 }
+
+// Defaults for the optional orchestrator settings.
+const (
+	DefaultListen        = "127.0.0.1:7744"
+	DefaultTmuxSocket    = "pao"
+	DefaultMessageWindow = 500
+	DefaultLevel         = 1
+)
 
 // Config is the loaded and validated result.
 type Config struct {
@@ -48,6 +74,36 @@ func Load(path string) (*Config, error) {
 	}
 	if o.ProfilesDir == "" {
 		return nil, fmt.Errorf("%s: profiles_dir is required", path)
+	}
+	if o.StateDir == "" {
+		return nil, fmt.Errorf("%s: state_dir is required", path)
+	}
+	if o.TokenEnv == "" {
+		return nil, fmt.Errorf("%s: token_env is required", path)
+	}
+	if o.Listen == "" {
+		o.Listen = DefaultListen
+	}
+	if err := checkLoopback(o.Listen); err != nil {
+		return nil, fmt.Errorf("%s: listen: %w", path, err)
+	}
+	if o.TmuxSocket == "" {
+		o.TmuxSocket = DefaultTmuxSocket
+	}
+	if o.MessageWindow == 0 {
+		o.MessageWindow = DefaultMessageWindow
+	}
+	if o.MessageWindow < 1 {
+		return nil, fmt.Errorf("%s: message_window must be at least 1", path)
+	}
+	if o.Level == 0 {
+		o.Level = DefaultLevel
+	}
+	if o.Level < 1 {
+		return nil, fmt.Errorf("%s: level must be at least 1", path)
+	}
+	if !filepath.IsAbs(o.StateDir) {
+		o.StateDir = filepath.Join(filepath.Dir(path), o.StateDir)
 	}
 	dir := o.ProfilesDir
 	if !filepath.IsAbs(dir) {
@@ -77,6 +133,22 @@ func Load(path string) (*Config, error) {
 		cfg.Profiles = append(cfg.Profiles, p)
 	}
 	return cfg, nil
+}
+
+// checkLoopback accepts only a host:port whose host is a loopback address.
+func checkLoopback(addr string) error {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return err
+	}
+	if host == "localhost" {
+		return nil
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || !ip.IsLoopback() {
+		return fmt.Errorf("%q is not a loopback address", host)
+	}
+	return nil
 }
 
 func validate(p core.Profile) error {

@@ -16,6 +16,8 @@ import (
 type CLI struct {
 	Version VersionCmd `cmd:"" help:"Print the build version."`
 	Config  ConfigCmd  `cmd:"" help:"Inspect pao configuration."`
+	Run     RunCmd     `cmd:"" help:"Run the node daemon."`
+	Chat    ChatCmd    `cmd:"" help:"Talk to agents through the node's local channel."`
 }
 
 // ConfigCmd groups the configuration commands.
