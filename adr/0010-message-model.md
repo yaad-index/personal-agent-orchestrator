@@ -24,4 +24,4 @@ The communication layer and source normalization (ADR-0009). The routing of a me
 
 ## Consequences
 
-Every source speaks one message shape, so the agent interface and the channel adapters share one model and a new source needs no new message type. A message is addressed by its id within pao, while an agent references it by quoting it, so references stay stable without the agent holding ids and without an unbounded id memory. Making a reaction target an id, and leaning on buttons for choices, keeps a choice unambiguous and payload-carrying, while reactions stay available as a light signal.
+Every source speaks one message shape, so the agent interface and the source adapters share one model and a new source needs no new message type. A message is addressed by its id within pao, while an agent references it by quoting it, so references stay stable without the agent holding ids and without an unbounded id memory. Making a reaction target an id, and leaning on buttons for choices, keeps a choice unambiguous and payload-carrying, while reactions stay available as a light signal.
