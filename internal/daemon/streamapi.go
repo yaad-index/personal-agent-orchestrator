@@ -6,6 +6,7 @@ import (
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/local"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/mesh/directory"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/registry"
 )
 
 // streamAPI is the operator's stream and view control (local.StreamAPI): an agent of
@@ -17,18 +18,27 @@ type streamAPI struct {
 	dir     *directory.Directory
 }
 
-// remote returns the entry of an agent held on another node. ok is false for an
-// agent of this node, and err is set for a name nobody holds.
-func (a streamAPI) remote(name string) (e directory.Entry, ok bool, err error) {
-	if _, perr := a.streams.profile(name); perr == nil {
+// locateAgent finds who holds an agent: this node (remote false), or another node of
+// the mesh, by the master's directory. A name nobody holds is a not found, never a
+// fall back to this node.
+func locateAgent(reg *registry.Registry, dir *directory.Directory, name string) (e directory.Entry, remote bool, err error) {
+	if _, _, ok := reg.Lookup(name); ok {
 		return directory.Entry{}, false, nil
 	}
-	if a.dir != nil {
-		if e, found := a.dir.Lookup(name); found {
+	if dir != nil {
+		if e, found := dir.Lookup(name); found {
 			return e, true, nil
 		}
 	}
-	return directory.Entry{}, false, translated{local.ErrNotFound, fmt.Errorf("no agent %q in the mesh", name)}
+	where := ""
+	if dir != nil {
+		where = " in the mesh"
+	}
+	return directory.Entry{}, false, translated{local.ErrNotFound, fmt.Errorf("no agent %q%s", name, where)}
+}
+
+func (a streamAPI) remote(name string) (directory.Entry, bool, error) {
+	return locateAgent(a.streams.reg, a.dir, name)
 }
 
 func (a streamAPI) SetStream(ctx context.Context, agent, channel string, level int) error {

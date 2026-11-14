@@ -13,11 +13,9 @@ import (
 	"github.com/yaad-index/personal-agent-orchestrator/internal/access"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/comm"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/control"
-	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/harvest"
 	pb "github.com/yaad-index/personal-agent-orchestrator/internal/mesh/meshpb"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/registry"
-	"github.com/yaad-index/personal-agent-orchestrator/internal/route"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/temp"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/workdir"
 )
@@ -35,76 +33,35 @@ type follower interface{ Stop(name string) }
 type meshNodeServer struct {
 	pb.UnimplementedNodeServer
 	layer   *comm.Layer
-	router  *route.Router
-	plane   *control.Plane
-	reg     *registry.Registry
-	follow  follower
+	life    lifecycle
 	mgr     *temp.Manager
 	harvest *harvest.Store
 	streams *streamControl
 }
 
-func (s meshNodeServer) agent(name string) (core.Profile, registry.AgentView, error) {
-	for _, a := range s.reg.All() {
-		if a.Profile.Name == name {
-			return a.Profile, a, nil
-		}
-	}
-	return core.Profile{}, registry.AgentView{}, status.Errorf(codes.NotFound, "no agent %q on this node", name)
-}
-
 func (s meshNodeServer) Launch(ctx context.Context, req *pb.AgentRef) (*pb.Result, error) {
-	p, _, err := s.agent(req.GetAgent())
-	if err != nil {
-		return nil, err
-	}
-	if _, err := s.router.Ensure(ctx, p); err != nil {
-		return nil, grpcErr(err)
-	}
-	return &pb.Result{}, nil
+	return lifecycleResult(s.life.Start(ctx, req.GetAgent()))
 }
 
 func (s meshNodeServer) Kill(ctx context.Context, req *pb.AgentRef) (*pb.Result, error) {
-	p, v, err := s.agent(req.GetAgent())
-	if err != nil {
-		return nil, err
-	}
-	if v.Temp != nil {
-		return nil, status.Errorf(codes.FailedPrecondition, "%q is a temporary agent: kill it with KillTemp, which harvests its outputs first", p.Name)
-	}
-	if err := s.stop(ctx, p); err != nil {
-		return nil, err
-	}
-	return &pb.Result{}, nil
+	return lifecycleResult(s.life.Stop(ctx, req.GetAgent()))
 }
 
 func (s meshNodeServer) Restart(ctx context.Context, req *pb.AgentRef) (*pb.Result, error) {
-	p, v, err := s.agent(req.GetAgent())
+	return lifecycleResult(s.life.Restart(ctx, req.GetAgent()))
+}
+
+// lifecycleResult answers a lifecycle command. An agent that was started but did not
+// become ready is not a failure of the call: the answer says why, as for a spawn, and
+// the agent exists on the node.
+func lifecycleResult(err error) (*pb.Result, error) {
+	if _, notReady := control.AsReadinessError(err); notReady {
+		return &pb.Result{NotReady: err.Error()}, nil
+	}
 	if err != nil {
-		return nil, err
-	}
-	if v.Temp != nil {
-		return nil, status.Errorf(codes.FailedPrecondition, "%q is a temporary agent: killing it destroys its workdir, so it is not restarted", p.Name)
-	}
-	if err := s.stop(ctx, p); err != nil {
-		return nil, err
-	}
-	if _, err := s.router.Ensure(ctx, p); err != nil {
 		return nil, grpcErr(err)
 	}
 	return &pb.Result{}, nil
-}
-
-// stop ends an agent's session and forgets that it is running.
-func (s meshNodeServer) stop(ctx context.Context, p core.Profile) error {
-	if err := s.plane.Kill(ctx, p); err != nil {
-		return status.Error(codes.Internal, err.Error())
-	}
-	if err := s.reg.SetState(p.Name, core.Stopped); err != nil {
-		return status.Error(codes.Internal, err.Error())
-	}
-	s.follow.Stop(p.Name)
-	return nil
 }
 
 func (s meshNodeServer) Spawn(ctx context.Context, req *pb.SpawnRequest) (*pb.SpawnResult, error) {
@@ -220,7 +177,7 @@ func grpcErr(err error) error {
 		return status.Error(codes.AlreadyExists, err.Error())
 	case errors.Is(err, temp.ErrDenied):
 		return status.Error(codes.PermissionDenied, err.Error())
-	case errors.Is(err, errViewer):
+	case errors.Is(err, errViewer), errors.Is(err, errTemporaryAgent):
 		return status.Error(codes.FailedPrecondition, err.Error())
 	}
 	if _, notReady := control.AsReadinessError(err); notReady {

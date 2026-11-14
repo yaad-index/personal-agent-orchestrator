@@ -131,6 +131,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		seen:  make(map[string]context.CancelFunc),
 		views: newViews(),
 	}
+	life := lifecycle{router: router, plane: plane, reg: reg, follow: hook.follow}
 	streams := &streamControl{
 		layer: layer, reg: reg, views: hook.follow.views, level: cfg.Orchestrator.Level,
 		send: func(ctx context.Context, agent string, m core.Message) error {
@@ -171,6 +172,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 
 	tempOps := &tempAPI{mgr: mgr, store: harvests}
 	streamOps := &streamAPI{streams: streams}
+	lifeOps := &lifecycleAPI{life: life}
 	ops := &mcpOps{reg: reg, thresholds: mgr.Thresholds, recipes: mgr.Recipes, mgr: mgr, store: harvests, layer: layer, auth: opts.Authorizer}
 	resolver := mcpsrv.Chain{
 		mcpsrv.NewOperatorResolver(token),
@@ -203,17 +205,18 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		})
 		meshNode.SetSink(dir)
 		meshNode.SetNodeServer(meshNodeServer{
-			layer: layer, router: router, plane: plane, reg: reg, follow: hook.follow, mgr: mgr, harvest: harvests, streams: streams,
+			layer: layer, life: life, mgr: mgr, harvest: harvests, streams: streams,
 		})
 		router.SetRemote(meshRemote{dir: dir, node: meshNode})
 		ops.dir = dir
 		tempOps.dir = dir
 		streamOps.dir = dir
+		lifeOps.dir = dir
 		cmds := &meshCommands{self: id.NodeID, node: meshNode, dir: dir, holds: func(name string) bool {
 			_, _, ok := reg.Lookup(name)
 			return ok
 		}}
-		tempOps.cmds, streamOps.cmds = cmds, cmds
+		tempOps.cmds, streamOps.cmds, lifeOps.cmds = cmds, cmds, cmds
 		// A temporary agent may not take a name an agent on another node holds.
 		mgr.Check = func(p core.Profile) error {
 			if err := checkProfile(p); err != nil {
@@ -227,7 +230,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		localOpts = append(localOpts, local.WithMesh(meshStatusWith(meshNode, dir)))
 	}
 
-	srv, err := local.New(layer, token, append([]local.Option{local.WithDecider(pending), local.WithTemp(tempOps), local.WithStream(streamOps),
+	srv, err := local.New(layer, token, append([]local.Option{local.WithDecider(pending), local.WithTemp(tempOps), local.WithStream(streamOps), local.WithLifecycle(lifeOps),
 		local.WithMount("/mcp", mcpHandler)}, localOpts...)...)
 	if err != nil {
 		return err

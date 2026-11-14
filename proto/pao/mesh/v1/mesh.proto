@@ -48,7 +48,11 @@ service Node {
   rpc DeleteHarvest(HarvestRef) returns (Result);
 }
 
-message Result {}
+message Result {
+  // Set by a launch or restart when the agent was started but did not become ready:
+  // why. The agent exists on the node, as for a spawn.
+  string not_ready = 1;
+}
 
 message AgentRef {
   string request_id = 1;

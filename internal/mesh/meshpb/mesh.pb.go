@@ -230,7 +230,10 @@ func (Role) EnumDescriptor() ([]byte, []int) {
 }
 
 type Result struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Set by a launch or restart when the agent was started but did not become ready:
+	// why. The agent exists on the node, as for a spawn.
+	NotReady      string `protobuf:"bytes,1,opt,name=not_ready,json=notReady,proto3" json:"not_ready,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -263,6 +266,13 @@ func (x *Result) ProtoReflect() protoreflect.Message {
 // Deprecated: Use Result.ProtoReflect.Descriptor instead.
 func (*Result) Descriptor() ([]byte, []int) {
 	return file_pao_mesh_v1_mesh_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *Result) GetNotReady() string {
+	if x != nil {
+		return x.NotReady
+	}
+	return ""
 }
 
 type AgentRef struct {
@@ -2389,8 +2399,9 @@ var File_pao_mesh_v1_mesh_proto protoreflect.FileDescriptor
 
 const file_pao_mesh_v1_mesh_proto_rawDesc = "" +
 	"\n" +
-	"\x16pao/mesh/v1/mesh.proto\x12\vpao.mesh.v1\"\b\n" +
-	"\x06Result\"]\n" +
+	"\x16pao/mesh/v1/mesh.proto\x12\vpao.mesh.v1\"%\n" +
+	"\x06Result\x12\x1b\n" +
+	"\tnot_ready\x18\x01 \x01(\tR\bnotReady\"]\n" +
 	"\bAgentRef\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x14\n" +
