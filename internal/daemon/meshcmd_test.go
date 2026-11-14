@@ -159,6 +159,7 @@ func TestWhatANodeAnswersKeepsItsMeaningAndWordsAtTheMaster(t *testing.T) {
 		{codes.InvalidArgument, local.ErrBadRequest},
 		{codes.AlreadyExists, local.ErrConflict},
 		{codes.PermissionDenied, local.ErrForbidden},
+		{codes.FailedPrecondition, local.ErrConflict},
 	} {
 		err := fromStatus(status.Error(c.code, "the node's words"))
 		require.ErrorIs(t, err, c.kind, c.code.String())

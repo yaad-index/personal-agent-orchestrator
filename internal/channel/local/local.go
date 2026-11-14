@@ -50,6 +50,7 @@ type Server struct {
 	layer      Layer
 	decider    Decider
 	temp       TempAPI
+	streams    StreamAPI
 	meshStatus func() MeshJSON
 	mounts     []mount
 	token      []byte
@@ -130,6 +131,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/decisions", s.auth(s.postDecision))
 	mux.HandleFunc("GET /v1/stream", s.auth(s.stream))
 	s.registerTemp(mux)
+	s.registerStream(mux)
 	s.registerMesh(mux)
 	for _, m := range s.mounts {
 		mux.Handle(m.path, m.h)

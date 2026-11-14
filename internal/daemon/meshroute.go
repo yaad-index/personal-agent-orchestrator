@@ -91,6 +91,7 @@ type registrySource struct {
 	reg        *registry.Registry
 	thresholds registry.Thresholds
 	layer      *comm.Layer
+	views      *views
 }
 
 func (s registrySource) Snapshot() []*pb.AgentInfo {
@@ -108,7 +109,8 @@ func (s registrySource) Snapshot() []*pb.AgentInfo {
 			info.Flag = string(a.Temp.Flag(now, s.thresholds))
 		}
 		if ch, ok := s.layer.Bound(a.Profile.Name); ok {
-			info.Bindings = []*pb.StreamBinding{{Channel: ch}}
+			level, viewer := s.views.info(a.Profile.Name)
+			info.Bindings = []*pb.StreamBinding{{Channel: ch, Level: int32(level), Viewer: viewer}}
 		}
 		out = append(out, info)
 	}

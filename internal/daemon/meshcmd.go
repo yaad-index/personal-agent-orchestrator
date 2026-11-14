@@ -28,6 +28,9 @@ const (
 	readCallTimeout  = 30 * time.Second
 )
 
+// operatorViewer is the viewer the operator's token stands for.
+const operatorViewer = "operator"
+
 // meshCommands is the master's side of the command plane: it sends the operator's
 // requests to the node that holds the agent or the harvest. The operator's token has
 // already authorized each one at the local channel, so the node is told to act
@@ -77,6 +80,8 @@ func fromStatus(err error) error {
 		kind = local.ErrConflict
 	case codes.PermissionDenied:
 		kind = local.ErrForbidden
+	case codes.FailedPrecondition:
+		kind = local.ErrConflict
 	default:
 		return errors.New(st.Message())
 	}
@@ -240,4 +245,46 @@ func manifestFrom(node string, m *pb.HarvestManifest) harvest.Manifest {
 		out.Files = append(out.Files, harvest.File{Path: f.GetPath(), Size: f.GetSize()})
 	}
 	return out
+}
+
+// SetStream tells a node to bind an agent's output to one of its channels. The
+// channel is named as the node knows it.
+func (c meshCommands) SetStream(ctx context.Context, nodeID, agent, channel string, level int) error {
+	cl, err := c.client(nodeID)
+	if err != nil {
+		return err
+	}
+	id, err := newRequestID()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, readCallTimeout)
+	defer cancel()
+	_, err = cl.SetStream(ctx, &pb.StreamRequest{RequestId: id, Agent: agent, Channel: channel, Level: int32(level), Viewer: operatorViewer})
+	return fromStatus(err)
+}
+
+var viewActions = map[string]pb.ViewAction{
+	"pause": pb.ViewAction_VIEW_ACTION_PAUSE, "resume": pb.ViewAction_VIEW_ACTION_RESUME, "backtrack": pb.ViewAction_VIEW_ACTION_BACKTRACK,
+}
+
+// View carries the operator's pause, resume or backtrack to the node that renders
+// the agent's output.
+func (c meshCommands) View(ctx context.Context, nodeID, agent, action string, level, entries int) error {
+	act, ok := viewActions[action]
+	if !ok {
+		return translated{local.ErrBadRequest, fmt.Errorf("a view action is pause, resume or backtrack, not %q", action)}
+	}
+	cl, err := c.client(nodeID)
+	if err != nil {
+		return err
+	}
+	id, err := newRequestID()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, readCallTimeout)
+	defer cancel()
+	_, err = cl.View(ctx, &pb.ViewRequest{RequestId: id, Viewer: operatorViewer, Agent: agent, Action: act, Level: int32(level), Entries: int32(entries)})
+	return fromStatus(err)
 }

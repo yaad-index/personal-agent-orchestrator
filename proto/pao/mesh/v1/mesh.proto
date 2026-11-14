@@ -163,6 +163,9 @@ message ViewRequest {
   ViewAction action = 4;
   // For a backtrack: the level to re-render the past window at.
   int32 level = 5;
+  // For a backtrack: how many past entries, at that level, to show. 0 is the node's
+  // default window.
+  int32 entries = 6;
 }
 
 enum Decision {
