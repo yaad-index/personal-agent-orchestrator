@@ -15,6 +15,7 @@ import (
 	"github.com/yaad-index/personal-agent-orchestrator/internal/access"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/comm"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/control"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/gate"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/harvest"
 	pb "github.com/yaad-index/personal-agent-orchestrator/internal/mesh/meshpb"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/registry"
@@ -40,6 +41,7 @@ type meshNodeServer struct {
 	harvest *harvest.Store
 	streams *streamControl
 	watcher *watcher
+	pending *gate.Pending
 }
 
 func (s meshNodeServer) Launch(ctx context.Context, req *pb.AgentRef) (*pb.Result, error) {
@@ -172,7 +174,7 @@ func grpcErr(err error) error {
 		return err
 	}
 	switch {
-	case errors.Is(err, temp.ErrNotFound), errors.Is(err, temp.ErrNoRecipe), errors.Is(err, harvest.ErrNotFound):
+	case errors.Is(err, temp.ErrNotFound), errors.Is(err, temp.ErrNoRecipe), errors.Is(err, harvest.ErrNotFound), errors.Is(err, gate.ErrNoSuchQuestion):
 		return status.Error(codes.NotFound, err.Error())
 	case errors.Is(err, temp.ErrBadRequest), errors.Is(err, workdir.ErrBadSource):
 		return status.Error(codes.InvalidArgument, err.Error())
@@ -228,6 +230,30 @@ func (s meshNodeServer) View(ctx context.Context, req *pb.ViewRequest) (*pb.Resu
 		return nil, status.Error(codes.InvalidArgument, "a view control is pause, resume or backtrack")
 	}
 	if err != nil {
+		return nil, grpcErr(err)
+	}
+	return &pb.Result{}, nil
+}
+
+// Decide gives the operator's answer, which the master carried, to the question this
+// node asked. The id must be one of this node's own: a question that is gone, was
+// never asked here or belongs to another node is not found.
+func (s meshNodeServer) Decide(_ context.Context, req *pb.DecideRequest) (*pb.Result, error) {
+	var ans gate.Answer
+	switch req.GetDecision() {
+	case pb.Decision_DECISION_ALLOW:
+		ans = gate.Answer{Allow: true}
+	case pb.Decision_DECISION_ALWAYS:
+		ans = gate.Answer{Allow: true, Remember: true}
+	case pb.Decision_DECISION_DENY:
+		ans = gate.Answer{Reason: req.GetReason()}
+	default:
+		return nil, status.Error(codes.InvalidArgument, "a decision is allow, always or deny")
+	}
+	if req.GetQuestionId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "a question id is required")
+	}
+	if err := s.pending.Answer(req.GetQuestionId(), ans); err != nil {
 		return nil, grpcErr(err)
 	}
 	return &pb.Result{}, nil
