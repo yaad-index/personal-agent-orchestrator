@@ -91,6 +91,15 @@ func TestANodeAnswersAReplyItsAgentWasNotGivenAsNotFound(t *testing.T) {
 	assert.Equal(t, codes.NotFound, status.Code(err), "an unresolved quote is the same answer as an absent one")
 	_, err = node.Deliver(ctx, &pb.DeliverRequest{RequestId: "d3", Agent: "bee", Sender: "human", Text: "plain"})
 	require.NoError(t, err)
+
+	for i, id := range []string{"d4", "d5"} {
+		_, err = node.Deliver(ctx, &pb.DeliverRequest{RequestId: id, Agent: "bee", Sender: "human", Text: "twin message " + string(rune('a'+i))})
+		require.NoError(t, err)
+	}
+	_, err = node.Deliver(ctx, &pb.DeliverRequest{RequestId: "d6", Agent: "bee", Sender: "human", Text: "re", ReplyQuote: "twin message"})
+	require.Error(t, err)
+	assert.Equal(t, codes.NotFound, status.Code(err), "a quote that matches several is reported, in the same status as one that matches none")
+	assert.Contains(t, err.Error(), "more than one message matches", "and the message says which")
 }
 
 func TestTheMasterNeverResolvesAReplyToARemoteAgentAgainstItsOwnMessages(t *testing.T) {

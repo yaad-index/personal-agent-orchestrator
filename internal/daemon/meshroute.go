@@ -77,9 +77,10 @@ func (s meshNodeServer) Deliver(ctx context.Context, req *pb.DeliverRequest) (*p
 	switch {
 	case errors.Is(err, core.ErrNoMatch):
 		return nil, status.Errorf(codes.NotFound, "no agent %q on this node", req.GetAgent())
-	case errors.Is(err, msgstore.ErrNotFound), errors.Is(err, msgstore.ErrUnresolved):
+	case errors.Is(err, msgstore.ErrNotFound), errors.Is(err, msgstore.ErrUnresolved), errors.Is(err, msgstore.ErrAmbiguous):
 		// A reply the agent was not given is the same answer as one that does not
-		// exist (ADR-0010 point 3, ADR-0017 point 10).
+		// exist, and one that matches several is reported, not picked (ADR-0010
+		// point 3, ADR-0017 point 10); the message says which.
 		return nil, status.Error(codes.NotFound, err.Error())
 	case err != nil:
 		return nil, status.Error(codes.Internal, err.Error())
