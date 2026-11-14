@@ -14,6 +14,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/local"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/gate"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/harvest"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/mesh/directory"
 	pb "github.com/yaad-index/personal-agent-orchestrator/internal/mesh/meshpb"
@@ -293,6 +294,32 @@ func (c meshCommands) View(ctx context.Context, nodeID, agent, action string, le
 	ctx, cancel := context.WithTimeout(ctx, readCallTimeout)
 	defer cancel()
 	_, err = cl.View(ctx, &pb.ViewRequest{RequestId: id, Viewer: operatorViewer, Agent: agent, Action: act, Level: int32(level), Entries: int32(entries)})
+	return fromStatus(err)
+}
+
+// Decide carries the operator's answer to a gate question to the node that asked it.
+// The question is named as the operator saw it, with the node's id. A question the
+// node no longer has, because it was answered or its time ran out, is the same
+// not-found a node outside a mesh gives.
+func (c meshCommands) Decide(ctx context.Context, nodeID, question string, ans gate.Answer) error {
+	cl, err := c.client(nodeID)
+	if err != nil {
+		return err
+	}
+	id, err := newRequestID()
+	if err != nil {
+		return err
+	}
+	d := pb.Decision_DECISION_DENY
+	switch {
+	case ans.Allow && ans.Remember:
+		d = pb.Decision_DECISION_ALWAYS
+	case ans.Allow:
+		d = pb.Decision_DECISION_ALLOW
+	}
+	ctx, cancel := context.WithTimeout(ctx, readCallTimeout)
+	defer cancel()
+	_, err = cl.Decide(ctx, &pb.DecideRequest{RequestId: id, QuestionId: question, Decision: d, Reason: ans.Reason})
 	return fromStatus(err)
 }
 

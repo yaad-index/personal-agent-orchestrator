@@ -189,3 +189,24 @@ func TestTwoAnswersInARowTheSecondIsRefusedImmediately(t *testing.T) {
 	}
 	assert.True(t, (<-res).Allow, "the first answer stands")
 }
+
+func TestAQuestionCarriesTheIdOfTheNodeThatAskedItAndIsAnsweredByThatId(t *testing.T) {
+	asked := make(chan string, 2)
+	p := NewPending(func(_ context.Context, text string) error { asked <- text; return nil })
+	p.SetNode("s2")
+	assert.Equal(t, "s2", p.Node())
+
+	got := make(chan Answer, 1)
+	go func() {
+		a, _ := p.Ask(context.Background(), Request{Agent: "bee", Tool: "Bash"}, "ls")
+		got <- a
+	}()
+	text := <-asked
+	assert.Contains(t, text, "/allow s2.q1 ")
+	assert.Contains(t, text, "/deny s2.q1 ")
+
+	require.ErrorIs(t, p.Answer("q1", Answer{Allow: true}), ErrNoSuchQuestion, "the id is the one that was given out")
+	require.ErrorIs(t, p.Answer("s3.q1", Answer{Allow: true}), ErrNoSuchQuestion, "another node's question is not found here")
+	require.NoError(t, p.Answer("s2.q1", Answer{Allow: true}))
+	assert.True(t, (<-got).Allow)
+}

@@ -148,6 +148,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		_, err := layer.Notify(ctx, core.Message{Sender: "pao", Text: text})
 		return err
 	})
+	decider := &gateDecider{pending: pending}
 	autoAllow := make(map[gate.Risk]bool)
 	for _, r := range cfg.Orchestrator.Gate.AutoAllow {
 		autoAllow[gate.Risk(r)] = true
@@ -206,9 +207,10 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		})
 		meshNode.SetSink(dir)
 		layer.SetNode(id.NodeID, meshNode.Knows)
+		pending.SetNode(id.NodeID)
 		meshNode.SetNodeServer(meshNodeServer{
 			layer: layer, life: life, mgr: mgr, harvest: harvests, streams: streams,
-			watcher: watch,
+			watcher: watch, pending: pending,
 		})
 		router.SetRemote(meshRemote{dir: dir, node: meshNode})
 		ops.dir = dir
@@ -219,7 +221,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 			_, _, ok := reg.Lookup(name)
 			return ok
 		}}
-		tempOps.cmds, streamOps.cmds, lifeOps.cmds = cmds, cmds, cmds
+		tempOps.cmds, streamOps.cmds, lifeOps.cmds, decider.cmds = cmds, cmds, cmds, cmds
 		// A temporary agent may not take a name an agent on another node holds.
 		mgr.Check = func(p core.Profile) error {
 			if err := checkProfile(p); err != nil {
@@ -233,7 +235,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		localOpts = append(localOpts, local.WithMesh(meshStatusWith(meshNode, dir)))
 	}
 
-	srv, err := local.New(layer, token, append([]local.Option{local.WithDecider(pending), local.WithTemp(tempOps), local.WithStream(streamOps), local.WithWatch(streamOps), local.WithLifecycle(lifeOps),
+	srv, err := local.New(layer, token, append([]local.Option{local.WithDecider(decider), local.WithTemp(tempOps), local.WithStream(streamOps), local.WithWatch(streamOps), local.WithLifecycle(lifeOps),
 		local.WithMount("/mcp", mcpHandler)}, localOpts...)...)
 	if err != nil {
 		return err

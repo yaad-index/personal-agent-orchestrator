@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"regexp"
 	"strings"
 	"syscall"
 
@@ -125,12 +126,16 @@ func (c ChatCmd) run(ctx context.Context, in io.Reader, out, errw io.Writer) err
 	}
 }
 
+// questionID is the id of a gate question: "q3", or "s2.q3" when a node in a mesh
+// asked it.
+var questionID = regexp.MustCompile(`^([a-z0-9][a-z0-9_-]*\.)?q[0-9]+$`)
+
 // parseDecision recognizes the operator's answers to the gate's questions:
 // "/allow q1", "/always q1" and "/deny q1 [reason]". Any other line, including
 // one that merely starts with a slash, is a message to the agent.
 func parseDecision(line string) (decision, id, reason string, ok bool) {
 	f := strings.Fields(line)
-	if len(f) < 2 || !strings.HasPrefix(f[1], "q") {
+	if len(f) < 2 || !questionID.MatchString(f[1]) {
 		return "", "", "", false
 	}
 	switch f[0] {

@@ -460,9 +460,13 @@ window as its message store. It is node-local data, as point 4 requires.
 **Gate (G2).** The gate keeps running on each node. A question carries a
 node-qualified id, `s2.q3`. The node posts it to the channels directly. The
 operator's `/allow s2.q3` arrives at the master, which calls `Node.Decide` on node
-`s2`. The unanswered-question timeout is unchanged and local: if the master is lost
-no answer can arrive and the question is denied when its time runs out, which is the
-existing fail-closed behaviour.
+`s2`. A node outside a mesh keeps the plain `q3`. On the master a bare
+`q3` is its own question; a secondary carries only its own answers, and an answer for
+another node's question is refused there. The node answers only a question it asked
+under its own id, so an id of another node, or a bare one, is not found. The
+unanswered-question timeout is unchanged and local: if the master is lost no answer
+can arrive and the question is denied when its time runs out, which is the existing
+fail-closed behaviour.
 
 **The local channel (G4).** Recommendation: treat it as a master-only channel and
 say so. It carries the human's conversation with the master and the streams of

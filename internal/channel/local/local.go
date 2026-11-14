@@ -296,6 +296,11 @@ func (s *Server) postDecision(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, err.Error())
 			return
 		}
+		// An answer carried to another node comes back with that node's refusal.
+		if st := tempStatus(err); st != http.StatusInternalServerError {
+			writeError(w, st, err.Error())
+			return
+		}
 		s.fail(w, err)
 		return
 	}
