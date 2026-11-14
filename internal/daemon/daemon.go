@@ -171,7 +171,8 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	}
 
 	tempOps := &tempAPI{mgr: mgr, store: harvests}
-	streamOps := &streamAPI{streams: streams}
+	watch := newWatcher(reg, opts.MirrorPoll)
+	streamOps := &streamAPI{streams: streams, watcher: watch}
 	lifeOps := &lifecycleAPI{life: life}
 	ops := &mcpOps{reg: reg, thresholds: mgr.Thresholds, recipes: mgr.Recipes, mgr: mgr, store: harvests, layer: layer, auth: opts.Authorizer}
 	resolver := mcpsrv.Chain{
@@ -207,6 +208,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		layer.SetNode(id.NodeID, meshNode.Knows)
 		meshNode.SetNodeServer(meshNodeServer{
 			layer: layer, life: life, mgr: mgr, harvest: harvests, streams: streams,
+			watcher: watch,
 		})
 		router.SetRemote(meshRemote{dir: dir, node: meshNode})
 		ops.dir = dir
@@ -231,7 +233,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		localOpts = append(localOpts, local.WithMesh(meshStatusWith(meshNode, dir)))
 	}
 
-	srv, err := local.New(layer, token, append([]local.Option{local.WithDecider(pending), local.WithTemp(tempOps), local.WithStream(streamOps), local.WithLifecycle(lifeOps),
+	srv, err := local.New(layer, token, append([]local.Option{local.WithDecider(pending), local.WithTemp(tempOps), local.WithStream(streamOps), local.WithWatch(streamOps), local.WithLifecycle(lifeOps),
 		local.WithMount("/mcp", mcpHandler)}, localOpts...)...)
 	if err != nil {
 		return err

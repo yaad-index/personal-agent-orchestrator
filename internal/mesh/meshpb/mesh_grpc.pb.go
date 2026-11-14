@@ -40,6 +40,7 @@ const (
 	Node_GetHarvest_FullMethodName      = "/pao.mesh.v1.Node/GetHarvest"
 	Node_ReadHarvestFile_FullMethodName = "/pao.mesh.v1.Node/ReadHarvestFile"
 	Node_DeleteHarvest_FullMethodName   = "/pao.mesh.v1.Node/DeleteHarvest"
+	Node_Watch_FullMethodName           = "/pao.mesh.v1.Node/Watch"
 )
 
 // NodeClient is the client API for Node service.
@@ -71,6 +72,10 @@ type NodeClient interface {
 	GetHarvest(ctx context.Context, in *HarvestRef, opts ...grpc.CallOption) (*HarvestManifest, error)
 	ReadHarvestFile(ctx context.Context, in *HarvestFileRef, opts ...grpc.CallOption) (*HarvestFile, error)
 	DeleteHarvest(ctx context.Context, in *HarvestRef, opts ...grpc.CallOption) (*Result, error)
+	// The agent's rendered output, on demand, for as long as the call is open
+	// (ADR-0018). A read: it has no request_id and no deadline. It ends when the
+	// master cancels it, the connection drops, or the node's epoch changes.
+	Watch(ctx context.Context, in *WatchRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[WatchEntry], error)
 }
 
 type nodeClient struct {
@@ -231,6 +236,25 @@ func (c *nodeClient) DeleteHarvest(ctx context.Context, in *HarvestRef, opts ...
 	return out, nil
 }
 
+func (c *nodeClient) Watch(ctx context.Context, in *WatchRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[WatchEntry], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Node_ServiceDesc.Streams[0], Node_Watch_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[WatchRequest, WatchEntry]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Node_WatchClient = grpc.ServerStreamingClient[WatchEntry]
+
 // NodeServer is the server API for Node service.
 // All implementations must embed UnimplementedNodeServer
 // for forward compatibility.
@@ -260,6 +284,10 @@ type NodeServer interface {
 	GetHarvest(context.Context, *HarvestRef) (*HarvestManifest, error)
 	ReadHarvestFile(context.Context, *HarvestFileRef) (*HarvestFile, error)
 	DeleteHarvest(context.Context, *HarvestRef) (*Result, error)
+	// The agent's rendered output, on demand, for as long as the call is open
+	// (ADR-0018). A read: it has no request_id and no deadline. It ends when the
+	// master cancels it, the connection drops, or the node's epoch changes.
+	Watch(*WatchRequest, grpc.ServerStreamingServer[WatchEntry]) error
 	mustEmbedUnimplementedNodeServer()
 }
 
@@ -314,6 +342,9 @@ func (UnimplementedNodeServer) ReadHarvestFile(context.Context, *HarvestFileRef)
 }
 func (UnimplementedNodeServer) DeleteHarvest(context.Context, *HarvestRef) (*Result, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeleteHarvest not implemented")
+}
+func (UnimplementedNodeServer) Watch(*WatchRequest, grpc.ServerStreamingServer[WatchEntry]) error {
+	return status.Error(codes.Unimplemented, "method Watch not implemented")
 }
 func (UnimplementedNodeServer) mustEmbedUnimplementedNodeServer() {}
 func (UnimplementedNodeServer) testEmbeddedByValue()              {}
@@ -606,6 +637,17 @@ func _Node_DeleteHarvest_Handler(srv interface{}, ctx context.Context, dec func(
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Node_Watch_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(WatchRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(NodeServer).Watch(m, &grpc.GenericServerStream[WatchRequest, WatchEntry]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Node_WatchServer = grpc.ServerStreamingServer[WatchEntry]
+
 // Node_ServiceDesc is the grpc.ServiceDesc for Node service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -674,7 +716,13 @@ var Node_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Node_DeleteHarvest_Handler,
 		},
 	},
-	Streams:  []grpc.StreamDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "Watch",
+			Handler:       _Node_Watch_Handler,
+			ServerStreams: true,
+		},
+	},
 	Metadata: "pao/mesh/v1/mesh.proto",
 }
 

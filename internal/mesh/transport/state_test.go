@@ -104,3 +104,38 @@ func TestPersistingLeavesNoTemporaryFile(t *testing.T) {
 	require.Len(t, entries, 1)
 	assert.Equal(t, "mesh.state", entries[0].Name())
 }
+
+func TestChangedIsClosedByTheNextChangeAndOnlyThatOne(t *testing.T) {
+	m, err := LoadMembership("", "n-b", "n-a")
+	require.NoError(t, err)
+
+	first := m.Changed()
+	select {
+	case <-first:
+		t.Fatal("closed before any change")
+	default:
+	}
+	changed, err := m.Observe(0, "n-a")
+	require.NoError(t, err)
+	require.False(t, changed)
+	select {
+	case <-first:
+		t.Fatal("closed by a belief that changed nothing")
+	default:
+	}
+
+	changed, err = m.Observe(1, "n-a")
+	require.NoError(t, err)
+	require.True(t, changed)
+	select {
+	case <-first:
+	default:
+		t.Fatal("not closed by a change")
+	}
+	second := m.Changed()
+	select {
+	case <-second:
+		t.Fatal("the next one was already closed")
+	default:
+	}
+}

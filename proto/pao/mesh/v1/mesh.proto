@@ -46,6 +46,10 @@ service Node {
   rpc GetHarvest(HarvestRef) returns (HarvestManifest);
   rpc ReadHarvestFile(HarvestFileRef) returns (HarvestFile);
   rpc DeleteHarvest(HarvestRef) returns (Result);
+  // The agent's rendered output, on demand, for as long as the call is open
+  // (ADR-0018). A read: it has no request_id and no deadline. It ends when the
+  // master cancels it, the connection drops, or the node's epoch changes.
+  rpc Watch(WatchRequest) returns (stream WatchEntry);
 }
 
 message Result {
@@ -170,6 +174,24 @@ message ViewRequest {
   // For a backtrack: how many past entries, at that level, to show. 0 is the node's
   // default window.
   int32 entries = 6;
+}
+
+message WatchRequest {
+  string agent = 1;
+  // The level the entries are rendered at, at least 1.
+  int32 level = 2;
+  // How many of the most recent entries at that level come first; 0 is the node's
+  // default.
+  int32 entries = 3;
+}
+
+message WatchEntry {
+  // RFC 3339; empty when the entry has no time.
+  string time = 1;
+  string text = 2;
+  // True for an entry of the recent past sent first, false for one that arrived
+  // after the watch began.
+  bool history = 3;
 }
 
 enum Decision {

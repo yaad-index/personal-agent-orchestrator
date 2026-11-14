@@ -24,6 +24,7 @@ type CLI struct {
 	Kill         KillCmd         `cmd:"" help:"Tear a temporary agent down, harvesting its outputs first."`
 	Agents       AgentsCmd       `cmd:"" help:"List the temporary agents and their status flags."`
 	Stream       StreamCmd       `cmd:"" help:"Bind an agent's output to a channel, or clear the binding."`
+	Watch        WatchCmd        `cmd:"" help:"Follow an agent's output on demand, here or on another node."`
 	View         ViewCmd         `cmd:"" help:"Pause, resume or backtrack the view of an agent's output."`
 	Agent        AgentCmd        `cmd:"" help:"Start, stop or restart a configured agent."`
 	Harvests     HarvestsCmd     `cmd:"" help:"Outputs harvested from killed temporary agents."`

@@ -7,7 +7,9 @@ import (
 	"strings"
 	"time"
 
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/access"
@@ -37,6 +39,7 @@ type meshNodeServer struct {
 	mgr     *temp.Manager
 	harvest *harvest.Store
 	streams *streamControl
+	watcher *watcher
 }
 
 func (s meshNodeServer) Launch(ctx context.Context, req *pb.AgentRef) (*pb.Result, error) {
@@ -179,11 +182,30 @@ func grpcErr(err error) error {
 		return status.Error(codes.PermissionDenied, err.Error())
 	case errors.Is(err, errViewer), errors.Is(err, errTemporaryAgent):
 		return status.Error(codes.FailedPrecondition, err.Error())
+	case errors.Is(err, errTooManyWatches):
+		return status.Error(codes.ResourceExhausted, err.Error())
 	}
 	if _, notReady := control.AsReadinessError(err); notReady {
 		return status.Error(codes.FailedPrecondition, fmt.Sprintf("%v", err))
 	}
 	return status.Error(codes.Internal, err.Error())
+}
+
+// Watch streams an agent's rendered output to the master until the master ends the
+// call, the connection drops or the node's epoch moves (ADR-0018). An agent this
+// node does not hold is answered as an absent one.
+func (s meshNodeServer) Watch(req *pb.WatchRequest, stream grpc.ServerStreamingServer[pb.WatchEntry]) error {
+	err := s.watcher.watch(stream.Context(), access.Operator, req.GetAgent(), int(req.GetLevel()), int(req.GetEntries()), func() { _ = stream.SendHeader(metadata.Pairs(watchAdmittedHeader, "admitted")) }, func(l watchLine) error {
+		e := &pb.WatchEntry{Text: l.text, History: l.history}
+		if !l.time.IsZero() {
+			e.Time = l.time.Format(time.RFC3339Nano)
+		}
+		return stream.Send(e)
+	})
+	if err != nil {
+		return grpcErr(err)
+	}
+	return nil
 }
 
 func (s meshNodeServer) SetStream(_ context.Context, req *pb.StreamRequest) (*pb.Result, error) {

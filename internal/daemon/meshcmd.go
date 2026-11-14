@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -27,6 +28,10 @@ const (
 	killCallTimeout  = time.Minute
 	readCallTimeout  = 30 * time.Second
 )
+
+// watchAdmittedHeader is what a node sends back, as call metadata, once it has
+// admitted a watch.
+const watchAdmittedHeader = "pao-watch"
 
 // operatorViewer is the viewer the operator's token stands for.
 const operatorViewer = "operator"
@@ -82,6 +87,8 @@ func fromStatus(err error) error {
 		kind = local.ErrForbidden
 	case codes.FailedPrecondition:
 		kind = local.ErrConflict
+	case codes.ResourceExhausted:
+		kind = local.ErrBusy
 	default:
 		return errors.New(st.Message())
 	}
@@ -322,4 +329,53 @@ func (c meshCommands) Lifecycle(ctx context.Context, nodeID, agent, action strin
 		return translated{local.ErrNotReady, errors.New(res.GetNotReady())}
 	}
 	return nil
+}
+
+// Watch streams an agent's rendered output from the node that holds it (ADR-0018)
+// to emit, after calling opened once the node has admitted the watch. It runs until
+// ctx is done, which is the operator stopping it and returns nil, or the node ends
+// it: the connection dropped, or the node's epoch moved. A watch has no deadline of
+// its own; the connection's keepalive finds a node that has hung.
+func (c meshCommands) Watch(ctx context.Context, nodeID, agent string, level, entries int, opened func(), emit func(local.WatchLineJSON) error) error {
+	if err := c.requireMaster(); err != nil {
+		return err
+	}
+	conn, err := c.node.Dial(nodeID)
+	if err != nil {
+		return translated{local.ErrBadRequest, err}
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	st, err := pb.NewNodeClient(conn).Watch(ctx, &pb.WatchRequest{Agent: agent, Level: int32(level), Entries: int32(entries)})
+	if err != nil {
+		return fromStatus(err)
+	}
+	// The node sends a header once it has admitted the watch. A refusal (an agent it
+	// does not hold, a bad level, its bound) is a status with no header, and is read
+	// from the stream, so it is known before anything is shown.
+	md, err := st.Header()
+	if err != nil {
+		return fromStatus(err)
+	}
+	if len(md.Get(watchAdmittedHeader)) == 0 {
+		if _, err := st.Recv(); err != nil {
+			return fromStatus(err)
+		}
+		return errors.New("the node sent output without admitting the watch")
+	}
+	opened()
+	for {
+		e, err := st.Recv()
+		switch {
+		case ctx.Err() != nil:
+			return nil
+		case errors.Is(err, io.EOF):
+			return errors.New("the node ended the watch")
+		case err != nil:
+			return fromStatus(err)
+		}
+		if err := emit(local.WatchLineJSON{Time: e.GetTime(), Text: e.GetText(), History: e.GetHistory()}); err != nil {
+			return err
+		}
+	}
 }

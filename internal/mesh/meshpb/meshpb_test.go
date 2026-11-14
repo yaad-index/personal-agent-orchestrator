@@ -23,6 +23,7 @@ var services = map[string][]method{
 		{"SetStream", false, false}, {"View", false, false}, {"Decide", false, false},
 		{"QueryPosted", false, false}, {"PushConfig", false, false},
 		{"ListHarvests", false, false}, {"GetHarvest", false, false}, {"ReadHarvestFile", false, false}, {"DeleteHarvest", false, false},
+		{"Watch", false, true},
 	},
 	"Master": {{"Session", true, true}},
 	"Peer": {
@@ -57,6 +58,14 @@ func TestEveryStateChangingCommandCarriesARequestID(t *testing.T) {
 		require.NotNil(t, f, "%s", m.ProtoReflect().Descriptor().Name())
 		assert.Equal(t, protoreflect.StringKind, f.Kind())
 		assert.Equal(t, protoreflect.FieldNumber(1), f.Number(), "request_id is field 1 everywhere, so a generic interceptor can read it")
+	}
+}
+
+func TestAWatchIsAReadWithNoRequestID(t *testing.T) {
+	f := (&WatchRequest{}).ProtoReflect().Descriptor().Fields()
+	assert.Nil(t, f.ByName("request_id"), "a watch changes nothing, so there is nothing to repeat once (ADR-0018 point 3)")
+	for _, name := range []string{"agent", "level", "entries"} {
+		assert.NotNil(t, f.ByName(protoreflect.Name(name)), name)
 	}
 }
 

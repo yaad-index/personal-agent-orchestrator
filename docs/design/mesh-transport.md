@@ -172,6 +172,7 @@ service Node {
   rpc Decide(DecideRequest) returns (Result);       // a gate answer (G2)
   rpc QueryPosted(PostedQuery) returns (PostedReply);    // section 11
   rpc PushConfig(ConfigBundle) returns (ConfigAck); // section 7
+  rpc Watch(WatchRequest) returns (stream WatchEntry);   // ADR-0018
 }
 
 // Served by the node that is master. A secondary calls it.
@@ -300,6 +301,38 @@ are live, and can clear or re-level one that it did not itself set.
 **View controls.** `Node.View` carries the viewer's pause, resume and backtrack to
 the node that renders for that viewer. As ADR-0008 says, these act on the rendered
 view only. Pausing the agent itself has no owning ADR and is not carried.
+
+**Watching (ADR-0018).** While the only channel is the master's own local channel,
+output a secondary posts to its own channel is never seen by the human. `Node.Watch
+{agent, level, entries}` is the on-demand answer: a server stream of the agent's
+rendered entries, which the master hands to the operator's request
+(`GET /v1/watch/{agent}?level=&entries=`, `pao watch`). The lines go to that request
+only. They are not sent to the local channel's other streams, are stored in no agent's
+scope and are not a reply target.
+
+- *The recent past.* The last `entries` entries visible at `level` (default 20, at most
+  200, the window a backtrack uses) from the live transcript, flagged `history`, then
+  what arrives after. The node reads the transcript once for the past and follows it
+  from its start, skipping what the past held, so nothing written between the two is
+  lost or shown twice. A transcript that is not there yet is followed from its first
+  line.
+- *How many.* A node serves at most 8 watches at once. A ninth is refused
+  `ResourceExhausted`, which the master reports to the operator as busy (HTTP 429). The
+  slot comes back when a watch ends.
+- *Lifetime.* A watch has no deadline. It ends when the operator stops it (the request
+  is closed), when the connection drops (keepalive finds a hung peer), and when the
+  node's belief about the master changes: the stream then ends `FailedPrecondition`, and
+  the master that opens the next one does so at the new epoch. A watch is admitted under
+  the same checks as a command (the caller is the believed master, at the believed
+  epoch), once, when it opens.
+- *Admission.* The node tells the master a watch is admitted before sending anything, so
+  a refusal (an agent the node does not hold, a bad level, its bound) is an HTTP status
+  to the operator and not a stream that ends at once.
+- *Access.* An agent the caller may not watch is answered as one that is not there, in
+  the same words, so a watch is no way to learn which agents exist. Only the operator
+  watches today, so the node's authorizer is the operator-only default.
+- *Independent of the bound view.* The bound-channel pause does not hold a watch back,
+  and a watch does not release what a pause holds.
 
 ## 9. Master epochs, promotion and rejoin
 
@@ -512,7 +545,8 @@ Each step is a separate, reviewable change. N1 adds the one new dependency (sect
   master as a request to that node.
 - **N5. Streams and view controls.** `Node.SetStream` and `Node.View`: binding on the node
   and direct posting, level, and clearing. Needs a channel a secondary can post to;
-  tested with a test channel that is reachable from several nodes.
+  tested with a test channel that is reachable from several nodes. `Node.Watch`
+  (ADR-0018) is the part that works before such a channel exists.
 - **N6. Replies across nodes.** Node-prefixed ids, the posted index, `Node.QueryPosted`,
   and the forwarded reply path.
 - **N7. Gate across nodes.** Node-qualified question ids and `Node.Decide`.
