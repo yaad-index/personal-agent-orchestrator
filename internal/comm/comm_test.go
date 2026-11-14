@@ -319,6 +319,27 @@ func TestNotifyReachesTheHumanButNoAgent(t *testing.T) {
 	}
 }
 
+func TestNotifyOnReachesOneChannelAndAnUnknownOneStoresNothing(t *testing.T) {
+	l, _, st := setup(t)
+	one, two := &fakeChannel{name: "one"}, &fakeChannel{name: "two"}
+	l.AddChannel(one)
+	l.AddChannel(two)
+
+	m, err := l.NotifyOn(context.Background(), "two", core.Message{Sender: "pao", Text: "a replay for the viewer"})
+	require.NoError(t, err)
+	assert.Empty(t, one.got, "only the channel named")
+	require.Len(t, two.got, 1)
+	assert.Equal(t, core.MessageSystemEvent, two.got[0].Kind)
+	_, err = st.GetScoped("a", m.ID)
+	assert.ErrorIs(t, err, msgstore.ErrNotFound, "no agent can fetch it")
+
+	_, err = l.NotifyOn(context.Background(), "missing", core.Message{Sender: "pao", Text: "lost"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no channel", "refused before it was stored")
+	_, err = st.Resolve("a", "lost")
+	assert.ErrorIs(t, err, msgstore.ErrUnresolved)
+}
+
 type recChannel struct {
 	name string
 	mu   sync.Mutex

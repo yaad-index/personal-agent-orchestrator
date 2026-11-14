@@ -129,6 +129,14 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		level: cfg.Orchestrator.Level,
 		poll:  opts.MirrorPoll,
 		seen:  make(map[string]context.CancelFunc),
+		views: newViews(),
+	}
+	streams := &streamControl{
+		layer: layer, reg: reg, views: hook.follow.views, level: cfg.Orchestrator.Level,
+		send: func(ctx context.Context, agent string, m core.Message) error {
+			_, err := layer.Send(ctx, agent, m)
+			return err
+		},
 	}
 
 	policy, err := gate.LoadPolicy(filepath.Join(cfg.Orchestrator.StateDir, "policy.json"))
@@ -152,7 +160,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 
 	harvests := harvest.New(filepath.Join(cfg.Orchestrator.StateDir, "harvest"), opts.Authorizer)
 	mgr := &temp.Manager{
-		Registry: reg, Plane: plane, Starter: router, Channels: layer,
+		Registry: reg, Plane: plane, Starter: router, Channels: bindings{layer, hook.follow.views},
 		Workdirs: &workdir.Provisioner{Root: filepath.Join(cfg.Orchestrator.StateDir, "temp")},
 		Harvests: harvests, Auth: opts.Authorizer,
 		Recipes: func() (*recipe.Set, error) { return recipe.LoadDir(cfg.Orchestrator.RecipesDir) },
@@ -162,6 +170,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	}
 
 	tempOps := &tempAPI{mgr: mgr, store: harvests}
+	streamOps := &streamAPI{streams: streams}
 	ops := &mcpOps{reg: reg, thresholds: mgr.Thresholds, recipes: mgr.Recipes, mgr: mgr, store: harvests, layer: layer, auth: opts.Authorizer}
 	resolver := mcpsrv.Chain{
 		mcpsrv.NewOperatorResolver(token),
@@ -194,15 +203,17 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		})
 		meshNode.SetSink(dir)
 		meshNode.SetNodeServer(meshNodeServer{
-			layer: layer, router: router, plane: plane, reg: reg, follow: hook.follow, mgr: mgr, harvest: harvests,
+			layer: layer, router: router, plane: plane, reg: reg, follow: hook.follow, mgr: mgr, harvest: harvests, streams: streams,
 		})
 		router.SetRemote(meshRemote{dir: dir, node: meshNode})
 		ops.dir = dir
 		tempOps.dir = dir
-		tempOps.cmds = &meshCommands{self: id.NodeID, node: meshNode, dir: dir, holds: func(name string) bool {
+		streamOps.dir = dir
+		cmds := &meshCommands{self: id.NodeID, node: meshNode, dir: dir, holds: func(name string) bool {
 			_, _, ok := reg.Lookup(name)
 			return ok
 		}}
+		tempOps.cmds, streamOps.cmds = cmds, cmds
 		// A temporary agent may not take a name an agent on another node holds.
 		mgr.Check = func(p core.Profile) error {
 			if err := checkProfile(p); err != nil {
@@ -216,7 +227,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		localOpts = append(localOpts, local.WithMesh(meshStatusWith(meshNode, dir)))
 	}
 
-	srv, err := local.New(layer, token, append([]local.Option{local.WithDecider(pending), local.WithTemp(tempOps),
+	srv, err := local.New(layer, token, append([]local.Option{local.WithDecider(pending), local.WithTemp(tempOps), local.WithStream(streamOps),
 		local.WithMount("/mcp", mcpHandler)}, localOpts...)...)
 	if err != nil {
 		return err
@@ -250,7 +261,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		}()
 		go func() {
 			defer meshWG.Done()
-			meshNode.RunReporter(meshCtx, registrySource{reg: reg, thresholds: mgr.Thresholds, layer: layer}, time.Second)
+			meshNode.RunReporter(meshCtx, registrySource{reg: reg, thresholds: mgr.Thresholds, layer: layer, views: hook.follow.views}, time.Second)
 		}()
 		go func() { meshWG.Wait(); close(meshDone) }()
 	} else {
@@ -339,6 +350,8 @@ type followers struct {
 	reg   *registry.Registry
 	level int
 	poll  time.Duration
+	// views holds how each agent's output is shown: its level, and a pause.
+	views *views
 
 	mu   sync.Mutex
 	seen map[string]context.CancelFunc
@@ -379,11 +392,15 @@ func (f *followers) start(p core.Profile) {
 		err := m.Follow(ctx, path, mirror.FromEnd, func(e core.Entry) {
 			// Any line the agent writes is activity, shown to the human or not.
 			f.reg.Touch(p.Name, time.Now(), false)
-			text, ok := render(e, levels, f.level)
+			text, ok := render(e, levels, f.views.level(p.Name, f.level))
 			if !ok {
 				return
 			}
-			if _, err := f.layer.Send(ctx, p.Name, core.Message{Sender: p.Name, Kind: core.MessageContent, Text: text, Time: e.Time}); err != nil {
+			msg := core.Message{Sender: p.Name, Kind: core.MessageContent, Text: text, Time: e.Time}
+			if f.views.hold(p.Name, msg) {
+				return
+			}
+			if _, err := f.layer.Send(ctx, p.Name, msg); err != nil {
 				slog.Warn("could not send agent output", "agent", p.Name, "error", err)
 			}
 		})

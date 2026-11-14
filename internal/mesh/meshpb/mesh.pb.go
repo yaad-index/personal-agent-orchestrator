@@ -1142,7 +1142,10 @@ type ViewRequest struct {
 	Agent     string                 `protobuf:"bytes,3,opt,name=agent,proto3" json:"agent,omitempty"`
 	Action    ViewAction             `protobuf:"varint,4,opt,name=action,proto3,enum=pao.mesh.v1.ViewAction" json:"action,omitempty"`
 	// For a backtrack: the level to re-render the past window at.
-	Level         int32 `protobuf:"varint,5,opt,name=level,proto3" json:"level,omitempty"`
+	Level int32 `protobuf:"varint,5,opt,name=level,proto3" json:"level,omitempty"`
+	// For a backtrack: how many past entries, at that level, to show. 0 is the node's
+	// default window.
+	Entries       int32 `protobuf:"varint,6,opt,name=entries,proto3" json:"entries,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1208,6 +1211,13 @@ func (x *ViewRequest) GetAction() ViewAction {
 func (x *ViewRequest) GetLevel() int32 {
 	if x != nil {
 		return x.Level
+	}
+	return 0
+}
+
+func (x *ViewRequest) GetEntries() int32 {
+	if x != nil {
+		return x.Entries
 	}
 	return 0
 }
@@ -2446,14 +2456,15 @@ const file_pao_mesh_v1_mesh_proto_rawDesc = "" +
 	"\x05agent\x18\x02 \x01(\tR\x05agent\x12\x18\n" +
 	"\achannel\x18\x03 \x01(\tR\achannel\x12\x14\n" +
 	"\x05level\x18\x04 \x01(\x05R\x05level\x12\x16\n" +
-	"\x06viewer\x18\x05 \x01(\tR\x06viewer\"\xa1\x01\n" +
+	"\x06viewer\x18\x05 \x01(\tR\x06viewer\"\xbb\x01\n" +
 	"\vViewRequest\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x16\n" +
 	"\x06viewer\x18\x02 \x01(\tR\x06viewer\x12\x14\n" +
 	"\x05agent\x18\x03 \x01(\tR\x05agent\x12/\n" +
 	"\x06action\x18\x04 \x01(\x0e2\x17.pao.mesh.v1.ViewActionR\x06action\x12\x14\n" +
-	"\x05level\x18\x05 \x01(\x05R\x05level\"\x9a\x01\n" +
+	"\x05level\x18\x05 \x01(\x05R\x05level\x12\x18\n" +
+	"\aentries\x18\x06 \x01(\x05R\aentries\"\x9a\x01\n" +
 	"\rDecideRequest\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x1f\n" +

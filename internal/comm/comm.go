@@ -263,6 +263,22 @@ func (l *Layer) Notify(ctx context.Context, m core.Message) (core.Message, error
 	return stored, l.fanOut(ctx, stored)
 }
 
+// NotifyOn is Notify to the one channel named, for what is meant for the operator
+// on that channel alone (a replay of an agent's past output for the viewer who
+// asked for it). A channel that is not registered is an error, never a fall back to
+// every channel.
+func (l *Layer) NotifyOn(ctx context.Context, channel string, m core.Message) (core.Message, error) {
+	if !l.HasChannel(channel) {
+		return core.Message{}, fmt.Errorf("no channel %q", channel)
+	}
+	m.Kind = core.MessageSystemEvent
+	stored, err := l.store.Add(m)
+	if err != nil {
+		return core.Message{}, err
+	}
+	return stored, l.sendTo(ctx, channel, stored)
+}
+
 func (l *Layer) fanOut(ctx context.Context, m core.Message) error {
 	var errs []error
 	for _, c := range l.channels {

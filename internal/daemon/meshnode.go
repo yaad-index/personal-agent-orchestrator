@@ -41,6 +41,7 @@ type meshNodeServer struct {
 	follow  follower
 	mgr     *temp.Manager
 	harvest *harvest.Store
+	streams *streamControl
 }
 
 func (s meshNodeServer) agent(name string) (core.Profile, registry.AgentView, error) {
@@ -219,9 +220,36 @@ func grpcErr(err error) error {
 		return status.Error(codes.AlreadyExists, err.Error())
 	case errors.Is(err, temp.ErrDenied):
 		return status.Error(codes.PermissionDenied, err.Error())
+	case errors.Is(err, errViewer):
+		return status.Error(codes.FailedPrecondition, err.Error())
 	}
 	if _, notReady := control.AsReadinessError(err); notReady {
 		return status.Error(codes.FailedPrecondition, fmt.Sprintf("%v", err))
 	}
 	return status.Error(codes.Internal, err.Error())
+}
+
+func (s meshNodeServer) SetStream(_ context.Context, req *pb.StreamRequest) (*pb.Result, error) {
+	if err := s.streams.SetStream(req.GetAgent(), req.GetChannel(), int(req.GetLevel()), req.GetViewer()); err != nil {
+		return nil, grpcErr(err)
+	}
+	return &pb.Result{}, nil
+}
+
+func (s meshNodeServer) View(ctx context.Context, req *pb.ViewRequest) (*pb.Result, error) {
+	var err error
+	switch req.GetAction() {
+	case pb.ViewAction_VIEW_ACTION_PAUSE:
+		err = s.streams.Pause(req.GetAgent(), req.GetViewer())
+	case pb.ViewAction_VIEW_ACTION_RESUME:
+		err = s.streams.Resume(ctx, req.GetAgent(), req.GetViewer())
+	case pb.ViewAction_VIEW_ACTION_BACKTRACK:
+		err = s.streams.Backtrack(ctx, req.GetAgent(), req.GetViewer(), int(req.GetLevel()), int(req.GetEntries()))
+	default:
+		return nil, status.Error(codes.InvalidArgument, "a view control is pause, resume or backtrack")
+	}
+	if err != nil {
+		return nil, grpcErr(err)
+	}
+	return &pb.Result{}, nil
 }

@@ -82,6 +82,8 @@ func translate(err error) error {
 		return translated{local.ErrConflict, err}
 	case errors.Is(err, temp.ErrDenied):
 		return translated{local.ErrForbidden, err}
+	case errors.Is(err, errViewer):
+		return translated{local.ErrConflict, err}
 	}
 	if _, notReady := control.AsReadinessError(err); notReady {
 		return translated{local.ErrNotReady, err}
