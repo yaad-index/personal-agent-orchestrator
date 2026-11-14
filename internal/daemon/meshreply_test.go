@@ -80,7 +80,7 @@ func TestAQuotedReplyToARemoteAgentIsResolvedOnItsNode(t *testing.T) {
 	assert.NotEmpty(t, rep.Results[0].Error, "unresolved is reported, never guessed")
 }
 
-func TestANodeAnswersAReplyItsAgentWasNotGivenAsNotFound(t *testing.T) {
+func TestANodeAnswersAReplyItCannotResolveWithAStatusThatSaysWhy(t *testing.T) {
 	f, _, _ := meshWithRecipes(t)
 	ctx := context.Background()
 	node := asMaster(t, f, "n-b")
@@ -88,7 +88,7 @@ func TestANodeAnswersAReplyItsAgentWasNotGivenAsNotFound(t *testing.T) {
 	_, err := node.Deliver(ctx, &pb.DeliverRequest{RequestId: "d1", Agent: "bee", Sender: "human", Text: "re", ReplyRef: "m99999"})
 	assert.Equal(t, codes.NotFound, status.Code(err))
 	_, err = node.Deliver(ctx, &pb.DeliverRequest{RequestId: "d2", Agent: "bee", Sender: "human", Text: "re", ReplyQuote: "never seen"})
-	assert.Equal(t, codes.NotFound, status.Code(err), "an unresolved quote is the same answer as an absent one")
+	assert.Equal(t, codes.FailedPrecondition, status.Code(err), "a quote that resolves to nothing is reported, in the local channel's 422 and not its 404")
 	_, err = node.Deliver(ctx, &pb.DeliverRequest{RequestId: "d3", Agent: "bee", Sender: "human", Text: "plain"})
 	require.NoError(t, err)
 
@@ -98,7 +98,7 @@ func TestANodeAnswersAReplyItsAgentWasNotGivenAsNotFound(t *testing.T) {
 	}
 	_, err = node.Deliver(ctx, &pb.DeliverRequest{RequestId: "d6", Agent: "bee", Sender: "human", Text: "re", ReplyQuote: "twin message"})
 	require.Error(t, err)
-	assert.Equal(t, codes.NotFound, status.Code(err), "a quote that matches several is reported, in the same status as one that matches none")
+	assert.Equal(t, codes.FailedPrecondition, status.Code(err), "a quote that matches several is reported, in the same status as one that matches none")
 	assert.Contains(t, err.Error(), "more than one message matches", "and the message says which")
 }
 

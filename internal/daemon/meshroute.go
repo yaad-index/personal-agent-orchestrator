@@ -77,11 +77,15 @@ func (s meshNodeServer) Deliver(ctx context.Context, req *pb.DeliverRequest) (*p
 	switch {
 	case errors.Is(err, core.ErrNoMatch):
 		return nil, status.Errorf(codes.NotFound, "no agent %q on this node", req.GetAgent())
-	case errors.Is(err, msgstore.ErrNotFound), errors.Is(err, msgstore.ErrUnresolved), errors.Is(err, msgstore.ErrAmbiguous):
-		// A reply the agent was not given is the same answer as one that does not
-		// exist, and one that matches several is reported, not picked (ADR-0010
-		// point 3, ADR-0017 point 10); the message says which.
+	case errors.Is(err, msgstore.ErrNotFound):
+		// A reply by id that the agent was not given is the same answer as one that
+		// does not exist (ADR-0010 point 3, ADR-0017 point 10).
 		return nil, status.Error(codes.NotFound, err.Error())
+	case errors.Is(err, msgstore.ErrUnresolved), errors.Is(err, msgstore.ErrAmbiguous):
+		// A quote that matches nothing, or several, is reported and never guessed,
+		// with the local channel's own split: 404 for a missing id, 422 for a quote
+		// that does not resolve to one message.
+		return nil, status.Error(codes.FailedPrecondition, err.Error())
 	case err != nil:
 		return nil, status.Error(codes.Internal, err.Error())
 	case len(d.Results) != 1:
