@@ -40,6 +40,12 @@ service Node {
   rpc QueryPosted(PostedQuery) returns (PostedReply);
   // A new version of the mesh document (ADR-0017 point 9).
   rpc PushConfig(ConfigBundle) returns (ConfigAck);
+  // What a temporary agent's kill left on this node (ADR-0006 point 4): a harvest
+  // stays on the node that made it, and is listed, read and deleted there.
+  rpc ListHarvests(ListHarvestsRequest) returns (ListHarvestsReply);
+  rpc GetHarvest(HarvestRef) returns (HarvestManifest);
+  rpc ReadHarvestFile(HarvestFileRef) returns (HarvestFile);
+  rpc DeleteHarvest(HarvestRef) returns (Result);
 }
 
 message Result {}
@@ -47,6 +53,10 @@ message Result {}
 message AgentRef {
   string request_id = 1;
   string agent = 2;
+  // Who the master acted for, as the harvest of a kill records it: "operator" or
+  // "agent:<name>". The master has already authorized the request; the node does not
+  // decide it again.
+  string requester = 3;
 }
 
 message SpawnRequest {
@@ -56,10 +66,15 @@ message SpawnRequest {
   string name = 3;
   // The channel the agent's stream is bound to.
   string channel = 4;
+  // Who the master acted for; see AgentRef.
+  string requester = 5;
 }
 
 message SpawnResult {
   string name = 1;
+  // Set when the agent was created but did not become ready: why. The agent exists
+  // under name, so it can be inspected or killed.
+  string not_ready = 2;
 }
 
 message KillResult {
@@ -69,6 +84,43 @@ message KillResult {
   int64 files = 4;
   int64 bytes = 5;
   string summary = 6;
+}
+
+message ListHarvestsRequest {}
+
+message HarvestFileInfo {
+  string path = 1;
+  int64 size = 2;
+}
+
+message HarvestManifest {
+  string id = 1;
+  string agent = 2;
+  repeated string tags = 3;
+  string requester = 4;
+  // RFC 3339.
+  string time = 5;
+  bool complete = 6;
+  int64 bytes = 7;
+  repeated HarvestFileInfo files = 8;
+  int64 skipped_total = 9;
+}
+
+message ListHarvestsReply {
+  repeated HarvestManifest harvests = 1;
+}
+
+message HarvestRef {
+  string id = 1;
+}
+
+message HarvestFileRef {
+  string id = 1;
+  string path = 2;
+}
+
+message HarvestFile {
+  bytes content = 1;
 }
 
 message DeliverRequest {

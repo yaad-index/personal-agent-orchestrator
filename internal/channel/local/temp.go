@@ -31,9 +31,11 @@ var (
 
 // AgentJSON is one temporary agent as listed.
 type AgentJSON struct {
-	Name         string    `json:"name"`
-	Recipe       string    `json:"recipe"`
-	Channel      string    `json:"channel"`
+	Name    string `json:"name"`
+	Recipe  string `json:"recipe"`
+	Channel string `json:"channel"`
+	// Node is the node that holds the agent; empty is the node asked.
+	Node         string    `json:"node,omitempty"`
 	State        string    `json:"state"`
 	Flag         string    `json:"flag"`
 	Created      time.Time `json:"created"`
@@ -51,6 +53,8 @@ type SpawnRequestJSON struct {
 	Recipe  string `json:"recipe"`
 	Name    string `json:"name"`
 	Channel string `json:"channel"`
+	// Node is the node to start it on; empty is this node.
+	Node string `json:"node,omitempty"`
 }
 
 // SpawnJSON is the answer to a spawn.
@@ -62,13 +66,16 @@ type SpawnJSON struct {
 // behalf of the operator, the only caller the bearer token identifies.
 type TempAPI interface {
 	// Spawn returns the agent's name; on ErrNotReady it still returns the name.
-	Spawn(ctx context.Context, recipe, name, channel string) (string, error)
+	// node is the node to start it on; empty is this node.
+	Spawn(ctx context.Context, recipe, name, channel, node string) (string, error)
 	Kill(ctx context.Context, name string) (KillJSON, error)
 	Agents() []AgentJSON
-	Harvests() ([]harvest.Manifest, error)
-	Harvest(id string) (harvest.Manifest, error)
-	HarvestFile(id, path string) ([]byte, error)
-	DeleteHarvest(id string) error
+	// Harvests lists those held on node; empty is this node.
+	Harvests(ctx context.Context, node string) ([]harvest.Manifest, error)
+	// A harvest on another node has an id qualified by it, as "node:id".
+	Harvest(ctx context.Context, id string) (harvest.Manifest, error)
+	HarvestFile(ctx context.Context, id, path string) ([]byte, error)
+	DeleteHarvest(ctx context.Context, id string) error
 }
 
 // WithTemp serves the temporary-agent routes.
@@ -110,7 +117,7 @@ func (s *Server) spawn(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "a spawn request names a recipe")
 		return
 	}
-	name, err := s.temp.Spawn(r.Context(), req.Recipe, req.Name, req.Channel)
+	name, err := s.temp.Spawn(r.Context(), req.Recipe, req.Name, req.Channel, req.Node)
 	if err != nil {
 		if name != "" {
 			// Created but not ready: the caller needs the name to inspect or kill it.
@@ -140,8 +147,8 @@ func (s *Server) killTemp(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, res)
 }
 
-func (s *Server) listHarvests(w http.ResponseWriter, _ *http.Request) {
-	hs, err := s.temp.Harvests()
+func (s *Server) listHarvests(w http.ResponseWriter, r *http.Request) {
+	hs, err := s.temp.Harvests(r.Context(), r.URL.Query().Get("node"))
 	if err != nil {
 		writeError(w, tempStatus(err), err.Error())
 		return
@@ -153,7 +160,7 @@ func (s *Server) listHarvests(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) getHarvest(w http.ResponseWriter, r *http.Request) {
-	m, err := s.temp.Harvest(r.PathValue("id"))
+	m, err := s.temp.Harvest(r.Context(), r.PathValue("id"))
 	if err != nil {
 		writeError(w, tempStatus(err), err.Error())
 		return
@@ -162,7 +169,7 @@ func (s *Server) getHarvest(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getHarvestFile(w http.ResponseWriter, r *http.Request) {
-	data, err := s.temp.HarvestFile(r.PathValue("id"), r.URL.Query().Get("path"))
+	data, err := s.temp.HarvestFile(r.Context(), r.PathValue("id"), r.URL.Query().Get("path"))
 	if err != nil {
 		writeError(w, tempStatus(err), err.Error())
 		return
@@ -173,7 +180,7 @@ func (s *Server) getHarvestFile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteHarvest(w http.ResponseWriter, r *http.Request) {
-	if err := s.temp.DeleteHarvest(r.PathValue("id")); err != nil {
+	if err := s.temp.DeleteHarvest(r.Context(), r.PathValue("id")); err != nil {
 		writeError(w, tempStatus(err), err.Error())
 		return
 	}
@@ -218,8 +225,8 @@ func (c *Client) do(ctx context.Context, method, path string, body any, want int
 // Spawn asks the node for a temporary agent and returns its name. When the
 // agent was created but did not become ready, the name comes back with the
 // error, so it can be inspected or killed.
-func (c *Client) Spawn(ctx context.Context, recipe, name, channel string) (string, error) {
-	b, err := json.Marshal(SpawnRequestJSON{Recipe: recipe, Name: name, Channel: channel})
+func (c *Client) Spawn(ctx context.Context, recipe, name, channel, node string) (string, error) {
+	b, err := json.Marshal(SpawnRequestJSON{Recipe: recipe, Name: name, Channel: channel, Node: node})
 	if err != nil {
 		return "", err
 	}
@@ -261,10 +268,14 @@ func (c *Client) Agents(ctx context.Context) ([]AgentJSON, error) {
 	return out, err
 }
 
-// Harvests lists the harvests.
-func (c *Client) Harvests(ctx context.Context) ([]harvest.Manifest, error) {
+// Harvests lists the harvests on node, or on the node asked when node is empty.
+func (c *Client) Harvests(ctx context.Context, node string) ([]harvest.Manifest, error) {
 	var out []harvest.Manifest
-	err := c.do(ctx, http.MethodGet, "/v1/harvests", nil, http.StatusOK, &out)
+	path := "/v1/harvests"
+	if node != "" {
+		path += "?node=" + url.QueryEscape(node)
+	}
+	err := c.do(ctx, http.MethodGet, path, nil, http.StatusOK, &out)
 	return out, err
 }
 

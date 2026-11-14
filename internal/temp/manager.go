@@ -127,12 +127,22 @@ type SpawnRequest struct {
 	// registered channel, and is an error when there are several.
 	Channel   string
 	Requester access.Subject
+	// Authorized says the request was already authorized by whoever sent it, so it is
+	// not decided again here. The master sets it when it commands a node: the master
+	// has checked the access seam and the gate for the real requester, which it names
+	// in Requester for the record. Nothing that takes a request from a caller sets it.
+	Authorized bool
 }
 
 // KillRequest asks for a temporary agent to be torn down.
 type KillRequest struct {
 	Name      string
 	Requester access.Subject
+	// Authorized is as for SpawnRequest.
+	Authorized bool
+	// NoReport leaves the report of what was harvested to the caller, which has the
+	// result: a node commanded by the master does not post it to its own operator.
+	NoReport bool
 }
 
 // KillResult is what a kill produced.
@@ -213,7 +223,7 @@ func (m *Manager) Spawn(ctx context.Context, req SpawnRequest) (core.Profile, er
 	}
 	rec, ok := set.Get(req.Recipe)
 	if !ok {
-		if req.Requester.Kind != access.KindOperator {
+		if !req.Authorized && req.Requester.Kind != access.KindOperator {
 			// Which recipes exist is not for a caller to probe: to anyone but
 			// the operator an unknown recipe is the same refusal as one they
 			// may not use.
@@ -234,9 +244,11 @@ func (m *Manager) Spawn(ctx context.Context, req SpawnRequest) (core.Profile, er
 	if slices.Contains(core.ReservedNames, name) {
 		return core.Profile{}, fmt.Errorf("%w: agent name %q is reserved", ErrBadRequest, name)
 	}
-	if err := m.authorize(ctx, req.Requester, access.Spawn, access.Resource{Agent: name, Tags: rec.Profile.Tags},
-		map[string]string{"recipe": rec.Name, "agent": name}); err != nil {
-		return core.Profile{}, err
+	if !req.Authorized {
+		if err := m.authorize(ctx, req.Requester, access.Spawn, access.Resource{Agent: name, Tags: rec.Profile.Tags},
+			map[string]string{"recipe": rec.Name, "agent": name}); err != nil {
+			return core.Profile{}, err
+		}
 	}
 
 	channel, err := m.pickChannel(req.Channel)
@@ -337,9 +349,11 @@ func (m *Manager) Kill(ctx context.Context, req KillRequest) (KillResult, error)
 	if !ok {
 		return KillResult{}, ErrNotFound
 	}
-	if err := m.authorize(ctx, req.Requester, access.Kill, access.Resource{Agent: view.Profile.Name, Tags: view.Profile.Tags},
-		map[string]string{"agent": view.Profile.Name}); err != nil {
-		return KillResult{}, err
+	if !req.Authorized {
+		if err := m.authorize(ctx, req.Requester, access.Kill, access.Resource{Agent: view.Profile.Name, Tags: view.Profile.Tags},
+			map[string]string{"agent": view.Profile.Name}); err != nil {
+			return KillResult{}, err
+		}
 	}
 
 	if err := m.Plane.Kill(ctx, view.Profile); err != nil {
@@ -369,7 +383,7 @@ func (m *Manager) Kill(ctx context.Context, req KillRequest) (KillResult, error)
 		return res, err
 	}
 
-	if m.Surface != nil {
+	if m.Surface != nil && !req.NoReport {
 		text := manifest.Summary()
 		if res.WorkdirKept {
 			text += "\nthe workdir was kept at " + m.Workdirs.Dir(req.Name)

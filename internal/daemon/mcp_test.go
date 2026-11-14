@@ -38,7 +38,7 @@ func mcpSession(t *testing.T, n *node, tok string) *mcp.ClientSession {
 func TestTheMCPEndpointListsTheNodesAgentsAndRecipesToTheOperator(t *testing.T) {
 	n := startTempNode(t, map[string]string{"fake": goodRecipe("fake")}, config.Temp{})
 	ctx := context.Background()
-	_, err := n.client.Spawn(ctx, "fake", "tmp-a", "")
+	_, err := n.client.Spawn(ctx, "fake", "tmp-a", "", "")
 	require.NoError(t, err)
 
 	cs := mcpSession(t, n, token)

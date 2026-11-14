@@ -121,12 +121,12 @@ func TestATemporaryAgentCannotTakeANameAnotherNodeHolds(t *testing.T) {
 	f.startWith(t, "n-b", map[string]string{"bee": ""}, nil)
 	directoryHas(t, a, "n-b", 1)
 
-	_, err := a.client.Spawn(context.Background(), "fake", "bee", "")
+	_, err := a.client.Spawn(context.Background(), "fake", "bee", "", "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "400")
 	assert.Contains(t, err.Error(), "held by an agent on another node")
 
-	name, err := a.client.Spawn(context.Background(), "fake", "tmp-ok", "")
+	name, err := a.client.Spawn(context.Background(), "fake", "tmp-ok", "", "")
 	require.NoError(t, err)
 	assert.Equal(t, "tmp-ok", name)
 }

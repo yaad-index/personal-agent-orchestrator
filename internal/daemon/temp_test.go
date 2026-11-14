@@ -78,7 +78,7 @@ func TestATemporaryAgentIsSpawnedUsedAndKilledWithItsOutputHarvested(t *testing.
 	n := startTempNode(t, map[string]string{"fake": goodRecipe("fake")}, config.Temp{})
 	ctx := context.Background()
 
-	name, err := n.client.Spawn(ctx, "fake", "tmp-a", "")
+	name, err := n.client.Spawn(ctx, "fake", "tmp-a", "", "")
 	require.NoError(t, err)
 	assert.Equal(t, "tmp-a", name)
 
@@ -134,7 +134,7 @@ func TestATemporaryAgentIsSpawnedUsedAndKilledWithItsOutputHarvested(t *testing.
 	require.NoError(t, err)
 	assert.Equal(t, "tmp-a", m.Agent)
 	assert.Equal(t, []string{"temp"}, m.Tags)
-	hs, err := n.client.Harvests(ctx)
+	hs, err := n.client.Harvests(ctx, "")
 	require.NoError(t, err)
 	require.Len(t, hs, 1)
 	require.NoError(t, n.client.DeleteHarvest(ctx, res.Harvest.ID))
@@ -146,7 +146,7 @@ func TestAKilledNameIsSpawnedAgainAndFollowedAfresh(t *testing.T) {
 	n := startTempNode(t, map[string]string{"fake": goodRecipe("fake")}, config.Temp{})
 	ctx := context.Background()
 
-	_, err := n.client.Spawn(ctx, "fake", "tmp-a", "")
+	_, err := n.client.Spawn(ctx, "fake", "tmp-a", "", "")
 	require.NoError(t, err)
 	_, err = n.client.Post(ctx, "human", "one", "name", "tmp-a")
 	require.NoError(t, err)
@@ -155,7 +155,7 @@ func TestAKilledNameIsSpawnedAgainAndFollowedAfresh(t *testing.T) {
 	require.NoError(t, err)
 	_ = n.next(t) // the harvest report
 
-	_, err = n.client.Spawn(ctx, "fake", "tmp-a", "")
+	_, err = n.client.Spawn(ctx, "fake", "tmp-a", "", "")
 	require.NoError(t, err)
 	_, err = n.client.Post(ctx, "human", "two", "name", "tmp-a")
 	require.NoError(t, err)
@@ -166,7 +166,7 @@ func TestAKilledNameIsSpawnedAgainAndFollowedAfresh(t *testing.T) {
 func TestOutputCountsAsActivityForTheIdleFlag(t *testing.T) {
 	n := startTempNode(t, map[string]string{"fake": goodRecipe("fake")}, config.Temp{UnusedAfter: time.Hour, IdleAfter: time.Second})
 	ctx := context.Background()
-	_, err := n.client.Spawn(ctx, "fake", "tmp-a", "")
+	_, err := n.client.Spawn(ctx, "fake", "tmp-a", "", "")
 	require.NoError(t, err)
 	_, err = n.client.Post(ctx, "human", "hi", "name", "tmp-a")
 	require.NoError(t, err)
@@ -196,7 +196,7 @@ func TestOutputCountsAsActivityForTheIdleFlag(t *testing.T) {
 
 func TestANeverUsedAgentIsFlaggedUnusedAndKeptAlive(t *testing.T) {
 	n := startTempNode(t, map[string]string{"fake": goodRecipe("fake")}, config.Temp{UnusedAfter: 300 * time.Millisecond, IdleAfter: time.Hour})
-	_, err := n.client.Spawn(context.Background(), "fake", "tmp-a", "")
+	_, err := n.client.Spawn(context.Background(), "fake", "tmp-a", "", "")
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {
 		a, _ := agentByName(t, n, "tmp-a")
@@ -217,21 +217,21 @@ func TestSpawnAndKillErrorsHaveTheRightStatus(t *testing.T) {
 		assert.True(t, strings.HasPrefix(err.Error(), want), "got %q, want a %s", err, want)
 	}
 
-	_, err := n.client.Spawn(ctx, "nope", "", "")
+	_, err := n.client.Spawn(ctx, "nope", "", "", "")
 	status(err, "404")
-	_, err = n.client.Spawn(ctx, "fake", "Bad Name", "")
+	_, err = n.client.Spawn(ctx, "fake", "Bad Name", "", "")
 	status(err, "400")
-	_, err = n.client.Spawn(ctx, "fake", "tmp-a", "no-such-channel")
+	_, err = n.client.Spawn(ctx, "fake", "tmp-a", "no-such-channel", "")
 	status(err, "400")
-	_, err = n.client.Spawn(ctx, "badformat", "tmp-b", "")
+	_, err = n.client.Spawn(ctx, "badformat", "tmp-b", "", "")
 	status(err, "400")
 	assert.NoDirExists(t, filepath.Join(n.stateDir, "temp", "tmp-b"), "nothing was left behind")
-	_, err = n.client.Spawn(ctx, "fake", "boss", "")
+	_, err = n.client.Spawn(ctx, "fake", "boss", "", "")
 	status(err, "409")
 
-	_, err = n.client.Spawn(ctx, "fake", "tmp-a", "")
+	_, err = n.client.Spawn(ctx, "fake", "tmp-a", "", "")
 	require.NoError(t, err)
-	_, err = n.client.Spawn(ctx, "fake", "tmp-a", "")
+	_, err = n.client.Spawn(ctx, "fake", "tmp-a", "", "")
 	status(err, "409")
 
 	_, err = n.client.Kill(ctx, "boss")
@@ -248,7 +248,7 @@ func TestAnAgentThatNeverBecomesReadyIsReportedAndKillable(t *testing.T) {
 	n := startTempNode(t, map[string]string{"stuck": tempRecipe("@@SCRIPT@@", "stuck", "NEVER-MATCHES", "claude-code")}, config.Temp{})
 	ctx := context.Background()
 
-	name, err := n.client.Spawn(ctx, "stuck", "tmp-s", "")
+	name, err := n.client.Spawn(ctx, "stuck", "tmp-s", "", "")
 	require.Error(t, err)
 	assert.True(t, strings.HasPrefix(err.Error(), "502"), err.Error())
 	assert.Equal(t, "tmp-s", name, "the name comes back so it can be inspected or killed")
@@ -287,7 +287,7 @@ func TestTheTempRoutesNeedTheToken(t *testing.T) {
 func TestATempAgentSpeaksOnTheChannelItWasBoundTo(t *testing.T) {
 	n := startTempNode(t, map[string]string{"fake": goodRecipe("fake")}, config.Temp{})
 	ctx := context.Background()
-	_, err := n.client.Spawn(ctx, "fake", "tmp-a", "local")
+	_, err := n.client.Spawn(ctx, "fake", "tmp-a", "local", "")
 	require.NoError(t, err)
 	_, err = n.client.Post(ctx, "human", "x", "name", "tmp-a")
 	require.NoError(t, err)

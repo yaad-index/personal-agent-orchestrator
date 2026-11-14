@@ -25,17 +25,21 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Node_Launch_FullMethodName      = "/pao.mesh.v1.Node/Launch"
-	Node_Kill_FullMethodName        = "/pao.mesh.v1.Node/Kill"
-	Node_Restart_FullMethodName     = "/pao.mesh.v1.Node/Restart"
-	Node_Spawn_FullMethodName       = "/pao.mesh.v1.Node/Spawn"
-	Node_KillTemp_FullMethodName    = "/pao.mesh.v1.Node/KillTemp"
-	Node_Deliver_FullMethodName     = "/pao.mesh.v1.Node/Deliver"
-	Node_SetStream_FullMethodName   = "/pao.mesh.v1.Node/SetStream"
-	Node_View_FullMethodName        = "/pao.mesh.v1.Node/View"
-	Node_Decide_FullMethodName      = "/pao.mesh.v1.Node/Decide"
-	Node_QueryPosted_FullMethodName = "/pao.mesh.v1.Node/QueryPosted"
-	Node_PushConfig_FullMethodName  = "/pao.mesh.v1.Node/PushConfig"
+	Node_Launch_FullMethodName          = "/pao.mesh.v1.Node/Launch"
+	Node_Kill_FullMethodName            = "/pao.mesh.v1.Node/Kill"
+	Node_Restart_FullMethodName         = "/pao.mesh.v1.Node/Restart"
+	Node_Spawn_FullMethodName           = "/pao.mesh.v1.Node/Spawn"
+	Node_KillTemp_FullMethodName        = "/pao.mesh.v1.Node/KillTemp"
+	Node_Deliver_FullMethodName         = "/pao.mesh.v1.Node/Deliver"
+	Node_SetStream_FullMethodName       = "/pao.mesh.v1.Node/SetStream"
+	Node_View_FullMethodName            = "/pao.mesh.v1.Node/View"
+	Node_Decide_FullMethodName          = "/pao.mesh.v1.Node/Decide"
+	Node_QueryPosted_FullMethodName     = "/pao.mesh.v1.Node/QueryPosted"
+	Node_PushConfig_FullMethodName      = "/pao.mesh.v1.Node/PushConfig"
+	Node_ListHarvests_FullMethodName    = "/pao.mesh.v1.Node/ListHarvests"
+	Node_GetHarvest_FullMethodName      = "/pao.mesh.v1.Node/GetHarvest"
+	Node_ReadHarvestFile_FullMethodName = "/pao.mesh.v1.Node/ReadHarvestFile"
+	Node_DeleteHarvest_FullMethodName   = "/pao.mesh.v1.Node/DeleteHarvest"
 )
 
 // NodeClient is the client API for Node service.
@@ -61,6 +65,12 @@ type NodeClient interface {
 	QueryPosted(ctx context.Context, in *PostedQuery, opts ...grpc.CallOption) (*PostedReply, error)
 	// A new version of the mesh document (ADR-0017 point 9).
 	PushConfig(ctx context.Context, in *ConfigBundle, opts ...grpc.CallOption) (*ConfigAck, error)
+	// What a temporary agent's kill left on this node (ADR-0006 point 4): a harvest
+	// stays on the node that made it, and is listed, read and deleted there.
+	ListHarvests(ctx context.Context, in *ListHarvestsRequest, opts ...grpc.CallOption) (*ListHarvestsReply, error)
+	GetHarvest(ctx context.Context, in *HarvestRef, opts ...grpc.CallOption) (*HarvestManifest, error)
+	ReadHarvestFile(ctx context.Context, in *HarvestFileRef, opts ...grpc.CallOption) (*HarvestFile, error)
+	DeleteHarvest(ctx context.Context, in *HarvestRef, opts ...grpc.CallOption) (*Result, error)
 }
 
 type nodeClient struct {
@@ -181,6 +191,46 @@ func (c *nodeClient) PushConfig(ctx context.Context, in *ConfigBundle, opts ...g
 	return out, nil
 }
 
+func (c *nodeClient) ListHarvests(ctx context.Context, in *ListHarvestsRequest, opts ...grpc.CallOption) (*ListHarvestsReply, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListHarvestsReply)
+	err := c.cc.Invoke(ctx, Node_ListHarvests_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeClient) GetHarvest(ctx context.Context, in *HarvestRef, opts ...grpc.CallOption) (*HarvestManifest, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(HarvestManifest)
+	err := c.cc.Invoke(ctx, Node_GetHarvest_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeClient) ReadHarvestFile(ctx context.Context, in *HarvestFileRef, opts ...grpc.CallOption) (*HarvestFile, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(HarvestFile)
+	err := c.cc.Invoke(ctx, Node_ReadHarvestFile_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeClient) DeleteHarvest(ctx context.Context, in *HarvestRef, opts ...grpc.CallOption) (*Result, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Result)
+	err := c.cc.Invoke(ctx, Node_DeleteHarvest_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // NodeServer is the server API for Node service.
 // All implementations must embed UnimplementedNodeServer
 // for forward compatibility.
@@ -204,6 +254,12 @@ type NodeServer interface {
 	QueryPosted(context.Context, *PostedQuery) (*PostedReply, error)
 	// A new version of the mesh document (ADR-0017 point 9).
 	PushConfig(context.Context, *ConfigBundle) (*ConfigAck, error)
+	// What a temporary agent's kill left on this node (ADR-0006 point 4): a harvest
+	// stays on the node that made it, and is listed, read and deleted there.
+	ListHarvests(context.Context, *ListHarvestsRequest) (*ListHarvestsReply, error)
+	GetHarvest(context.Context, *HarvestRef) (*HarvestManifest, error)
+	ReadHarvestFile(context.Context, *HarvestFileRef) (*HarvestFile, error)
+	DeleteHarvest(context.Context, *HarvestRef) (*Result, error)
 	mustEmbedUnimplementedNodeServer()
 }
 
@@ -246,6 +302,18 @@ func (UnimplementedNodeServer) QueryPosted(context.Context, *PostedQuery) (*Post
 }
 func (UnimplementedNodeServer) PushConfig(context.Context, *ConfigBundle) (*ConfigAck, error) {
 	return nil, status.Error(codes.Unimplemented, "method PushConfig not implemented")
+}
+func (UnimplementedNodeServer) ListHarvests(context.Context, *ListHarvestsRequest) (*ListHarvestsReply, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListHarvests not implemented")
+}
+func (UnimplementedNodeServer) GetHarvest(context.Context, *HarvestRef) (*HarvestManifest, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetHarvest not implemented")
+}
+func (UnimplementedNodeServer) ReadHarvestFile(context.Context, *HarvestFileRef) (*HarvestFile, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReadHarvestFile not implemented")
+}
+func (UnimplementedNodeServer) DeleteHarvest(context.Context, *HarvestRef) (*Result, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteHarvest not implemented")
 }
 func (UnimplementedNodeServer) mustEmbedUnimplementedNodeServer() {}
 func (UnimplementedNodeServer) testEmbeddedByValue()              {}
@@ -466,6 +534,78 @@ func _Node_PushConfig_Handler(srv interface{}, ctx context.Context, dec func(int
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Node_ListHarvests_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListHarvestsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServer).ListHarvests(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Node_ListHarvests_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServer).ListHarvests(ctx, req.(*ListHarvestsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Node_GetHarvest_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(HarvestRef)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServer).GetHarvest(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Node_GetHarvest_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServer).GetHarvest(ctx, req.(*HarvestRef))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Node_ReadHarvestFile_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(HarvestFileRef)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServer).ReadHarvestFile(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Node_ReadHarvestFile_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServer).ReadHarvestFile(ctx, req.(*HarvestFileRef))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Node_DeleteHarvest_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(HarvestRef)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServer).DeleteHarvest(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Node_DeleteHarvest_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServer).DeleteHarvest(ctx, req.(*HarvestRef))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Node_ServiceDesc is the grpc.ServiceDesc for Node service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -516,6 +656,22 @@ var Node_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "PushConfig",
 			Handler:    _Node_PushConfig_Handler,
+		},
+		{
+			MethodName: "ListHarvests",
+			Handler:    _Node_ListHarvests_Handler,
+		},
+		{
+			MethodName: "GetHarvest",
+			Handler:    _Node_GetHarvest_Handler,
+		},
+		{
+			MethodName: "ReadHarvestFile",
+			Handler:    _Node_ReadHarvestFile_Handler,
+		},
+		{
+			MethodName: "DeleteHarvest",
+			Handler:    _Node_DeleteHarvest_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

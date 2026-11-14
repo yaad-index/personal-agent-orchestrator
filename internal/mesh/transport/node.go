@@ -310,6 +310,12 @@ func (n *Node) streamInterceptor(srv any, ss grpc.ServerStream, info *grpc.Strea
 
 // --- dialing ---
 
+// Knows says whether id is a node of the mesh other than this one.
+func (n *Node) Knows(id string) bool {
+	_, ok := n.cfg.Doc.Entry(id)
+	return ok && id != n.cfg.Self.NodeID
+}
+
 // Dial returns the connection to a peer, made if there is none yet. Every call on
 // it carries this node's epoch, and a deadline if the caller set none.
 func (n *Node) Dial(id string) (*grpc.ClientConn, error) {
