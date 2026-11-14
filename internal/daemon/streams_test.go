@@ -275,3 +275,32 @@ func TestTheOperatorsStreamIsTheOperatorsViewAndAViewerMismatchIsAConflict(t *te
 	require.Error(t, err)
 	assert.ErrorIs(t, err, local.ErrConflict)
 }
+
+func TestAResumeThatFailsKeepsWhatItDidNotSendAndStaysPaused(t *testing.T) {
+	r := newStreamRig(t)
+	require.NoError(t, r.sc.SetStream("bee", "chat", 0, "alice"))
+	require.NoError(t, r.sc.Pause("bee", "alice"))
+	for _, m := range []string{"one", "two", "three"} {
+		r.say(t, m)
+	}
+
+	var sent []string
+	r.sc.send = func(ctx context.Context, agent string, m core.Message) error {
+		if m.Text == "two" {
+			r.say(t, "four") // arrives while the batch is going out
+			return fmt.Errorf("the channel is down")
+		}
+		sent = append(sent, m.Text)
+		return nil
+	}
+	err := r.sc.Resume(context.Background(), "bee", "alice")
+	require.Error(t, err)
+	assert.Equal(t, []string{"one"}, sent)
+
+	r.sc.send = func(ctx context.Context, agent string, m core.Message) error {
+		sent = append(sent, m.Text)
+		return nil
+	}
+	require.NoError(t, r.sc.Resume(context.Background(), "bee", "alice"), "still paused, so a retry works")
+	assert.Equal(t, []string{"one", "two", "three", "four"}, sent, "nothing lost, in the agent's order")
+}

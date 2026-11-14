@@ -214,11 +214,29 @@ func (c *streamControl) Resume(ctx context.Context, agent, viewer string) error 
 		batch := w.held
 		w.held = nil
 		c.views.mu.Unlock()
-		for _, m := range batch {
+		for i, m := range batch {
 			if err := c.send(ctx, agent, m); err != nil {
+				c.putBack(agent, batch[i:])
 				return err
 			}
 		}
+	}
+}
+
+// putBack returns what a failed resume did not send to the front of what the view
+// holds, so a retry sends it, in order, before anything that arrived since. The view
+// stays paused.
+func (c *streamControl) putBack(agent string, unsent []core.Message) {
+	c.views.mu.Lock()
+	defer c.views.mu.Unlock()
+	w := c.views.m[agent]
+	if w == nil {
+		return
+	}
+	w.held = append(append([]core.Message(nil), unsent...), w.held...)
+	if over := len(w.held) - maxHeld; over > 0 {
+		w.held = w.held[over:]
+		w.dropped += over
 	}
 }
 
