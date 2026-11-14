@@ -149,7 +149,11 @@ type Message struct {
 	Kind   MessageKind
 	Text   string
 	// Reply is the ID of the message this one answers, if any.
-	Reply       string
+	Reply string
+	// ReplyQuote is set only on the copy of a message that goes to an agent on
+	// another node: a snippet of the message being answered, which that node
+	// resolves in the agent's own scope. It is never stored.
+	ReplyQuote  string
 	Attachments []Attachment
 	Reactions   []Reaction
 }

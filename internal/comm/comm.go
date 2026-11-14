@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
@@ -70,11 +71,47 @@ type Layer struct {
 
 	mu    sync.RWMutex
 	bound map[string]string // agent name to the channel its output goes to
+
+	// self is this node's id in a mesh, empty outside one; known says whether an id
+	// is a node of the mesh.
+	self  string
+	known func(string) bool
 }
 
 // New returns a Layer.
 func New(store *msgstore.Store, router Router) *Layer {
 	return &Layer{store: store, router: router, pre: make(map[string]Preprocessor), bound: make(map[string]string)}
+}
+
+// SetNode makes the layer part of a mesh. Message ids shown to a human are then
+// qualified by the node (Qualify), and a reply may name a message by a qualified id.
+// Call it before the layer starts receiving.
+func (l *Layer) SetNode(self string, known func(string) bool) {
+	l.self, l.known = self, known
+}
+
+// Qualify names a message id by this node, so an id shown to a human or logged
+// anywhere in the mesh says which node holds the message (ADR-0017 point 10).
+// Outside a mesh it is the id unchanged.
+func (l *Layer) Qualify(id string) string {
+	if l.self == "" || id == "" {
+		return id
+	}
+	return l.self + ":" + id
+}
+
+// splitID reads a message id a human named: unqualified, or "<node>:<id>". An id
+// with a colon whose node is neither this one nor in the mesh is not a message of
+// any node; ok is false for it.
+func (l *Layer) splitID(id string) (node, rest string, ok bool) {
+	n, r, found := strings.Cut(id, ":")
+	switch {
+	case !found:
+		return "", id, true
+	case l.self != "" && (n == l.self || (l.known != nil && l.known(n))):
+		return n, r, true
+	}
+	return "", id, false
 }
 
 // Preprocess registers the preprocessor for a source kind. Call it before the
@@ -171,7 +208,7 @@ func (l *Layer) Receive(ctx context.Context, in Inbound) (Delivery, error) {
 		scopes[i] = t.Name
 	}
 
-	reply, err := l.resolveReply(in, scopes)
+	reply, forwards, err := l.resolveReply(in, targets)
 	if err != nil {
 		return Delivery{}, err
 	}
@@ -187,36 +224,77 @@ func (l *Layer) Receive(ctx context.Context, in Inbound) (Delivery, error) {
 		return Delivery{}, err
 	}
 
-	return Delivery{Message: msg, Results: l.router.Deliver(ctx, targets, msg)}, nil
+	if len(forwards) == 0 {
+		return Delivery{Message: msg, Results: l.router.Deliver(ctx, targets, msg)}, nil
+	}
+	// An agent on another node is given the reference its own node resolves, not the
+	// one stored here.
+	var results []route.Result
+	for _, t := range targets {
+		m := msg
+		if f, ok := forwards[t.Name]; ok {
+			m.Reply, m.ReplyQuote = f.ref, f.quote
+		}
+		results = append(results, l.router.Deliver(ctx, []core.Profile{t}, m)...)
+	}
+	return Delivery{Message: msg, Results: results}, nil
 }
 
-// resolveReply turns a reply reference into a message id: an id must be in
-// scope for every addressed agent; a quote is resolved within the one addressed
-// agent's scope, and a quote with several addressed agents is refused, not
-// guessed.
-func (l *Layer) resolveReply(in Inbound, scopes []string) (string, error) {
+// forward is the reply reference sent to an agent on another node, in that node's
+// own terms: the id of a message it holds, or a snippet for it to resolve.
+type forward struct{ ref, quote string }
+
+// resolveReply turns a reply reference into the message id stored with the
+// message, and for an agent on another node the reference that node resolves. An id
+// must be in scope for every addressed agent; a quote is resolved within the one
+// addressed agent's scope, and a quote with several addressed agents is refused,
+// not guessed. A message of another node is never in the scope of an agent here,
+// and an agent there can only be answered with a message its node holds, so a
+// reference that does not fit is not found, in the same words as an absent one.
+func (l *Layer) resolveReply(in Inbound, targets []core.Profile) (string, map[string]forward, error) {
+	forwards := map[string]forward{}
 	switch {
 	case in.Reply != "":
-		// The referenced message must be in the scope of every addressed agent.
-		// Out of scope and absent are the same answer (not found), so a
-		// reference cannot be used to probe for messages an agent never saw.
-		for _, agent := range scopes {
-			if _, err := l.store.GetScoped(agent, in.Reply); err != nil {
-				return "", fmt.Errorf("reply %q: %w", in.Reply, err)
+		node, id, ok := l.splitID(in.Reply)
+		if !ok {
+			return "", nil, fmt.Errorf("reply %q: %w", in.Reply, msgstore.ErrNotFound)
+		}
+		stored := in.Reply
+		for _, t := range targets {
+			switch {
+			case t.Node != "":
+				if node != t.Node {
+					return "", nil, fmt.Errorf("reply %q: %w", in.Reply, msgstore.ErrNotFound)
+				}
+				forwards[t.Name] = forward{ref: id}
+			default:
+				if node != "" && node != l.self {
+					return "", nil, fmt.Errorf("reply %q: %w", in.Reply, msgstore.ErrNotFound)
+				}
+				// Out of scope and absent are the same answer (not found), so a
+				// reference cannot be used to probe for messages an agent never saw.
+				if _, err := l.store.GetScoped(t.Name, id); err != nil {
+					return "", nil, fmt.Errorf("reply %q: %w", in.Reply, err)
+				}
+				stored = id
 			}
 		}
-		return in.Reply, nil
+		return stored, forwards, nil
 	case in.ReplyQuote != "":
-		if len(scopes) != 1 {
-			return "", errors.New("a quoted reply needs exactly one addressed agent")
+		if len(targets) != 1 {
+			return "", nil, errors.New("a quoted reply needs exactly one addressed agent")
 		}
-		m, err := l.store.Resolve(scopes[0], in.ReplyQuote)
+		if t := targets[0]; t.Node != "" {
+			forwards[t.Name] = forward{quote: in.ReplyQuote}
+			return "", forwards, nil
+		}
+		m, err := l.store.Resolve(targets[0].Name, in.ReplyQuote)
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
-		return m.ID, nil
+		return m.ID, nil, nil
 	}
-	return "", nil
+	return "", nil, nil
 }
 
 // Send is the single conduit to the human: it stores m in from's scope (so the
@@ -303,7 +381,13 @@ func (l *Layer) Fetch(agent, id string) (core.Message, error) {
 // React records the human's reaction on a message id. The human sees every
 // message, so it is not limited to an agent's scope; an agent reacts through
 // ReactAs.
-func (l *Layer) React(id, by, emoji string) error { return l.store.React(id, by, emoji) }
+func (l *Layer) React(id, by, emoji string) error {
+	node, rest, ok := l.splitID(id)
+	if !ok || (node != "" && node != l.self) {
+		return fmt.Errorf("reaction to %q: %w", id, msgstore.ErrNotFound)
+	}
+	return l.store.React(rest, by, emoji)
+}
 
 // ReactAs records an agent's reaction, only on a message in the agent's scope.
 // A message outside it is reported as not found.
