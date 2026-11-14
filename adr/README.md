@@ -25,5 +25,6 @@ A superseded ADR is never edited or deleted: it keeps a **Superseded-by** header
 
 ## Planned (one ADR each, broad spine first then detail)
 - **0017** — Mesh transport + the cross-node gaps (gRPC over mutual TLS, pinned node keys; extends 0013)
+- **0018** — On-demand remote output (Node.Watch; master pulls a remote agent's rendered output until a shared channel exists; extends 0017)
 
 The audit log named as a foreseen role in ADR-0002 is deliberately not planned; it would be added later only if a need arises.
