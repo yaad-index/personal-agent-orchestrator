@@ -162,11 +162,15 @@ func (a tempAPI) remote(id string) (node, rest string, ok bool) {
 }
 
 func (a tempAPI) Harvests(ctx context.Context, node string) ([]harvest.Manifest, error) {
-	if node != "" && (a.cmds == nil || a.cmds.node.Knows(node)) {
-		if a.cmds == nil {
-			return nil, translated{local.ErrBadRequest, errors.New("this node is not in a mesh")}
+	if node != "" {
+		switch {
+		case a.cmds == nil:
+			return nil, translated{local.ErrBadRequest, errors.New("this node is not in a mesh, so it has no other node to list the harvests of")}
+		case a.cmds.node.Knows(node):
+			return a.cmds.Harvests(ctx, node)
+		case node != a.cmds.self:
+			return nil, translated{local.ErrBadRequest, fmt.Errorf("no node %q in the mesh", node)}
 		}
-		return a.cmds.Harvests(ctx, node)
 	}
 	ms, err := a.store.List(access.Operator)
 	return ms, translate(err)

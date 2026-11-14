@@ -209,3 +209,24 @@ func TestAnAuthorizedCommandIsNotDecidedAgainAndTheKillIsNotReportedOnTheNode(t 
 	case <-time.After(time.Second):
 	}
 }
+
+func TestListingTheHarvestsOfANodeThatIsNotInTheMeshIsRefused(t *testing.T) {
+	_, a, b := meshWithRecipes(t)
+	ctx := context.Background()
+
+	_, err := a.client.Harvests(ctx, "n-zzz")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "400")
+	assert.Contains(t, err.Error(), "no node")
+
+	own, err := a.client.Harvests(ctx, "n-a")
+	require.NoError(t, err, "naming this node is its own list")
+	assert.Empty(t, own)
+	_, err = b.client.Harvests(ctx, "n-zzz")
+	require.Error(t, err)
+
+	n := startTempNode(t, map[string]string{"fake": goodRecipe("fake")}, config.Temp{})
+	_, err = n.client.Harvests(ctx, "n-b")
+	require.Error(t, err, "a node outside a mesh has no other node")
+	assert.Contains(t, err.Error(), "400")
+}
