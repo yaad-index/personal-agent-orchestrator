@@ -223,4 +223,6 @@ func TestACommandOnAnUnknownOrTemporaryAgentIsRefusedWithAReason(t *testing.T) {
 	assert.Contains(t, err.Error(), "KillTemp", "a temporary agent is killed only the way that harvests it")
 	_, err = node.Restart(ctx, &pb.AgentRef{RequestId: "r", Agent: "tmp-x"})
 	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
+	_, err = node.Launch(ctx, &pb.AgentRef{RequestId: "l", Agent: "tmp-x"})
+	assert.Equal(t, codes.FailedPrecondition, status.Code(err), "a temporary agent is started by spawning it")
 }

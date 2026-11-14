@@ -288,3 +288,38 @@ func (c meshCommands) View(ctx context.Context, nodeID, agent, action string, le
 	_, err = cl.View(ctx, &pb.ViewRequest{RequestId: id, Viewer: operatorViewer, Agent: agent, Action: act, Level: int32(level), Entries: int32(entries)})
 	return fromStatus(err)
 }
+
+// Lifecycle starts, stops or restarts a configured agent on the node that holds it.
+// A start or restart that left the agent not ready is the not-ready error, as for a
+// spawn.
+func (c meshCommands) Lifecycle(ctx context.Context, nodeID, agent, action string) error {
+	cl, err := c.client(nodeID)
+	if err != nil {
+		return err
+	}
+	id, err := newRequestID()
+	if err != nil {
+		return err
+	}
+	timeout := killCallTimeout
+	call := cl.Kill
+	switch action {
+	case "start":
+		timeout, call = spawnCallTimeout, cl.Launch
+	case "restart":
+		timeout, call = spawnCallTimeout, cl.Restart
+	case "stop":
+	default:
+		return translated{local.ErrBadRequest, fmt.Errorf("an agent action is start, stop or restart, not %q", action)}
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	res, err := call(ctx, &pb.AgentRef{RequestId: id, Agent: agent, Requester: operatorViewer})
+	if err != nil {
+		return fromStatus(err)
+	}
+	if res.GetNotReady() != "" {
+		return translated{local.ErrNotReady, errors.New(res.GetNotReady())}
+	}
+	return nil
+}
