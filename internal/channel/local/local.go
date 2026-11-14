@@ -51,6 +51,7 @@ type Server struct {
 	decider    Decider
 	temp       TempAPI
 	streams    StreamAPI
+	watch      WatchAPI
 	lifecycle  LifecycleAPI
 	meshStatus func() MeshJSON
 	mounts     []mount
@@ -133,6 +134,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/stream", s.auth(s.stream))
 	s.registerTemp(mux)
 	s.registerStream(mux)
+	s.registerWatch(mux)
 	s.registerLifecycle(mux)
 	s.registerMesh(mux)
 	for _, m := range s.mounts {

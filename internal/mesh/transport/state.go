@@ -38,6 +38,8 @@ type Membership struct {
 	mu     sync.RWMutex
 	epoch  uint64
 	master string
+	// changed is closed, and set to nil, when the belief changes.
+	changed chan struct{}
 }
 
 type persisted struct {
@@ -74,6 +76,18 @@ func (m *Membership) View() (epoch uint64, master string) {
 	return m.epoch, m.master
 }
 
+// Changed returns a channel that is closed the next time the belief changes: a call
+// that must not outlive the belief it was admitted under takes it before checking
+// the belief, so a change in between is not missed.
+func (m *Membership) Changed() <-chan struct{} {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.changed == nil {
+		m.changed = make(chan struct{})
+	}
+	return m.changed
+}
+
 // IsMaster reports whether this node believes it is master.
 func (m *Membership) IsMaster() bool {
 	_, master := m.View()
@@ -96,6 +110,10 @@ func (m *Membership) Observe(epoch uint64, master string) (changed bool, err err
 		return false, err
 	}
 	m.epoch, m.master = epoch, master
+	if m.changed != nil {
+		close(m.changed)
+		m.changed = nil
+	}
 	return true, nil
 }
 

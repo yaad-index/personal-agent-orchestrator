@@ -27,6 +27,8 @@ var (
 	ErrNotReady = errors.New("agent not ready")
 	// ErrForbidden is a 403.
 	ErrForbidden = errors.New("forbidden")
+	// ErrBusy is a 429: the node is doing as much of this as it allows.
+	ErrBusy = errors.New("busy")
 )
 
 // AgentJSON is one temporary agent as listed.
@@ -106,6 +108,8 @@ func tempStatus(err error) int {
 		return http.StatusForbidden
 	case errors.Is(err, ErrNotReady):
 		return http.StatusBadGateway
+	case errors.Is(err, ErrBusy):
+		return http.StatusTooManyRequests
 	default:
 		return http.StatusInternalServerError
 	}

@@ -3,7 +3,9 @@ package daemon
 import (
 	"context"
 	"fmt"
+	"time"
 
+	"github.com/yaad-index/personal-agent-orchestrator/internal/access"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/local"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/mesh/directory"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/registry"
@@ -16,6 +18,7 @@ type streamAPI struct {
 	streams *streamControl
 	cmds    *meshCommands
 	dir     *directory.Directory
+	watcher *watcher
 }
 
 // locateAgent finds who holds an agent: this node (remote false), or another node of
@@ -69,4 +72,23 @@ func (a streamAPI) View(ctx context.Context, agent, action string, level, entrie
 		return translate(a.streams.Backtrack(ctx, agent, operatorViewer, level, entries))
 	}
 	return translated{local.ErrBadRequest, fmt.Errorf("a view action is pause, resume or backtrack, not %q", action)}
+}
+
+// Watch shows the operator an agent's output on demand (ADR-0018): an agent of this
+// node from its transcript, an agent of another node by a watch on that node.
+func (a streamAPI) Watch(ctx context.Context, agent string, level, entries int, opened func(), emit func(local.WatchLineJSON) error) error {
+	e, isRemote, err := a.remote(agent)
+	if err != nil {
+		return err
+	}
+	if isRemote {
+		return a.cmds.Watch(ctx, e.Node, agent, level, entries, opened, emit)
+	}
+	return translate(a.watcher.watch(ctx, access.Operator, agent, level, entries, opened, func(l watchLine) error {
+		out := local.WatchLineJSON{Text: l.text, History: l.history}
+		if !l.time.IsZero() {
+			out.Time = l.time.Format(time.RFC3339Nano)
+		}
+		return emit(out)
+	}))
 }

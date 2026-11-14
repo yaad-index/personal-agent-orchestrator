@@ -44,6 +44,8 @@ const (
 	Kill Action = "kill"
 	// ReadHarvest reads a harvested slice (ADR-0006 point 4).
 	ReadHarvest Action = "read_harvest"
+	// Watch reads an agent's rendered output on demand (ADR-0018 point 6).
+	Watch Action = "watch"
 )
 
 // Resource is what the action is on: an agent, by name and tags (a tag is an

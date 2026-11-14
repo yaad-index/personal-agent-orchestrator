@@ -301,12 +301,37 @@ type wrappedStream struct {
 func (w wrappedStream) Context() context.Context { return w.ctx }
 
 func (n *Node) streamInterceptor(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+	// The belief is watched from before it is checked, so a change between the check
+	// and the handler's start ends the stream too.
+	changed := n.mem.Changed()
 	caller, err := n.authorize(ss.Context(), info.FullMethod)
 	if err != nil {
 		return err
 	}
-	return handler(srv, wrappedStream{ss, context.WithValue(ss.Context(), callerKey{}, caller)})
+	ctx := context.WithValue(ss.Context(), callerKey{}, caller)
+	if !hasPrefix(info.FullMethod, nodeService) {
+		return handler(srv, wrappedStream{ss, ctx})
+	}
+	// A call of the master to this node is admitted for the epoch it names. A stream
+	// is long-lived, so it ends when the belief moves: the caller is then no longer
+	// the master at that epoch, and the master it has become opens its own.
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	go func() {
+		select {
+		case <-changed:
+			cancel(errEpochMoved)
+		case <-ctx.Done():
+		}
+	}()
+	err = handler(srv, wrappedStream{ss, ctx})
+	if errors.Is(context.Cause(ctx), errEpochMoved) {
+		return status.Error(codes.FailedPrecondition, errEpochMoved.Error())
+	}
+	return err
 }
+
+var errEpochMoved = errors.New("the master epoch changed: this stream is over, open it again at the new epoch")
 
 // --- dialing ---
 
@@ -334,6 +359,7 @@ func (n *Node) Dial(id string) (*grpc.ClientConn, error) {
 	c, err := grpc.NewClient(entry.Addr,
 		grpc.WithTransportCredentials(mesh.ClientCredentials(n.cfg.Self, n.peers, id)),
 		grpc.WithChainUnaryInterceptor(n.clientInterceptor),
+		grpc.WithChainStreamInterceptor(n.clientStreamInterceptor),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{Time: 10 * time.Second, Timeout: 5 * time.Second, PermitWithoutStream: true}),
 		grpc.WithConnectParams(grpc.ConnectParams{
 			Backoff:           backoffConfig(),
@@ -356,6 +382,14 @@ func (n *Node) clientInterceptor(ctx context.Context, method string, req, reply 
 	epoch, _ := n.mem.View()
 	ctx = metadata.AppendToOutgoingContext(ctx, epochHeader, strconv.FormatUint(epoch, 10))
 	return invoker(ctx, method, req, reply, cc, opts...)
+}
+
+// clientStreamInterceptor names the epoch on a stream as on a call. A stream has no
+// default deadline: it lasts until its caller ends it (ADR-0018 point 4).
+func (n *Node) clientStreamInterceptor(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
+	epoch, _ := n.mem.View()
+	ctx = metadata.AppendToOutgoingContext(ctx, epochHeader, strconv.FormatUint(epoch, 10))
+	return streamer(ctx, desc, cc, method, opts...)
 }
 
 func (n *Node) closeConns() {
