@@ -405,3 +405,36 @@ func TestHeartbeatKeepsAnIdleStreamAlive(t *testing.T) {
 		t.Fatal("no keepalive")
 	}
 }
+
+// meshLayer is a layer that is part of a mesh: it names ids by its node.
+type meshLayer struct{ fakeLayer }
+
+func (*meshLayer) Qualify(id string) string {
+	if id == "" {
+		return id
+	}
+	return "n-b:" + id
+}
+
+func TestInAMeshTheStreamAndTheDeliveryShowIdsQualifiedByTheNode(t *testing.T) {
+	s, ts := newServer(t, &meshLayer{})
+	one, stop := openStream(t, ts)
+	defer stop()
+	waitSubscribers(t, s, 1)
+
+	require.NoError(t, s.Send(context.Background(), core.Message{
+		ID: "m5", Sender: "a", Kind: core.MessageContent, Text: "hi", Reply: "m4",
+	}))
+	e := next(t, one)
+	assert.Equal(t, "n-b:m5", e.id, "the event id")
+	var m MessageJSON
+	require.NoError(t, json.Unmarshal([]byte(e.data), &m))
+	assert.Equal(t, "n-b:m5", m.ID)
+	assert.Equal(t, "n-b:m4", m.Reply, "what it answers is named the same way")
+
+	require.NoError(t, s.Send(context.Background(), core.Message{ID: "m6", Sender: "a", Kind: core.MessageContent, Text: "no reply"}))
+	e = next(t, one)
+	var plain MessageJSON
+	require.NoError(t, json.Unmarshal([]byte(e.data), &plain))
+	assert.Empty(t, plain.Reply, "no reply stays none")
+}

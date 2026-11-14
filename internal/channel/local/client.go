@@ -30,7 +30,14 @@ func (c *Client) http() *http.Client {
 
 // Post sends a message to the target and returns the server's delivery report.
 func (c *Client) Post(ctx context.Context, sender, text string, kind, value string) (DeliveryReport, error) {
-	body, err := json.Marshal(postMessageRequest{Sender: sender, Text: text, Target: targetJSON{Kind: kind, Value: value}})
+	return c.PostReply(ctx, sender, text, kind, value, "", "")
+}
+
+// PostReply sends a message that answers another: by the id of that message, as the
+// stream showed it (qualified by its node in a mesh), or by a snippet of its text.
+// Give one of them, or neither for a message that answers nothing.
+func (c *Client) PostReply(ctx context.Context, sender, text, kind, value, reply, replyQuote string) (DeliveryReport, error) {
+	body, err := json.Marshal(postMessageRequest{Sender: sender, Text: text, Target: targetJSON{Kind: kind, Value: value}, Reply: reply, ReplyQuote: replyQuote})
 	if err != nil {
 		return DeliveryReport{}, err
 	}

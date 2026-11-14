@@ -177,6 +177,16 @@ type deliveryJSON struct {
 	Results []resultJSON `json:"results"`
 }
 
+// qualify names a message id by its node when the layer is part of a mesh, so the id
+// a human sees says which node holds the message (ADR-0017 point 10). Outside a mesh
+// it is the id unchanged.
+func (s *Server) qualify(id string) string {
+	if q, ok := s.layer.(interface{ Qualify(string) string }); ok {
+		return q.Qualify(id)
+	}
+	return id
+}
+
 func (s *Server) postMessage(w http.ResponseWriter, r *http.Request) {
 	var req postMessageRequest
 	if !decode(w, r, &req) {
@@ -209,7 +219,7 @@ func (s *Server) postMessage(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	out := deliveryJSON{ID: d.Message.ID, Results: []resultJSON{}}
+	out := deliveryJSON{ID: s.qualify(d.Message.ID), Results: []resultJSON{}}
 	for _, res := range d.Results {
 		rj := resultJSON{Agent: res.Agent, Launched: res.Launched}
 		if res.Err != nil {
@@ -344,11 +354,11 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 			if !open {
 				return // dropped as too slow; the client reconnects
 			}
-			b, err := json.Marshal(MessageJSON{ID: m.ID, Time: m.Time, Sender: m.Sender, Kind: string(m.Kind), Text: m.Text, Reply: m.Reply})
+			b, err := json.Marshal(MessageJSON{ID: s.qualify(m.ID), Time: m.Time, Sender: m.Sender, Kind: string(m.Kind), Text: m.Text, Reply: s.qualify(m.Reply)})
 			if err != nil {
 				continue
 			}
-			_, _ = fmt.Fprintf(w, "id: %s\nevent: message\ndata: %s\n\n", m.ID, b)
+			_, _ = fmt.Fprintf(w, "id: %s\nevent: message\ndata: %s\n\n", s.qualify(m.ID), b)
 			fl.Flush()
 		}
 	}

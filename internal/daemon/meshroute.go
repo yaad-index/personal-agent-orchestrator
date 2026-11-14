@@ -16,6 +16,7 @@ import (
 	"github.com/yaad-index/personal-agent-orchestrator/internal/mesh/directory"
 	pb "github.com/yaad-index/personal-agent-orchestrator/internal/mesh/meshpb"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/mesh/transport"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/msgstore"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/registry"
 )
 
@@ -59,6 +60,7 @@ func (m meshRemote) Deliver(ctx context.Context, p core.Profile, msg core.Messag
 	}
 	reply, err := pb.NewNodeClient(conn).Deliver(ctx, &pb.DeliverRequest{
 		RequestId: hex.EncodeToString(id[:]), Agent: p.Name, Sender: msg.Sender, Text: msg.Text,
+		ReplyRef: msg.Reply, ReplyQuote: msg.ReplyQuote,
 	})
 	if err != nil {
 		return false, errors.New(status.Convert(err).Message())
@@ -75,6 +77,15 @@ func (s meshNodeServer) Deliver(ctx context.Context, req *pb.DeliverRequest) (*p
 	switch {
 	case errors.Is(err, core.ErrNoMatch):
 		return nil, status.Errorf(codes.NotFound, "no agent %q on this node", req.GetAgent())
+	case errors.Is(err, msgstore.ErrNotFound):
+		// A reply by id that the agent was not given is the same answer as one that
+		// does not exist (ADR-0010 point 3, ADR-0017 point 10).
+		return nil, status.Error(codes.NotFound, err.Error())
+	case errors.Is(err, msgstore.ErrUnresolved), errors.Is(err, msgstore.ErrAmbiguous):
+		// A quote that matches nothing, or several, is reported and never guessed,
+		// with the local channel's own split: 404 for a missing id, 422 for a quote
+		// that does not resolve to one message.
+		return nil, status.Error(codes.FailedPrecondition, err.Error())
 	case err != nil:
 		return nil, status.Error(codes.Internal, err.Error())
 	case len(d.Results) != 1:

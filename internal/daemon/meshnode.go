@@ -210,3 +210,16 @@ func (s meshNodeServer) View(ctx context.Context, req *pb.ViewRequest) (*pb.Resu
 	}
 	return &pb.Result{}, nil
 }
+
+// QueryPosted would answer which agent posted a message on a channel, from an index of
+// what the node's channel adapters posted (ADR-0017 point 10), so a reply that names
+// only a platform message id could be resolved by asking the nodes. It is not built:
+// the only channel today is the local one, whose platform id is the node's own message
+// id, which two nodes share, and nothing exists to index or to test against. A reply
+// to a remote agent is forwarded when it names a node-qualified id or quotes the
+// message (comm.Layer.Receive); a bare id that would need this is not found, never
+// guessed. The posted index and this call come with the first channel adapter that has
+// platform message ids.
+func (s meshNodeServer) QueryPosted(context.Context, *pb.PostedQuery) (*pb.PostedReply, error) {
+	return nil, status.Error(codes.Unimplemented, "no channel on this node has platform message ids to look up yet")
+}

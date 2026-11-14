@@ -20,7 +20,11 @@ import (
 type fakeRouter struct {
 	mu     sync.Mutex
 	agents map[string][]string // tag or name -> agent names
+	// nodes maps an agent name to the node that holds it; an agent not listed is local.
+	nodes  map[string]string
 	routed []core.Message
+	// to records, per delivery, the agents it was for.
+	to [][]string
 	// seenInStore, when set, is called at Route time to check the message was
 	// already stored.
 	atRoute func(core.Message)
@@ -33,7 +37,7 @@ func (f *fakeRouter) Resolve(t core.Target) ([]core.Profile, error) {
 	}
 	var ps []core.Profile
 	for _, n := range names {
-		ps = append(ps, core.Profile{Name: n})
+		ps = append(ps, core.Profile{Name: n, Node: f.nodes[n]})
 	}
 	return ps, nil
 }
@@ -46,9 +50,12 @@ func (f *fakeRouter) Deliver(_ context.Context, ps []core.Profile, m core.Messag
 	}
 	f.routed = append(f.routed, m)
 	var rs []route.Result
+	var names []string
 	for _, p := range ps {
 		rs = append(rs, route.Result{Agent: p.Name})
+		names = append(names, p.Name)
 	}
+	f.to = append(f.to, names)
 	return rs
 }
 
@@ -475,4 +482,101 @@ func TestAllowRefusingEveryoneIsTheSameErrorAsNoMatch(t *testing.T) {
 	})
 	require.ErrorIs(t, err, core.ErrNoMatch)
 	assert.Equal(t, route.NoMatch(core.Target{Kind: core.ByName, Value: "a"}).Error(), err.Error(), "word for word what the router says for an agent that does not exist")
+}
+
+// meshLayer is a layer on node "n-a" in a mesh of n-a, n-b and n-c, with the local
+// agent "a" and the agents "far" on n-b and "farther" on n-c.
+func meshLayer(t *testing.T) (*Layer, *fakeRouter, *msgstore.Store) {
+	t.Helper()
+	l, r, st := setup(t)
+	r.agents["far"], r.agents["farther"], r.agents["both"] = []string{"far"}, []string{"farther"}, []string{"a", "far"}
+	r.nodes = map[string]string{"far": "n-b", "farther": "n-c"}
+	l.SetNode("n-a", func(n string) bool { return n == "n-b" || n == "n-c" })
+	return l, r, st
+}
+
+func TestAReplyToAnAgentOnAnotherNodeIsForwardedAsThatNodesOwnId(t *testing.T) {
+	l, r, _ := meshLayer(t)
+	d, err := l.Receive(context.Background(), Inbound{Source: "x", Sender: "human", Text: "yes", Reply: "n-b:m7", Target: core.Target{Kind: core.ByName, Value: "far"}})
+	require.NoError(t, err)
+	require.Len(t, r.routed, 1)
+	assert.Equal(t, "m7", r.routed[0].Reply, "the node is given its own id for the message")
+	assert.Empty(t, r.routed[0].ReplyQuote)
+	assert.Equal(t, "n-b:m7", mustGet(t, l, d.Message.ID).Reply, "what is stored here keeps what the human named")
+}
+
+func mustGet(t *testing.T, l *Layer, id string) core.Message {
+	t.Helper()
+	m, err := l.store.Get(id)
+	require.NoError(t, err)
+	return m
+}
+
+func TestAReplyThatDoesNotFitTheAgentsNodeIsNotFoundAndNothingIsDelivered(t *testing.T) {
+	l, r, _ := meshLayer(t)
+	for name, c := range map[string]struct{ reply, target string }{
+		"bare id":              {"m7", "far"},
+		"another node's id":    {"n-c:m7", "far"},
+		"an unknown node":      {"n-z:m7", "far"},
+		"this node's id":       {"n-a:m7", "far"},
+		"a remote id to local": {"n-b:m7", "a"},
+	} {
+		_, err := l.Receive(context.Background(), Inbound{Source: "x", Sender: "human", Text: "yes", Reply: c.reply, Target: core.Target{Kind: core.ByName, Value: c.target}})
+		require.Error(t, err, name)
+		assert.ErrorIs(t, err, msgstore.ErrNotFound, name)
+	}
+	assert.Empty(t, r.routed, "nothing was delivered on a reply that does not resolve")
+}
+
+func TestAQuotedReplyToAnAgentOnAnotherNodeIsForwardedForItsNodeToResolve(t *testing.T) {
+	l, r, _ := meshLayer(t)
+	d, err := l.Receive(context.Background(), Inbound{Source: "x", Sender: "human", Text: "yes", ReplyQuote: "the plan", Target: core.Target{Kind: core.ByName, Value: "far"}})
+	require.NoError(t, err, "not resolved here: the agent's scope is on its node")
+	require.Len(t, r.routed, 1)
+	assert.Equal(t, "the plan", r.routed[0].ReplyQuote)
+	assert.Empty(t, r.routed[0].Reply)
+	assert.Empty(t, mustGet(t, l, d.Message.ID).ReplyQuote, "the quote is never stored")
+
+	_, err = l.Receive(context.Background(), Inbound{Source: "x", Sender: "human", Text: "yes", ReplyQuote: "the plan", Target: core.Target{Kind: core.ByName, Value: "both"}})
+	require.Error(t, err, "a quote to several agents is refused, across nodes as on one")
+}
+
+func TestAReplyToAFanOutAcrossNodesNeedsTheMessageInEveryAgentsScope(t *testing.T) {
+	l, r, st := meshLayer(t)
+	m, err := st.Add(core.Message{Sender: "a", Text: "mine"}, "a")
+	require.NoError(t, err)
+	_, err = l.Receive(context.Background(), Inbound{Source: "x", Sender: "human", Text: "re", Reply: m.ID, Target: core.Target{Kind: core.ByName, Value: "both"}})
+	require.Error(t, err, "a local id cannot be in the scope of the agent on another node")
+	assert.ErrorIs(t, err, msgstore.ErrNotFound)
+	assert.Empty(t, r.routed)
+}
+
+func TestAnIdIsQualifiedByItsNodeInAMeshAndAcceptedEitherWayForItsOwn(t *testing.T) {
+	l, r, st := meshLayer(t)
+	assert.Equal(t, "n-a:m5", l.Qualify("m5"))
+	assert.Empty(t, l.Qualify(""), "no id stays no id")
+	plain, _, _ := setup(t)
+	assert.Equal(t, "m5", plain.Qualify("m5"), "outside a mesh an id is as it was")
+
+	m, err := st.Add(core.Message{Sender: "a", Text: "mine"}, "a")
+	require.NoError(t, err)
+	_, err = l.Receive(context.Background(), Inbound{Source: "x", Sender: "human", Text: "re", Reply: "n-b:" + m.ID, Target: core.Target{Kind: core.ByName, Value: "a"}})
+	assert.ErrorIs(t, err, msgstore.ErrNotFound, "another node's id is not this agent's message, even when the number matches one that is")
+	for _, ref := range []string{m.ID, "n-a:" + m.ID} {
+		d, err := l.Receive(context.Background(), Inbound{Source: "x", Sender: "human", Text: "re", Reply: ref, Target: core.Target{Kind: core.ByName, Value: "a"}})
+		require.NoError(t, err, ref)
+		assert.Equal(t, m.ID, mustGet(t, l, d.Message.ID).Reply, "stored as its own id, whichever way it was named")
+	}
+	require.Len(t, r.routed, 2)
+
+	require.NoError(t, l.React("n-a:"+m.ID, "human", "👍"), "a reaction by the id the human saw")
+	assert.ErrorIs(t, l.React("n-b:"+m.ID, "human", "👍"), msgstore.ErrNotFound, "another node's id is not a message here")
+}
+
+func TestOutsideAMeshAnIdWithAColonIsNotAMessage(t *testing.T) {
+	l, _, st := setup(t)
+	m, err := st.Add(core.Message{Sender: "a", Text: "mine"}, "a")
+	require.NoError(t, err)
+	_, err = l.Receive(context.Background(), Inbound{Source: "x", Sender: "human", Text: "re", Reply: "n-a:" + m.ID, Target: core.Target{Kind: core.ByName, Value: "a"}})
+	assert.ErrorIs(t, err, msgstore.ErrNotFound)
 }

@@ -204,6 +204,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 			return ok
 		})
 		meshNode.SetSink(dir)
+		layer.SetNode(id.NodeID, meshNode.Knows)
 		meshNode.SetNodeServer(meshNodeServer{
 			layer: layer, life: life, mgr: mgr, harvest: harvests, streams: streams,
 		})
