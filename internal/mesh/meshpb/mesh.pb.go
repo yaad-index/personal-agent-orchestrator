@@ -266,9 +266,13 @@ func (*Result) Descriptor() ([]byte, []int) {
 }
 
 type AgentRef struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	RequestId     string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
-	Agent         string                 `protobuf:"bytes,2,opt,name=agent,proto3" json:"agent,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	RequestId string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	Agent     string                 `protobuf:"bytes,2,opt,name=agent,proto3" json:"agent,omitempty"`
+	// Who the master acted for, as the harvest of a kill records it: "operator" or
+	// "agent:<name>". The master has already authorized the request; the node does not
+	// decide it again.
+	Requester     string `protobuf:"bytes,3,opt,name=requester,proto3" json:"requester,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -317,6 +321,13 @@ func (x *AgentRef) GetAgent() string {
 	return ""
 }
 
+func (x *AgentRef) GetRequester() string {
+	if x != nil {
+		return x.Requester
+	}
+	return ""
+}
+
 type SpawnRequest struct {
 	state     protoimpl.MessageState `protogen:"open.v1"`
 	RequestId string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
@@ -324,7 +335,9 @@ type SpawnRequest struct {
 	// Empty: generated from the recipe.
 	Name string `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
 	// The channel the agent's stream is bound to.
-	Channel       string `protobuf:"bytes,4,opt,name=channel,proto3" json:"channel,omitempty"`
+	Channel string `protobuf:"bytes,4,opt,name=channel,proto3" json:"channel,omitempty"`
+	// Who the master acted for; see AgentRef.
+	Requester     string `protobuf:"bytes,5,opt,name=requester,proto3" json:"requester,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -387,9 +400,19 @@ func (x *SpawnRequest) GetChannel() string {
 	return ""
 }
 
+func (x *SpawnRequest) GetRequester() string {
+	if x != nil {
+		return x.Requester
+	}
+	return ""
+}
+
 type SpawnResult struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Name  string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	// Set when the agent was created but did not become ready: why. The agent exists
+	// under name, so it can be inspected or killed.
+	NotReady      string `protobuf:"bytes,2,opt,name=not_ready,json=notReady,proto3" json:"not_ready,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -427,6 +450,13 @@ func (*SpawnResult) Descriptor() ([]byte, []int) {
 func (x *SpawnResult) GetName() string {
 	if x != nil {
 		return x.Name
+	}
+	return ""
+}
+
+func (x *SpawnResult) GetNotReady() string {
+	if x != nil {
+		return x.NotReady
 	}
 	return ""
 }
@@ -515,6 +545,387 @@ func (x *KillResult) GetSummary() string {
 	return ""
 }
 
+type ListHarvestsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListHarvestsRequest) Reset() {
+	*x = ListHarvestsRequest{}
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListHarvestsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListHarvestsRequest) ProtoMessage() {}
+
+func (x *ListHarvestsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListHarvestsRequest.ProtoReflect.Descriptor instead.
+func (*ListHarvestsRequest) Descriptor() ([]byte, []int) {
+	return file_pao_mesh_v1_mesh_proto_rawDescGZIP(), []int{5}
+}
+
+type HarvestFileInfo struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Path          string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
+	Size          int64                  `protobuf:"varint,2,opt,name=size,proto3" json:"size,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HarvestFileInfo) Reset() {
+	*x = HarvestFileInfo{}
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HarvestFileInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HarvestFileInfo) ProtoMessage() {}
+
+func (x *HarvestFileInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HarvestFileInfo.ProtoReflect.Descriptor instead.
+func (*HarvestFileInfo) Descriptor() ([]byte, []int) {
+	return file_pao_mesh_v1_mesh_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *HarvestFileInfo) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *HarvestFileInfo) GetSize() int64 {
+	if x != nil {
+		return x.Size
+	}
+	return 0
+}
+
+type HarvestManifest struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Id        string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Agent     string                 `protobuf:"bytes,2,opt,name=agent,proto3" json:"agent,omitempty"`
+	Tags      []string               `protobuf:"bytes,3,rep,name=tags,proto3" json:"tags,omitempty"`
+	Requester string                 `protobuf:"bytes,4,opt,name=requester,proto3" json:"requester,omitempty"`
+	// RFC 3339.
+	Time          string             `protobuf:"bytes,5,opt,name=time,proto3" json:"time,omitempty"`
+	Complete      bool               `protobuf:"varint,6,opt,name=complete,proto3" json:"complete,omitempty"`
+	Bytes         int64              `protobuf:"varint,7,opt,name=bytes,proto3" json:"bytes,omitempty"`
+	Files         []*HarvestFileInfo `protobuf:"bytes,8,rep,name=files,proto3" json:"files,omitempty"`
+	SkippedTotal  int64              `protobuf:"varint,9,opt,name=skipped_total,json=skippedTotal,proto3" json:"skipped_total,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HarvestManifest) Reset() {
+	*x = HarvestManifest{}
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HarvestManifest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HarvestManifest) ProtoMessage() {}
+
+func (x *HarvestManifest) ProtoReflect() protoreflect.Message {
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HarvestManifest.ProtoReflect.Descriptor instead.
+func (*HarvestManifest) Descriptor() ([]byte, []int) {
+	return file_pao_mesh_v1_mesh_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *HarvestManifest) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *HarvestManifest) GetAgent() string {
+	if x != nil {
+		return x.Agent
+	}
+	return ""
+}
+
+func (x *HarvestManifest) GetTags() []string {
+	if x != nil {
+		return x.Tags
+	}
+	return nil
+}
+
+func (x *HarvestManifest) GetRequester() string {
+	if x != nil {
+		return x.Requester
+	}
+	return ""
+}
+
+func (x *HarvestManifest) GetTime() string {
+	if x != nil {
+		return x.Time
+	}
+	return ""
+}
+
+func (x *HarvestManifest) GetComplete() bool {
+	if x != nil {
+		return x.Complete
+	}
+	return false
+}
+
+func (x *HarvestManifest) GetBytes() int64 {
+	if x != nil {
+		return x.Bytes
+	}
+	return 0
+}
+
+func (x *HarvestManifest) GetFiles() []*HarvestFileInfo {
+	if x != nil {
+		return x.Files
+	}
+	return nil
+}
+
+func (x *HarvestManifest) GetSkippedTotal() int64 {
+	if x != nil {
+		return x.SkippedTotal
+	}
+	return 0
+}
+
+type ListHarvestsReply struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Harvests      []*HarvestManifest     `protobuf:"bytes,1,rep,name=harvests,proto3" json:"harvests,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListHarvestsReply) Reset() {
+	*x = ListHarvestsReply{}
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListHarvestsReply) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListHarvestsReply) ProtoMessage() {}
+
+func (x *ListHarvestsReply) ProtoReflect() protoreflect.Message {
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListHarvestsReply.ProtoReflect.Descriptor instead.
+func (*ListHarvestsReply) Descriptor() ([]byte, []int) {
+	return file_pao_mesh_v1_mesh_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *ListHarvestsReply) GetHarvests() []*HarvestManifest {
+	if x != nil {
+		return x.Harvests
+	}
+	return nil
+}
+
+type HarvestRef struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HarvestRef) Reset() {
+	*x = HarvestRef{}
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HarvestRef) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HarvestRef) ProtoMessage() {}
+
+func (x *HarvestRef) ProtoReflect() protoreflect.Message {
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HarvestRef.ProtoReflect.Descriptor instead.
+func (*HarvestRef) Descriptor() ([]byte, []int) {
+	return file_pao_mesh_v1_mesh_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *HarvestRef) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+type HarvestFileRef struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Path          string                 `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HarvestFileRef) Reset() {
+	*x = HarvestFileRef{}
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HarvestFileRef) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HarvestFileRef) ProtoMessage() {}
+
+func (x *HarvestFileRef) ProtoReflect() protoreflect.Message {
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HarvestFileRef.ProtoReflect.Descriptor instead.
+func (*HarvestFileRef) Descriptor() ([]byte, []int) {
+	return file_pao_mesh_v1_mesh_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *HarvestFileRef) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *HarvestFileRef) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+type HarvestFile struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Content       []byte                 `protobuf:"bytes,1,opt,name=content,proto3" json:"content,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HarvestFile) Reset() {
+	*x = HarvestFile{}
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HarvestFile) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HarvestFile) ProtoMessage() {}
+
+func (x *HarvestFile) ProtoReflect() protoreflect.Message {
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HarvestFile.ProtoReflect.Descriptor instead.
+func (*HarvestFile) Descriptor() ([]byte, []int) {
+	return file_pao_mesh_v1_mesh_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *HarvestFile) GetContent() []byte {
+	if x != nil {
+		return x.Content
+	}
+	return nil
+}
+
 type DeliverRequest struct {
 	state     protoimpl.MessageState `protogen:"open.v1"`
 	RequestId string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
@@ -532,7 +943,7 @@ type DeliverRequest struct {
 
 func (x *DeliverRequest) Reset() {
 	*x = DeliverRequest{}
-	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[5]
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -544,7 +955,7 @@ func (x *DeliverRequest) String() string {
 func (*DeliverRequest) ProtoMessage() {}
 
 func (x *DeliverRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[5]
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -557,7 +968,7 @@ func (x *DeliverRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeliverRequest.ProtoReflect.Descriptor instead.
 func (*DeliverRequest) Descriptor() ([]byte, []int) {
-	return file_pao_mesh_v1_mesh_proto_rawDescGZIP(), []int{5}
+	return file_pao_mesh_v1_mesh_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *DeliverRequest) GetRequestId() string {
@@ -612,7 +1023,7 @@ type DeliverResult struct {
 
 func (x *DeliverResult) Reset() {
 	*x = DeliverResult{}
-	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[6]
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -624,7 +1035,7 @@ func (x *DeliverResult) String() string {
 func (*DeliverResult) ProtoMessage() {}
 
 func (x *DeliverResult) ProtoReflect() protoreflect.Message {
-	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[6]
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -637,7 +1048,7 @@ func (x *DeliverResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeliverResult.ProtoReflect.Descriptor instead.
 func (*DeliverResult) Descriptor() ([]byte, []int) {
-	return file_pao_mesh_v1_mesh_proto_rawDescGZIP(), []int{6}
+	return file_pao_mesh_v1_mesh_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *DeliverResult) GetLaunched() bool {
@@ -661,7 +1072,7 @@ type StreamRequest struct {
 
 func (x *StreamRequest) Reset() {
 	*x = StreamRequest{}
-	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[7]
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -673,7 +1084,7 @@ func (x *StreamRequest) String() string {
 func (*StreamRequest) ProtoMessage() {}
 
 func (x *StreamRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[7]
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -686,7 +1097,7 @@ func (x *StreamRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StreamRequest.ProtoReflect.Descriptor instead.
 func (*StreamRequest) Descriptor() ([]byte, []int) {
-	return file_pao_mesh_v1_mesh_proto_rawDescGZIP(), []int{7}
+	return file_pao_mesh_v1_mesh_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *StreamRequest) GetRequestId() string {
@@ -738,7 +1149,7 @@ type ViewRequest struct {
 
 func (x *ViewRequest) Reset() {
 	*x = ViewRequest{}
-	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[8]
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -750,7 +1161,7 @@ func (x *ViewRequest) String() string {
 func (*ViewRequest) ProtoMessage() {}
 
 func (x *ViewRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[8]
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -763,7 +1174,7 @@ func (x *ViewRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ViewRequest.ProtoReflect.Descriptor instead.
 func (*ViewRequest) Descriptor() ([]byte, []int) {
-	return file_pao_mesh_v1_mesh_proto_rawDescGZIP(), []int{8}
+	return file_pao_mesh_v1_mesh_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *ViewRequest) GetRequestId() string {
@@ -814,7 +1225,7 @@ type DecideRequest struct {
 
 func (x *DecideRequest) Reset() {
 	*x = DecideRequest{}
-	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[9]
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -826,7 +1237,7 @@ func (x *DecideRequest) String() string {
 func (*DecideRequest) ProtoMessage() {}
 
 func (x *DecideRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[9]
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -839,7 +1250,7 @@ func (x *DecideRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DecideRequest.ProtoReflect.Descriptor instead.
 func (*DecideRequest) Descriptor() ([]byte, []int) {
-	return file_pao_mesh_v1_mesh_proto_rawDescGZIP(), []int{9}
+	return file_pao_mesh_v1_mesh_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *DecideRequest) GetRequestId() string {
@@ -881,7 +1292,7 @@ type PostedQuery struct {
 
 func (x *PostedQuery) Reset() {
 	*x = PostedQuery{}
-	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[10]
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -893,7 +1304,7 @@ func (x *PostedQuery) String() string {
 func (*PostedQuery) ProtoMessage() {}
 
 func (x *PostedQuery) ProtoReflect() protoreflect.Message {
-	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[10]
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -906,7 +1317,7 @@ func (x *PostedQuery) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PostedQuery.ProtoReflect.Descriptor instead.
 func (*PostedQuery) Descriptor() ([]byte, []int) {
-	return file_pao_mesh_v1_mesh_proto_rawDescGZIP(), []int{10}
+	return file_pao_mesh_v1_mesh_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *PostedQuery) GetChannel() string {
@@ -935,7 +1346,7 @@ type PostedReply struct {
 
 func (x *PostedReply) Reset() {
 	*x = PostedReply{}
-	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[11]
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -947,7 +1358,7 @@ func (x *PostedReply) String() string {
 func (*PostedReply) ProtoMessage() {}
 
 func (x *PostedReply) ProtoReflect() protoreflect.Message {
-	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[11]
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -960,7 +1371,7 @@ func (x *PostedReply) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PostedReply.ProtoReflect.Descriptor instead.
 func (*PostedReply) Descriptor() ([]byte, []int) {
-	return file_pao_mesh_v1_mesh_proto_rawDescGZIP(), []int{11}
+	return file_pao_mesh_v1_mesh_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *PostedReply) GetFound() bool {
@@ -997,7 +1408,7 @@ type ConfigBundle struct {
 
 func (x *ConfigBundle) Reset() {
 	*x = ConfigBundle{}
-	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[12]
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1009,7 +1420,7 @@ func (x *ConfigBundle) String() string {
 func (*ConfigBundle) ProtoMessage() {}
 
 func (x *ConfigBundle) ProtoReflect() protoreflect.Message {
-	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[12]
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1022,7 +1433,7 @@ func (x *ConfigBundle) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConfigBundle.ProtoReflect.Descriptor instead.
 func (*ConfigBundle) Descriptor() ([]byte, []int) {
-	return file_pao_mesh_v1_mesh_proto_rawDescGZIP(), []int{12}
+	return file_pao_mesh_v1_mesh_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *ConfigBundle) GetVersion() uint64 {
@@ -1058,7 +1469,7 @@ type ConfigAck struct {
 
 func (x *ConfigAck) Reset() {
 	*x = ConfigAck{}
-	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[13]
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1070,7 +1481,7 @@ func (x *ConfigAck) String() string {
 func (*ConfigAck) ProtoMessage() {}
 
 func (x *ConfigAck) ProtoReflect() protoreflect.Message {
-	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[13]
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1083,7 +1494,7 @@ func (x *ConfigAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConfigAck.ProtoReflect.Descriptor instead.
 func (*ConfigAck) Descriptor() ([]byte, []int) {
-	return file_pao_mesh_v1_mesh_proto_rawDescGZIP(), []int{13}
+	return file_pao_mesh_v1_mesh_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *ConfigAck) GetVersion() uint64 {
@@ -1111,7 +1522,7 @@ type StreamBinding struct {
 
 func (x *StreamBinding) Reset() {
 	*x = StreamBinding{}
-	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[14]
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1123,7 +1534,7 @@ func (x *StreamBinding) String() string {
 func (*StreamBinding) ProtoMessage() {}
 
 func (x *StreamBinding) ProtoReflect() protoreflect.Message {
-	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[14]
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1136,7 +1547,7 @@ func (x *StreamBinding) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StreamBinding.ProtoReflect.Descriptor instead.
 func (*StreamBinding) Descriptor() ([]byte, []int) {
-	return file_pao_mesh_v1_mesh_proto_rawDescGZIP(), []int{14}
+	return file_pao_mesh_v1_mesh_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *StreamBinding) GetChannel() string {
@@ -1178,7 +1589,7 @@ type AgentInfo struct {
 
 func (x *AgentInfo) Reset() {
 	*x = AgentInfo{}
-	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[15]
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1190,7 +1601,7 @@ func (x *AgentInfo) String() string {
 func (*AgentInfo) ProtoMessage() {}
 
 func (x *AgentInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[15]
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1203,7 +1614,7 @@ func (x *AgentInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentInfo.ProtoReflect.Descriptor instead.
 func (*AgentInfo) Descriptor() ([]byte, []int) {
-	return file_pao_mesh_v1_mesh_proto_rawDescGZIP(), []int{15}
+	return file_pao_mesh_v1_mesh_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *AgentInfo) GetName() string {
@@ -1273,7 +1684,7 @@ type AgentsReport struct {
 
 func (x *AgentsReport) Reset() {
 	*x = AgentsReport{}
-	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[16]
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1285,7 +1696,7 @@ func (x *AgentsReport) String() string {
 func (*AgentsReport) ProtoMessage() {}
 
 func (x *AgentsReport) ProtoReflect() protoreflect.Message {
-	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[16]
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1298,7 +1709,7 @@ func (x *AgentsReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentsReport.ProtoReflect.Descriptor instead.
 func (*AgentsReport) Descriptor() ([]byte, []int) {
-	return file_pao_mesh_v1_mesh_proto_rawDescGZIP(), []int{16}
+	return file_pao_mesh_v1_mesh_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *AgentsReport) GetFull() bool {
@@ -1328,7 +1739,7 @@ type StateEvent struct {
 
 func (x *StateEvent) Reset() {
 	*x = StateEvent{}
-	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[17]
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1340,7 +1751,7 @@ func (x *StateEvent) String() string {
 func (*StateEvent) ProtoMessage() {}
 
 func (x *StateEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[17]
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1353,7 +1764,7 @@ func (x *StateEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StateEvent.ProtoReflect.Descriptor instead.
 func (*StateEvent) Descriptor() ([]byte, []int) {
-	return file_pao_mesh_v1_mesh_proto_rawDescGZIP(), []int{17}
+	return file_pao_mesh_v1_mesh_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *StateEvent) GetChange() isStateEvent_Change {
@@ -1412,7 +1823,7 @@ type Report struct {
 
 func (x *Report) Reset() {
 	*x = Report{}
-	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[18]
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1424,7 +1835,7 @@ func (x *Report) String() string {
 func (*Report) ProtoMessage() {}
 
 func (x *Report) ProtoReflect() protoreflect.Message {
-	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[18]
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1437,7 +1848,7 @@ func (x *Report) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Report.ProtoReflect.Descriptor instead.
 func (*Report) Descriptor() ([]byte, []int) {
-	return file_pao_mesh_v1_mesh_proto_rawDescGZIP(), []int{18}
+	return file_pao_mesh_v1_mesh_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *Report) GetSeq() uint64 {
@@ -1497,7 +1908,7 @@ type Ack struct {
 
 func (x *Ack) Reset() {
 	*x = Ack{}
-	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[19]
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1509,7 +1920,7 @@ func (x *Ack) String() string {
 func (*Ack) ProtoMessage() {}
 
 func (x *Ack) ProtoReflect() protoreflect.Message {
-	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[19]
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1522,7 +1933,7 @@ func (x *Ack) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Ack.ProtoReflect.Descriptor instead.
 func (*Ack) Descriptor() ([]byte, []int) {
-	return file_pao_mesh_v1_mesh_proto_rawDescGZIP(), []int{19}
+	return file_pao_mesh_v1_mesh_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *Ack) GetSeq() uint64 {
@@ -1547,7 +1958,7 @@ type HelloRequest struct {
 
 func (x *HelloRequest) Reset() {
 	*x = HelloRequest{}
-	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[20]
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1559,7 +1970,7 @@ func (x *HelloRequest) String() string {
 func (*HelloRequest) ProtoMessage() {}
 
 func (x *HelloRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[20]
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1572,7 +1983,7 @@ func (x *HelloRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HelloRequest.ProtoReflect.Descriptor instead.
 func (*HelloRequest) Descriptor() ([]byte, []int) {
-	return file_pao_mesh_v1_mesh_proto_rawDescGZIP(), []int{20}
+	return file_pao_mesh_v1_mesh_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *HelloRequest) GetRole() Role {
@@ -1623,7 +2034,7 @@ type HelloReply struct {
 
 func (x *HelloReply) Reset() {
 	*x = HelloReply{}
-	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[21]
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1635,7 +2046,7 @@ func (x *HelloReply) String() string {
 func (*HelloReply) ProtoMessage() {}
 
 func (x *HelloReply) ProtoReflect() protoreflect.Message {
-	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[21]
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1648,7 +2059,7 @@ func (x *HelloReply) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HelloReply.ProtoReflect.Descriptor instead.
 func (*HelloReply) Descriptor() ([]byte, []int) {
-	return file_pao_mesh_v1_mesh_proto_rawDescGZIP(), []int{21}
+	return file_pao_mesh_v1_mesh_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *HelloReply) GetRole() Role {
@@ -1698,7 +2109,7 @@ type Beat struct {
 
 func (x *Beat) Reset() {
 	*x = Beat{}
-	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[22]
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1710,7 +2121,7 @@ func (x *Beat) String() string {
 func (*Beat) ProtoMessage() {}
 
 func (x *Beat) ProtoReflect() protoreflect.Message {
-	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[22]
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1723,7 +2134,7 @@ func (x *Beat) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Beat.ProtoReflect.Descriptor instead.
 func (*Beat) Descriptor() ([]byte, []int) {
-	return file_pao_mesh_v1_mesh_proto_rawDescGZIP(), []int{22}
+	return file_pao_mesh_v1_mesh_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *Beat) GetSeq() uint64 {
@@ -1766,7 +2177,7 @@ type MasterLostNotice struct {
 
 func (x *MasterLostNotice) Reset() {
 	*x = MasterLostNotice{}
-	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[23]
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1778,7 +2189,7 @@ func (x *MasterLostNotice) String() string {
 func (*MasterLostNotice) ProtoMessage() {}
 
 func (x *MasterLostNotice) ProtoReflect() protoreflect.Message {
-	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[23]
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1791,7 +2202,7 @@ func (x *MasterLostNotice) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MasterLostNotice.ProtoReflect.Descriptor instead.
 func (*MasterLostNotice) Descriptor() ([]byte, []int) {
-	return file_pao_mesh_v1_mesh_proto_rawDescGZIP(), []int{23}
+	return file_pao_mesh_v1_mesh_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *MasterLostNotice) GetEpoch() uint64 {
@@ -1823,7 +2234,7 @@ type ProbeRequest struct {
 
 func (x *ProbeRequest) Reset() {
 	*x = ProbeRequest{}
-	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[24]
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1835,7 +2246,7 @@ func (x *ProbeRequest) String() string {
 func (*ProbeRequest) ProtoMessage() {}
 
 func (x *ProbeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[24]
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1848,7 +2259,7 @@ func (x *ProbeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProbeRequest.ProtoReflect.Descriptor instead.
 func (*ProbeRequest) Descriptor() ([]byte, []int) {
-	return file_pao_mesh_v1_mesh_proto_rawDescGZIP(), []int{24}
+	return file_pao_mesh_v1_mesh_proto_rawDescGZIP(), []int{31}
 }
 
 type ProbeReply struct {
@@ -1863,7 +2274,7 @@ type ProbeReply struct {
 
 func (x *ProbeReply) Reset() {
 	*x = ProbeReply{}
-	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[25]
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1875,7 +2286,7 @@ func (x *ProbeReply) String() string {
 func (*ProbeReply) ProtoMessage() {}
 
 func (x *ProbeReply) ProtoReflect() protoreflect.Message {
-	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[25]
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1888,7 +2299,7 @@ func (x *ProbeReply) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProbeReply.ProtoReflect.Descriptor instead.
 func (*ProbeReply) Descriptor() ([]byte, []int) {
-	return file_pao_mesh_v1_mesh_proto_rawDescGZIP(), []int{25}
+	return file_pao_mesh_v1_mesh_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *ProbeReply) GetEpoch() uint64 {
@@ -1922,7 +2333,7 @@ type NewMasterNotice struct {
 
 func (x *NewMasterNotice) Reset() {
 	*x = NewMasterNotice{}
-	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[26]
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1934,7 +2345,7 @@ func (x *NewMasterNotice) String() string {
 func (*NewMasterNotice) ProtoMessage() {}
 
 func (x *NewMasterNotice) ProtoReflect() protoreflect.Message {
-	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[26]
+	mi := &file_pao_mesh_v1_mesh_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1947,7 +2358,7 @@ func (x *NewMasterNotice) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NewMasterNotice.ProtoReflect.Descriptor instead.
 func (*NewMasterNotice) Descriptor() ([]byte, []int) {
-	return file_pao_mesh_v1_mesh_proto_rawDescGZIP(), []int{26}
+	return file_pao_mesh_v1_mesh_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *NewMasterNotice) GetEpoch() uint64 {
@@ -1969,19 +2380,22 @@ var File_pao_mesh_v1_mesh_proto protoreflect.FileDescriptor
 const file_pao_mesh_v1_mesh_proto_rawDesc = "" +
 	"\n" +
 	"\x16pao/mesh/v1/mesh.proto\x12\vpao.mesh.v1\"\b\n" +
-	"\x06Result\"?\n" +
+	"\x06Result\"]\n" +
 	"\bAgentRef\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x14\n" +
-	"\x05agent\x18\x02 \x01(\tR\x05agent\"s\n" +
+	"\x05agent\x18\x02 \x01(\tR\x05agent\x12\x1c\n" +
+	"\trequester\x18\x03 \x01(\tR\trequester\"\x91\x01\n" +
 	"\fSpawnRequest\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x16\n" +
 	"\x06recipe\x18\x02 \x01(\tR\x06recipe\x12\x12\n" +
 	"\x04name\x18\x03 \x01(\tR\x04name\x12\x18\n" +
-	"\achannel\x18\x04 \x01(\tR\achannel\"!\n" +
+	"\achannel\x18\x04 \x01(\tR\achannel\x12\x1c\n" +
+	"\trequester\x18\x05 \x01(\tR\trequester\">\n" +
 	"\vSpawnResult\x12\x12\n" +
-	"\x04name\x18\x01 \x01(\tR\x04name\"\xb0\x01\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1b\n" +
+	"\tnot_ready\x18\x02 \x01(\tR\bnotReady\"\xb0\x01\n" +
 	"\n" +
 	"KillResult\x12\x1d\n" +
 	"\n" +
@@ -1990,7 +2404,31 @@ const file_pao_mesh_v1_mesh_proto_rawDesc = "" +
 	"\fworkdir_kept\x18\x03 \x01(\bR\vworkdirKept\x12\x14\n" +
 	"\x05files\x18\x04 \x01(\x03R\x05files\x12\x14\n" +
 	"\x05bytes\x18\x05 \x01(\x03R\x05bytes\x12\x18\n" +
-	"\asummary\x18\x06 \x01(\tR\asummary\"\xaf\x01\n" +
+	"\asummary\x18\x06 \x01(\tR\asummary\"\x15\n" +
+	"\x13ListHarvestsRequest\"9\n" +
+	"\x0fHarvestFileInfo\x12\x12\n" +
+	"\x04path\x18\x01 \x01(\tR\x04path\x12\x12\n" +
+	"\x04size\x18\x02 \x01(\x03R\x04size\"\x88\x02\n" +
+	"\x0fHarvestManifest\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x14\n" +
+	"\x05agent\x18\x02 \x01(\tR\x05agent\x12\x12\n" +
+	"\x04tags\x18\x03 \x03(\tR\x04tags\x12\x1c\n" +
+	"\trequester\x18\x04 \x01(\tR\trequester\x12\x12\n" +
+	"\x04time\x18\x05 \x01(\tR\x04time\x12\x1a\n" +
+	"\bcomplete\x18\x06 \x01(\bR\bcomplete\x12\x14\n" +
+	"\x05bytes\x18\a \x01(\x03R\x05bytes\x122\n" +
+	"\x05files\x18\b \x03(\v2\x1c.pao.mesh.v1.HarvestFileInfoR\x05files\x12#\n" +
+	"\rskipped_total\x18\t \x01(\x03R\fskippedTotal\"M\n" +
+	"\x11ListHarvestsReply\x128\n" +
+	"\bharvests\x18\x01 \x03(\v2\x1c.pao.mesh.v1.HarvestManifestR\bharvests\"\x1c\n" +
+	"\n" +
+	"HarvestRef\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\"4\n" +
+	"\x0eHarvestFileRef\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
+	"\x04path\x18\x02 \x01(\tR\x04path\"'\n" +
+	"\vHarvestFile\x12\x18\n" +
+	"\acontent\x18\x01 \x01(\fR\acontent\"\xaf\x01\n" +
 	"\x0eDeliverRequest\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x14\n" +
@@ -2116,7 +2554,7 @@ const file_pao_mesh_v1_mesh_proto_rawDesc = "" +
 	"\x04Role\x12\x14\n" +
 	"\x10ROLE_UNSPECIFIED\x10\x00\x12\x0f\n" +
 	"\vROLE_MASTER\x10\x01\x12\x12\n" +
-	"\x0eROLE_SECONDARY\x10\x022\x99\x05\n" +
+	"\x0eROLE_SECONDARY\x10\x022\xb9\a\n" +
 	"\x04Node\x124\n" +
 	"\x06Launch\x12\x15.pao.mesh.v1.AgentRef\x1a\x13.pao.mesh.v1.Result\x122\n" +
 	"\x04Kill\x12\x15.pao.mesh.v1.AgentRef\x1a\x13.pao.mesh.v1.Result\x125\n" +
@@ -2129,7 +2567,12 @@ const file_pao_mesh_v1_mesh_proto_rawDesc = "" +
 	"\x06Decide\x12\x1a.pao.mesh.v1.DecideRequest\x1a\x13.pao.mesh.v1.Result\x12A\n" +
 	"\vQueryPosted\x12\x18.pao.mesh.v1.PostedQuery\x1a\x18.pao.mesh.v1.PostedReply\x12?\n" +
 	"\n" +
-	"PushConfig\x12\x19.pao.mesh.v1.ConfigBundle\x1a\x16.pao.mesh.v1.ConfigAck2>\n" +
+	"PushConfig\x12\x19.pao.mesh.v1.ConfigBundle\x1a\x16.pao.mesh.v1.ConfigAck\x12P\n" +
+	"\fListHarvests\x12 .pao.mesh.v1.ListHarvestsRequest\x1a\x1e.pao.mesh.v1.ListHarvestsReply\x12C\n" +
+	"\n" +
+	"GetHarvest\x12\x17.pao.mesh.v1.HarvestRef\x1a\x1c.pao.mesh.v1.HarvestManifest\x12H\n" +
+	"\x0fReadHarvestFile\x12\x1b.pao.mesh.v1.HarvestFileRef\x1a\x18.pao.mesh.v1.HarvestFile\x12=\n" +
+	"\rDeleteHarvest\x12\x17.pao.mesh.v1.HarvestRef\x1a\x13.pao.mesh.v1.Result2>\n" +
 	"\x06Master\x124\n" +
 	"\aSession\x12\x13.pao.mesh.v1.Report\x1a\x10.pao.mesh.v1.Ack(\x010\x012\xb8\x02\n" +
 	"\x04Peer\x12;\n" +
@@ -2153,91 +2596,108 @@ func file_pao_mesh_v1_mesh_proto_rawDescGZIP() []byte {
 }
 
 var file_pao_mesh_v1_mesh_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
-var file_pao_mesh_v1_mesh_proto_msgTypes = make([]protoimpl.MessageInfo, 27)
+var file_pao_mesh_v1_mesh_proto_msgTypes = make([]protoimpl.MessageInfo, 34)
 var file_pao_mesh_v1_mesh_proto_goTypes = []any{
-	(ViewAction)(0),          // 0: pao.mesh.v1.ViewAction
-	(Decision)(0),            // 1: pao.mesh.v1.Decision
-	(AgentState)(0),          // 2: pao.mesh.v1.AgentState
-	(Role)(0),                // 3: pao.mesh.v1.Role
-	(*Result)(nil),           // 4: pao.mesh.v1.Result
-	(*AgentRef)(nil),         // 5: pao.mesh.v1.AgentRef
-	(*SpawnRequest)(nil),     // 6: pao.mesh.v1.SpawnRequest
-	(*SpawnResult)(nil),      // 7: pao.mesh.v1.SpawnResult
-	(*KillResult)(nil),       // 8: pao.mesh.v1.KillResult
-	(*DeliverRequest)(nil),   // 9: pao.mesh.v1.DeliverRequest
-	(*DeliverResult)(nil),    // 10: pao.mesh.v1.DeliverResult
-	(*StreamRequest)(nil),    // 11: pao.mesh.v1.StreamRequest
-	(*ViewRequest)(nil),      // 12: pao.mesh.v1.ViewRequest
-	(*DecideRequest)(nil),    // 13: pao.mesh.v1.DecideRequest
-	(*PostedQuery)(nil),      // 14: pao.mesh.v1.PostedQuery
-	(*PostedReply)(nil),      // 15: pao.mesh.v1.PostedReply
-	(*ConfigBundle)(nil),     // 16: pao.mesh.v1.ConfigBundle
-	(*ConfigAck)(nil),        // 17: pao.mesh.v1.ConfigAck
-	(*StreamBinding)(nil),    // 18: pao.mesh.v1.StreamBinding
-	(*AgentInfo)(nil),        // 19: pao.mesh.v1.AgentInfo
-	(*AgentsReport)(nil),     // 20: pao.mesh.v1.AgentsReport
-	(*StateEvent)(nil),       // 21: pao.mesh.v1.StateEvent
-	(*Report)(nil),           // 22: pao.mesh.v1.Report
-	(*Ack)(nil),              // 23: pao.mesh.v1.Ack
-	(*HelloRequest)(nil),     // 24: pao.mesh.v1.HelloRequest
-	(*HelloReply)(nil),       // 25: pao.mesh.v1.HelloReply
-	(*Beat)(nil),             // 26: pao.mesh.v1.Beat
-	(*MasterLostNotice)(nil), // 27: pao.mesh.v1.MasterLostNotice
-	(*ProbeRequest)(nil),     // 28: pao.mesh.v1.ProbeRequest
-	(*ProbeReply)(nil),       // 29: pao.mesh.v1.ProbeReply
-	(*NewMasterNotice)(nil),  // 30: pao.mesh.v1.NewMasterNotice
+	(ViewAction)(0),             // 0: pao.mesh.v1.ViewAction
+	(Decision)(0),               // 1: pao.mesh.v1.Decision
+	(AgentState)(0),             // 2: pao.mesh.v1.AgentState
+	(Role)(0),                   // 3: pao.mesh.v1.Role
+	(*Result)(nil),              // 4: pao.mesh.v1.Result
+	(*AgentRef)(nil),            // 5: pao.mesh.v1.AgentRef
+	(*SpawnRequest)(nil),        // 6: pao.mesh.v1.SpawnRequest
+	(*SpawnResult)(nil),         // 7: pao.mesh.v1.SpawnResult
+	(*KillResult)(nil),          // 8: pao.mesh.v1.KillResult
+	(*ListHarvestsRequest)(nil), // 9: pao.mesh.v1.ListHarvestsRequest
+	(*HarvestFileInfo)(nil),     // 10: pao.mesh.v1.HarvestFileInfo
+	(*HarvestManifest)(nil),     // 11: pao.mesh.v1.HarvestManifest
+	(*ListHarvestsReply)(nil),   // 12: pao.mesh.v1.ListHarvestsReply
+	(*HarvestRef)(nil),          // 13: pao.mesh.v1.HarvestRef
+	(*HarvestFileRef)(nil),      // 14: pao.mesh.v1.HarvestFileRef
+	(*HarvestFile)(nil),         // 15: pao.mesh.v1.HarvestFile
+	(*DeliverRequest)(nil),      // 16: pao.mesh.v1.DeliverRequest
+	(*DeliverResult)(nil),       // 17: pao.mesh.v1.DeliverResult
+	(*StreamRequest)(nil),       // 18: pao.mesh.v1.StreamRequest
+	(*ViewRequest)(nil),         // 19: pao.mesh.v1.ViewRequest
+	(*DecideRequest)(nil),       // 20: pao.mesh.v1.DecideRequest
+	(*PostedQuery)(nil),         // 21: pao.mesh.v1.PostedQuery
+	(*PostedReply)(nil),         // 22: pao.mesh.v1.PostedReply
+	(*ConfigBundle)(nil),        // 23: pao.mesh.v1.ConfigBundle
+	(*ConfigAck)(nil),           // 24: pao.mesh.v1.ConfigAck
+	(*StreamBinding)(nil),       // 25: pao.mesh.v1.StreamBinding
+	(*AgentInfo)(nil),           // 26: pao.mesh.v1.AgentInfo
+	(*AgentsReport)(nil),        // 27: pao.mesh.v1.AgentsReport
+	(*StateEvent)(nil),          // 28: pao.mesh.v1.StateEvent
+	(*Report)(nil),              // 29: pao.mesh.v1.Report
+	(*Ack)(nil),                 // 30: pao.mesh.v1.Ack
+	(*HelloRequest)(nil),        // 31: pao.mesh.v1.HelloRequest
+	(*HelloReply)(nil),          // 32: pao.mesh.v1.HelloReply
+	(*Beat)(nil),                // 33: pao.mesh.v1.Beat
+	(*MasterLostNotice)(nil),    // 34: pao.mesh.v1.MasterLostNotice
+	(*ProbeRequest)(nil),        // 35: pao.mesh.v1.ProbeRequest
+	(*ProbeReply)(nil),          // 36: pao.mesh.v1.ProbeReply
+	(*NewMasterNotice)(nil),     // 37: pao.mesh.v1.NewMasterNotice
 }
 var file_pao_mesh_v1_mesh_proto_depIdxs = []int32{
-	0,  // 0: pao.mesh.v1.ViewRequest.action:type_name -> pao.mesh.v1.ViewAction
-	1,  // 1: pao.mesh.v1.DecideRequest.decision:type_name -> pao.mesh.v1.Decision
-	2,  // 2: pao.mesh.v1.AgentInfo.state:type_name -> pao.mesh.v1.AgentState
-	18, // 3: pao.mesh.v1.AgentInfo.bindings:type_name -> pao.mesh.v1.StreamBinding
-	19, // 4: pao.mesh.v1.AgentsReport.agents:type_name -> pao.mesh.v1.AgentInfo
-	19, // 5: pao.mesh.v1.StateEvent.changed:type_name -> pao.mesh.v1.AgentInfo
-	20, // 6: pao.mesh.v1.Report.agents:type_name -> pao.mesh.v1.AgentsReport
-	21, // 7: pao.mesh.v1.Report.event:type_name -> pao.mesh.v1.StateEvent
-	3,  // 8: pao.mesh.v1.HelloRequest.role:type_name -> pao.mesh.v1.Role
-	3,  // 9: pao.mesh.v1.HelloReply.role:type_name -> pao.mesh.v1.Role
-	3,  // 10: pao.mesh.v1.Beat.role:type_name -> pao.mesh.v1.Role
-	5,  // 11: pao.mesh.v1.Node.Launch:input_type -> pao.mesh.v1.AgentRef
-	5,  // 12: pao.mesh.v1.Node.Kill:input_type -> pao.mesh.v1.AgentRef
-	5,  // 13: pao.mesh.v1.Node.Restart:input_type -> pao.mesh.v1.AgentRef
-	6,  // 14: pao.mesh.v1.Node.Spawn:input_type -> pao.mesh.v1.SpawnRequest
-	5,  // 15: pao.mesh.v1.Node.KillTemp:input_type -> pao.mesh.v1.AgentRef
-	9,  // 16: pao.mesh.v1.Node.Deliver:input_type -> pao.mesh.v1.DeliverRequest
-	11, // 17: pao.mesh.v1.Node.SetStream:input_type -> pao.mesh.v1.StreamRequest
-	12, // 18: pao.mesh.v1.Node.View:input_type -> pao.mesh.v1.ViewRequest
-	13, // 19: pao.mesh.v1.Node.Decide:input_type -> pao.mesh.v1.DecideRequest
-	14, // 20: pao.mesh.v1.Node.QueryPosted:input_type -> pao.mesh.v1.PostedQuery
-	16, // 21: pao.mesh.v1.Node.PushConfig:input_type -> pao.mesh.v1.ConfigBundle
-	22, // 22: pao.mesh.v1.Master.Session:input_type -> pao.mesh.v1.Report
-	24, // 23: pao.mesh.v1.Peer.Hello:input_type -> pao.mesh.v1.HelloRequest
-	26, // 24: pao.mesh.v1.Peer.Liveness:input_type -> pao.mesh.v1.Beat
-	27, // 25: pao.mesh.v1.Peer.MasterLost:input_type -> pao.mesh.v1.MasterLostNotice
-	28, // 26: pao.mesh.v1.Peer.Probe:input_type -> pao.mesh.v1.ProbeRequest
-	30, // 27: pao.mesh.v1.Peer.NewMaster:input_type -> pao.mesh.v1.NewMasterNotice
-	4,  // 28: pao.mesh.v1.Node.Launch:output_type -> pao.mesh.v1.Result
-	4,  // 29: pao.mesh.v1.Node.Kill:output_type -> pao.mesh.v1.Result
-	4,  // 30: pao.mesh.v1.Node.Restart:output_type -> pao.mesh.v1.Result
-	7,  // 31: pao.mesh.v1.Node.Spawn:output_type -> pao.mesh.v1.SpawnResult
-	8,  // 32: pao.mesh.v1.Node.KillTemp:output_type -> pao.mesh.v1.KillResult
-	10, // 33: pao.mesh.v1.Node.Deliver:output_type -> pao.mesh.v1.DeliverResult
-	4,  // 34: pao.mesh.v1.Node.SetStream:output_type -> pao.mesh.v1.Result
-	4,  // 35: pao.mesh.v1.Node.View:output_type -> pao.mesh.v1.Result
-	4,  // 36: pao.mesh.v1.Node.Decide:output_type -> pao.mesh.v1.Result
-	15, // 37: pao.mesh.v1.Node.QueryPosted:output_type -> pao.mesh.v1.PostedReply
-	17, // 38: pao.mesh.v1.Node.PushConfig:output_type -> pao.mesh.v1.ConfigAck
-	23, // 39: pao.mesh.v1.Master.Session:output_type -> pao.mesh.v1.Ack
-	25, // 40: pao.mesh.v1.Peer.Hello:output_type -> pao.mesh.v1.HelloReply
-	26, // 41: pao.mesh.v1.Peer.Liveness:output_type -> pao.mesh.v1.Beat
-	4,  // 42: pao.mesh.v1.Peer.MasterLost:output_type -> pao.mesh.v1.Result
-	29, // 43: pao.mesh.v1.Peer.Probe:output_type -> pao.mesh.v1.ProbeReply
-	4,  // 44: pao.mesh.v1.Peer.NewMaster:output_type -> pao.mesh.v1.Result
-	28, // [28:45] is the sub-list for method output_type
-	11, // [11:28] is the sub-list for method input_type
-	11, // [11:11] is the sub-list for extension type_name
-	11, // [11:11] is the sub-list for extension extendee
-	0,  // [0:11] is the sub-list for field type_name
+	10, // 0: pao.mesh.v1.HarvestManifest.files:type_name -> pao.mesh.v1.HarvestFileInfo
+	11, // 1: pao.mesh.v1.ListHarvestsReply.harvests:type_name -> pao.mesh.v1.HarvestManifest
+	0,  // 2: pao.mesh.v1.ViewRequest.action:type_name -> pao.mesh.v1.ViewAction
+	1,  // 3: pao.mesh.v1.DecideRequest.decision:type_name -> pao.mesh.v1.Decision
+	2,  // 4: pao.mesh.v1.AgentInfo.state:type_name -> pao.mesh.v1.AgentState
+	25, // 5: pao.mesh.v1.AgentInfo.bindings:type_name -> pao.mesh.v1.StreamBinding
+	26, // 6: pao.mesh.v1.AgentsReport.agents:type_name -> pao.mesh.v1.AgentInfo
+	26, // 7: pao.mesh.v1.StateEvent.changed:type_name -> pao.mesh.v1.AgentInfo
+	27, // 8: pao.mesh.v1.Report.agents:type_name -> pao.mesh.v1.AgentsReport
+	28, // 9: pao.mesh.v1.Report.event:type_name -> pao.mesh.v1.StateEvent
+	3,  // 10: pao.mesh.v1.HelloRequest.role:type_name -> pao.mesh.v1.Role
+	3,  // 11: pao.mesh.v1.HelloReply.role:type_name -> pao.mesh.v1.Role
+	3,  // 12: pao.mesh.v1.Beat.role:type_name -> pao.mesh.v1.Role
+	5,  // 13: pao.mesh.v1.Node.Launch:input_type -> pao.mesh.v1.AgentRef
+	5,  // 14: pao.mesh.v1.Node.Kill:input_type -> pao.mesh.v1.AgentRef
+	5,  // 15: pao.mesh.v1.Node.Restart:input_type -> pao.mesh.v1.AgentRef
+	6,  // 16: pao.mesh.v1.Node.Spawn:input_type -> pao.mesh.v1.SpawnRequest
+	5,  // 17: pao.mesh.v1.Node.KillTemp:input_type -> pao.mesh.v1.AgentRef
+	16, // 18: pao.mesh.v1.Node.Deliver:input_type -> pao.mesh.v1.DeliverRequest
+	18, // 19: pao.mesh.v1.Node.SetStream:input_type -> pao.mesh.v1.StreamRequest
+	19, // 20: pao.mesh.v1.Node.View:input_type -> pao.mesh.v1.ViewRequest
+	20, // 21: pao.mesh.v1.Node.Decide:input_type -> pao.mesh.v1.DecideRequest
+	21, // 22: pao.mesh.v1.Node.QueryPosted:input_type -> pao.mesh.v1.PostedQuery
+	23, // 23: pao.mesh.v1.Node.PushConfig:input_type -> pao.mesh.v1.ConfigBundle
+	9,  // 24: pao.mesh.v1.Node.ListHarvests:input_type -> pao.mesh.v1.ListHarvestsRequest
+	13, // 25: pao.mesh.v1.Node.GetHarvest:input_type -> pao.mesh.v1.HarvestRef
+	14, // 26: pao.mesh.v1.Node.ReadHarvestFile:input_type -> pao.mesh.v1.HarvestFileRef
+	13, // 27: pao.mesh.v1.Node.DeleteHarvest:input_type -> pao.mesh.v1.HarvestRef
+	29, // 28: pao.mesh.v1.Master.Session:input_type -> pao.mesh.v1.Report
+	31, // 29: pao.mesh.v1.Peer.Hello:input_type -> pao.mesh.v1.HelloRequest
+	33, // 30: pao.mesh.v1.Peer.Liveness:input_type -> pao.mesh.v1.Beat
+	34, // 31: pao.mesh.v1.Peer.MasterLost:input_type -> pao.mesh.v1.MasterLostNotice
+	35, // 32: pao.mesh.v1.Peer.Probe:input_type -> pao.mesh.v1.ProbeRequest
+	37, // 33: pao.mesh.v1.Peer.NewMaster:input_type -> pao.mesh.v1.NewMasterNotice
+	4,  // 34: pao.mesh.v1.Node.Launch:output_type -> pao.mesh.v1.Result
+	4,  // 35: pao.mesh.v1.Node.Kill:output_type -> pao.mesh.v1.Result
+	4,  // 36: pao.mesh.v1.Node.Restart:output_type -> pao.mesh.v1.Result
+	7,  // 37: pao.mesh.v1.Node.Spawn:output_type -> pao.mesh.v1.SpawnResult
+	8,  // 38: pao.mesh.v1.Node.KillTemp:output_type -> pao.mesh.v1.KillResult
+	17, // 39: pao.mesh.v1.Node.Deliver:output_type -> pao.mesh.v1.DeliverResult
+	4,  // 40: pao.mesh.v1.Node.SetStream:output_type -> pao.mesh.v1.Result
+	4,  // 41: pao.mesh.v1.Node.View:output_type -> pao.mesh.v1.Result
+	4,  // 42: pao.mesh.v1.Node.Decide:output_type -> pao.mesh.v1.Result
+	22, // 43: pao.mesh.v1.Node.QueryPosted:output_type -> pao.mesh.v1.PostedReply
+	24, // 44: pao.mesh.v1.Node.PushConfig:output_type -> pao.mesh.v1.ConfigAck
+	12, // 45: pao.mesh.v1.Node.ListHarvests:output_type -> pao.mesh.v1.ListHarvestsReply
+	11, // 46: pao.mesh.v1.Node.GetHarvest:output_type -> pao.mesh.v1.HarvestManifest
+	15, // 47: pao.mesh.v1.Node.ReadHarvestFile:output_type -> pao.mesh.v1.HarvestFile
+	4,  // 48: pao.mesh.v1.Node.DeleteHarvest:output_type -> pao.mesh.v1.Result
+	30, // 49: pao.mesh.v1.Master.Session:output_type -> pao.mesh.v1.Ack
+	32, // 50: pao.mesh.v1.Peer.Hello:output_type -> pao.mesh.v1.HelloReply
+	33, // 51: pao.mesh.v1.Peer.Liveness:output_type -> pao.mesh.v1.Beat
+	4,  // 52: pao.mesh.v1.Peer.MasterLost:output_type -> pao.mesh.v1.Result
+	36, // 53: pao.mesh.v1.Peer.Probe:output_type -> pao.mesh.v1.ProbeReply
+	4,  // 54: pao.mesh.v1.Peer.NewMaster:output_type -> pao.mesh.v1.Result
+	34, // [34:55] is the sub-list for method output_type
+	13, // [13:34] is the sub-list for method input_type
+	13, // [13:13] is the sub-list for extension type_name
+	13, // [13:13] is the sub-list for extension extendee
+	0,  // [0:13] is the sub-list for field type_name
 }
 
 func init() { file_pao_mesh_v1_mesh_proto_init() }
@@ -2245,11 +2705,11 @@ func file_pao_mesh_v1_mesh_proto_init() {
 	if File_pao_mesh_v1_mesh_proto != nil {
 		return
 	}
-	file_pao_mesh_v1_mesh_proto_msgTypes[17].OneofWrappers = []any{
+	file_pao_mesh_v1_mesh_proto_msgTypes[24].OneofWrappers = []any{
 		(*StateEvent_Changed)(nil),
 		(*StateEvent_Removed)(nil),
 	}
-	file_pao_mesh_v1_mesh_proto_msgTypes[18].OneofWrappers = []any{
+	file_pao_mesh_v1_mesh_proto_msgTypes[25].OneofWrappers = []any{
 		(*Report_Agents)(nil),
 		(*Report_Event)(nil),
 	}
@@ -2259,7 +2719,7 @@ func file_pao_mesh_v1_mesh_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pao_mesh_v1_mesh_proto_rawDesc), len(file_pao_mesh_v1_mesh_proto_rawDesc)),
 			NumEnums:      4,
-			NumMessages:   27,
+			NumMessages:   34,
 			NumExtensions: 0,
 			NumServices:   3,
 		},

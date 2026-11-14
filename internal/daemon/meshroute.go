@@ -66,13 +66,6 @@ func (m meshRemote) Deliver(ctx context.Context, p core.Profile, msg core.Messag
 	return reply.GetLaunched(), nil
 }
 
-// meshNodeServer answers the master's commands on this node. For now it delivers a
-// message to one of this node's own agents; the lifecycle commands are unimplemented.
-type meshNodeServer struct {
-	pb.UnimplementedNodeServer
-	layer *comm.Layer
-}
-
 func (s meshNodeServer) Deliver(ctx context.Context, req *pb.DeliverRequest) (*pb.DeliverResult, error) {
 	d, err := s.layer.Receive(ctx, comm.Inbound{
 		Source: "mesh", Sender: req.GetSender(), Text: req.GetText(), Kind: core.MessageContent,

@@ -719,3 +719,44 @@ func TestSpawnRefusesTheNamesPaoSpeaksAs(t *testing.T) {
 	assert.Empty(t, dirs(t, e.prov.Root))
 	assert.Empty(t, e.reg.Temps())
 }
+
+func TestAnAlreadyAuthorizedRequestIsNotDecidedAgainAndKeepsItsRequester(t *testing.T) {
+	e := newEnv(t, map[string]string{"researcher": recipeYAML})
+	// The seam and the gate would both refuse this agent: the master that sent the
+	// request has already decided, so this node does not.
+	p, err := e.m.Spawn(context.Background(), SpawnRequest{Recipe: "researcher", Name: "a", Requester: access.Agent("boss"), Authorized: true})
+	require.NoError(t, err)
+	assert.Equal(t, "a", p.Name)
+	assert.Empty(t, e.gate.got, "the gate was not asked again")
+
+	res, err := e.m.Kill(context.Background(), KillRequest{Name: "a", Requester: access.Agent("boss"), Authorized: true})
+	require.NoError(t, err)
+	assert.Empty(t, e.gate.got)
+	assert.Equal(t, "agent:boss", res.Harvest.Requester, "the harvest still records who asked")
+}
+
+func TestAnUnknownRecipeIsStillNamedWhenTheMasterAlreadyAuthorized(t *testing.T) {
+	e := newEnv(t, map[string]string{"researcher": recipeYAML})
+	_, err := e.m.Spawn(context.Background(), SpawnRequest{Recipe: "nope", Name: "a", Requester: access.Agent("boss"), Authorized: true})
+	require.ErrorIs(t, err, ErrNoRecipe, "the master decided who may ask; the node can say which recipe it lacks")
+	_, err = e.m.Spawn(context.Background(), SpawnRequest{Recipe: "nope", Name: "a", Requester: access.Agent("boss")})
+	require.ErrorIs(t, err, ErrNotFound, "without that, an agent still cannot probe for recipes")
+}
+
+func TestAnUnauthorizedAgentRequestIsStillRefused(t *testing.T) {
+	e := newEnv(t, map[string]string{"researcher": recipeYAML})
+	_, err := e.m.Spawn(context.Background(), SpawnRequest{Recipe: "researcher", Name: "a", Requester: access.Agent("boss")})
+	require.ErrorIs(t, err, ErrNotFound)
+	e.spawn(t, "b")
+	_, err = e.m.Kill(context.Background(), KillRequest{Name: "b", Requester: access.Agent("boss")})
+	require.ErrorIs(t, err, ErrNotFound)
+}
+
+func TestNoReportLeavesTheReportToTheCaller(t *testing.T) {
+	e := newEnv(t, map[string]string{"researcher": recipeYAML})
+	e.spawn(t, "a")
+	res, err := e.m.Kill(context.Background(), KillRequest{Name: "a", Requester: access.Operator, NoReport: true})
+	require.NoError(t, err)
+	assert.NotEmpty(t, res.Harvest.ID, "the result still carries the harvest")
+	assert.Empty(t, *e.reports, "but nothing was posted to this node's operator")
+}

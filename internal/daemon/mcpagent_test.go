@@ -57,7 +57,7 @@ func mcpStatus(t *testing.T, url, token string) int {
 func spawnTwo(t *testing.T, n *node) {
 	t.Helper()
 	for _, name := range []string{"tmp-a", "tmp-b"} {
-		_, err := n.client.Spawn(context.Background(), "fake", name, "")
+		_, err := n.client.Spawn(context.Background(), "fake", name, "", "")
 		require.NoError(t, err)
 	}
 }
@@ -169,7 +169,7 @@ func TestAnAgentsKillOfAPeerWaitsForTheOperatorsAnswer(t *testing.T) {
 	_, ok = agentByName(t, n, "tmp-b")
 	assert.False(t, ok, "killed once the operator allowed it")
 
-	hs, err := n.client.Harvests(context.Background())
+	hs, err := n.client.Harvests(context.Background(), "")
 	require.NoError(t, err)
 	require.Len(t, hs, 1)
 	assert.Equal(t, "agent:tmp-a", hs[0].Requester, "the harvest records who asked: the agent, by its token's identity")
@@ -219,7 +219,7 @@ func TestATokenEndsWithItsAgentsSession(t *testing.T) {
 	assert.Equal(t, http.StatusOK, mcpStatus(t, n.url, tokB), "another agent's token is untouched")
 
 	// The name respawned is a new session with a new token; the old one stays dead.
-	_, err = n.client.Spawn(context.Background(), "fake", "tmp-a", "")
+	_, err = n.client.Spawn(context.Background(), "fake", "tmp-a", "", "")
 	require.NoError(t, err)
 	fresh := sessionEnv(t, n, "tmp-a", "PAO_AGENT_TOKEN")
 	assert.NotEqual(t, tokA, fresh)

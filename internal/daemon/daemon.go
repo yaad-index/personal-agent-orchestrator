@@ -161,6 +161,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		Thresholds: registry.Thresholds{UnusedAfter: cfg.Orchestrator.Temp.UnusedAfter, IdleAfter: cfg.Orchestrator.Temp.IdleAfter},
 	}
 
+	tempOps := &tempAPI{mgr: mgr, store: harvests}
 	ops := &mcpOps{reg: reg, thresholds: mgr.Thresholds, recipes: mgr.Recipes, mgr: mgr, store: harvests, layer: layer, auth: opts.Authorizer}
 	resolver := mcpsrv.Chain{
 		mcpsrv.NewOperatorResolver(token),
@@ -192,9 +193,16 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 			return ok
 		})
 		meshNode.SetSink(dir)
-		meshNode.SetNodeServer(meshNodeServer{layer: layer})
+		meshNode.SetNodeServer(meshNodeServer{
+			layer: layer, router: router, plane: plane, reg: reg, follow: hook.follow, mgr: mgr, harvest: harvests,
+		})
 		router.SetRemote(meshRemote{dir: dir, node: meshNode})
 		ops.dir = dir
+		tempOps.dir = dir
+		tempOps.cmds = &meshCommands{self: id.NodeID, node: meshNode, dir: dir, holds: func(name string) bool {
+			_, _, ok := reg.Lookup(name)
+			return ok
+		}}
 		// A temporary agent may not take a name an agent on another node holds.
 		mgr.Check = func(p core.Profile) error {
 			if err := checkProfile(p); err != nil {
@@ -208,7 +216,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		localOpts = append(localOpts, local.WithMesh(meshStatusWith(meshNode, dir)))
 	}
 
-	srv, err := local.New(layer, token, append([]local.Option{local.WithDecider(pending), local.WithTemp(tempAPI{mgr: mgr, store: harvests}),
+	srv, err := local.New(layer, token, append([]local.Option{local.WithDecider(pending), local.WithTemp(tempOps),
 		local.WithMount("/mcp", mcpHandler)}, localOpts...)...)
 	if err != nil {
 		return err

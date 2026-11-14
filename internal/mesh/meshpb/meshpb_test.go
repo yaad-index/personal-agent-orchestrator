@@ -22,6 +22,7 @@ var services = map[string][]method{
 		{"Spawn", false, false}, {"KillTemp", false, false}, {"Deliver", false, false},
 		{"SetStream", false, false}, {"View", false, false}, {"Decide", false, false},
 		{"QueryPosted", false, false}, {"PushConfig", false, false},
+		{"ListHarvests", false, false}, {"GetHarvest", false, false}, {"ReadHarvestFile", false, false}, {"DeleteHarvest", false, false},
 	},
 	"Master": {{"Session", true, true}},
 	"Peer": {

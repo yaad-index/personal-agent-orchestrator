@@ -27,14 +27,15 @@ type fakeTemp struct {
 	file      []byte
 	err       error
 
-	gotSpawn [3]string
+	gotSpawn [4]string
+	gotNode  string
 	gotKill  string
 	gotID    string
 	gotPath  string
 }
 
-func (f *fakeTemp) Spawn(_ context.Context, recipe, name, channel string) (string, error) {
-	f.gotSpawn = [3]string{recipe, name, channel}
+func (f *fakeTemp) Spawn(_ context.Context, recipe, name, channel, node string) (string, error) {
+	f.gotSpawn = [4]string{recipe, name, channel, node}
 	return f.spawnName, f.spawnErr
 }
 func (f *fakeTemp) Kill(_ context.Context, name string) (KillJSON, error) {
@@ -42,18 +43,19 @@ func (f *fakeTemp) Kill(_ context.Context, name string) (KillJSON, error) {
 	return f.killRes, f.killErr
 }
 func (f *fakeTemp) Agents() []AgentJSON { return f.agents }
-func (f *fakeTemp) Harvests() ([]harvest.Manifest, error) {
+func (f *fakeTemp) Harvests(_ context.Context, node string) ([]harvest.Manifest, error) {
+	f.gotNode = node
 	return f.harvests, f.err
 }
-func (f *fakeTemp) Harvest(id string) (harvest.Manifest, error) {
+func (f *fakeTemp) Harvest(_ context.Context, id string) (harvest.Manifest, error) {
 	f.gotID = id
 	return f.harvest, f.err
 }
-func (f *fakeTemp) HarvestFile(id, path string) ([]byte, error) {
+func (f *fakeTemp) HarvestFile(_ context.Context, id, path string) ([]byte, error) {
 	f.gotID, f.gotPath = id, path
 	return f.file, f.err
 }
-func (f *fakeTemp) DeleteHarvest(id string) error { f.gotID = id; return f.err }
+func (f *fakeTemp) DeleteHarvest(_ context.Context, id string) error { f.gotID = id; return f.err }
 
 func tempServer(t *testing.T, f *fakeTemp) (*Client, string) {
 	t.Helper()
@@ -87,10 +89,10 @@ func TestTempRoutesNeedTheBearerToken(t *testing.T) {
 func TestSpawnPassesTheRequestAndReturnsTheName(t *testing.T) {
 	f := &fakeTemp{spawnName: "tmp-a"}
 	c, _ := tempServer(t, f)
-	name, err := c.Spawn(context.Background(), "researcher", "tmp-a", "chat")
+	name, err := c.Spawn(context.Background(), "researcher", "tmp-a", "chat", "n-b")
 	require.NoError(t, err)
 	assert.Equal(t, "tmp-a", name)
-	assert.Equal(t, [3]string{"researcher", "tmp-a", "chat"}, f.gotSpawn)
+	assert.Equal(t, [4]string{"researcher", "tmp-a", "chat", "n-b"}, f.gotSpawn)
 }
 
 func TestSpawnWithoutARecipeIsABadRequest(t *testing.T) {
@@ -115,7 +117,7 @@ func TestErrorsBecomeStatusCodes(t *testing.T) {
 		f := &fakeTemp{spawnErr: c.err, killErr: c.err, err: c.err}
 		cl, _ := tempServer(t, f)
 		ctx := context.Background()
-		_, err := cl.Spawn(ctx, "r", "", "")
+		_, err := cl.Spawn(ctx, "r", "", "", "")
 		require.Error(t, err)
 		assert.True(t, strings.HasPrefix(err.Error(), fmt.Sprint(c.code)), "spawn %v: %v", c.err, err)
 		_, err = cl.Kill(ctx, "a")
@@ -124,7 +126,7 @@ func TestErrorsBecomeStatusCodes(t *testing.T) {
 		assert.True(t, strings.HasPrefix(err.Error(), fmt.Sprint(c.code)), "harvest %v: %v", c.err, err)
 		_, err = cl.HarvestFile(ctx, "a", "p")
 		assert.True(t, strings.HasPrefix(err.Error(), fmt.Sprint(c.code)), "file %v: %v", c.err, err)
-		_, err = cl.Harvests(ctx)
+		_, err = cl.Harvests(ctx, "")
 		assert.True(t, strings.HasPrefix(err.Error(), fmt.Sprint(c.code)), "list %v: %v", c.err, err)
 		err = cl.DeleteHarvest(ctx, "a")
 		assert.True(t, strings.HasPrefix(err.Error(), fmt.Sprint(c.code)), "delete %v: %v", c.err, err)
@@ -134,7 +136,7 @@ func TestErrorsBecomeStatusCodes(t *testing.T) {
 func TestAnAgentThatIsNotReadyStillReturnsItsName(t *testing.T) {
 	f := &fakeTemp{spawnName: "tmp-a", spawnErr: fmt.Errorf("%w: pane text", ErrNotReady)}
 	c, _ := tempServer(t, f)
-	name, err := c.Spawn(context.Background(), "r", "tmp-a", "")
+	name, err := c.Spawn(context.Background(), "r", "tmp-a", "", "")
 	require.Error(t, err)
 	assert.Equal(t, "tmp-a", name)
 	assert.True(t, strings.HasPrefix(err.Error(), "502"))
@@ -163,7 +165,7 @@ func TestKillAndListAndHarvestRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, f.agents, agents)
 
-	hs, err := c.Harvests(ctx)
+	hs, err := c.Harvests(ctx, "n-b")
 	require.NoError(t, err)
 	require.Len(t, hs, 1)
 

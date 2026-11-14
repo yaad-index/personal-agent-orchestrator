@@ -35,6 +35,7 @@ type SpawnCmd struct {
 	Recipe  string `arg:"" help:"Recipe to spawn from (see 'pao recipes list')."`
 	Name    string `help:"Name for the agent. Default: generated from the recipe."`
 	Channel string `help:"Channel its stream is bound to. Default: the node's only channel."`
+	On      string `help:"Node of the mesh to start it on. Default: the node asked."`
 }
 
 // Run implements spawn.
@@ -47,7 +48,7 @@ func (c SpawnCmd) run(w io.Writer) error {
 	}
 	ctx, cancel := opCtx()
 	defer cancel()
-	name, err := cl.Spawn(ctx, c.Recipe, c.Name, c.Channel)
+	name, err := cl.Spawn(ctx, c.Recipe, c.Name, c.Channel, c.On)
 	if name != "" {
 		// Even when it did not become ready the agent exists: say its name, so
 		// it can be inspected or killed.
@@ -106,7 +107,11 @@ func (c AgentsCmd) run(w io.Writer) error {
 	}
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 	for _, a := range agents {
-		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", a.Name, a.Flag, a.State, a.Recipe, a.Channel); err != nil {
+		node := a.Node
+		if node == "" {
+			node = "-"
+		}
+		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", a.Name, a.Flag, a.State, a.Recipe, a.Channel, node); err != nil {
 			return err
 		}
 	}
@@ -122,7 +127,10 @@ type HarvestsCmd struct {
 }
 
 // HarvestsListCmd lists harvests, newest first.
-type HarvestsListCmd struct{ NodeFlags }
+type HarvestsListCmd struct {
+	NodeFlags
+	On string `help:"Node of the mesh to list the harvests of. Default: the node asked."`
+}
 
 // Run implements harvests list.
 func (c HarvestsListCmd) Run() error { return c.run(os.Stdout) }
@@ -134,7 +142,7 @@ func (c HarvestsListCmd) run(w io.Writer) error {
 	}
 	ctx, cancel := opCtx()
 	defer cancel()
-	hs, err := cl.Harvests(ctx)
+	hs, err := cl.Harvests(ctx, c.On)
 	if err != nil {
 		return err
 	}
