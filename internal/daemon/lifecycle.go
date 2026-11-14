@@ -43,9 +43,12 @@ func (l lifecycle) find(name string) (core.Profile, registry.AgentView, error) {
 // Start brings the agent up if it is not running. An agent that does not become
 // ready is returned with a readiness error and stays, as for a first message.
 func (l lifecycle) Start(ctx context.Context, name string) error {
-	p, _, err := l.find(name)
+	p, v, err := l.find(name)
 	if err != nil {
 		return err
+	}
+	if v.Temp != nil {
+		return temporaryAgentError(fmt.Sprintf("%q is a temporary agent: it is started by spawning it, which provisions its workdir and harvest, so it is not started here", p.Name))
 	}
 	_, err = l.router.Ensure(ctx, p)
 	return err

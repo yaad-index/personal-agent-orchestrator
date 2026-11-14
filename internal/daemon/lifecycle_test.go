@@ -59,6 +59,7 @@ func TestAnAgentActionThatCannotBeDoneIsRefusedWithAReason(t *testing.T) {
 	}{
 		{"unknown", "ghost", "start", "404", `no agent "ghost"`},
 		{"unknown stop", "ghost", "stop", "404", "no agent"},
+		{"temporary start", "tmp-a", "start", "409", "started by spawning"},
 		{"temporary stop", "tmp-a", "stop", "409", "pao kill"},
 		{"temporary restart", "tmp-a", "restart", "409", "temporary agent"},
 		{"no such action", "boss", "explode", "404", "start, stop or restart"},
@@ -123,6 +124,9 @@ func TestTheMasterStartsStopsAndRestartsAnAgentOnAnotherNode(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "409", "a temporary agent is killed the way that harvests it")
 	assert.True(t, tmuxHasSession(t, b, "tmp-r"))
+	err = a.client.AgentAction(ctx, "tmp-r", "start")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "409", "nor started outside the spawn that provisions it")
 
 	err = a.client.AgentAction(ctx, "ghost", "start")
 	require.Error(t, err)
