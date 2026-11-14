@@ -52,7 +52,9 @@ func TestViewCommandsSendTheirAction(t *testing.T) {
 }
 
 func TestAViewRefusalIsReportedWithItsStatus(t *testing.T) {
-	s := newStubNode(t, func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, 404, map[string]string{"error": "no agent"}) })
+	s := newStubNode(t, func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, 404, map[string]string{"error": "no agent"})
+	})
 	err := ViewPauseCmd{NodeFlags: s.flags(t), Agent: "ghost"}.run(&bytes.Buffer{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "404")
