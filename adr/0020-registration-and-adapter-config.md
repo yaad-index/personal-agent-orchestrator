@@ -1,0 +1,37 @@
+# ADR 0020: Registration, adapter configuration, and the rejected-inbound record
+
+**Status:** Proposed (2026-11-16)
+
+Extends ADR-0019.
+
+## Context
+
+ADR-0019 fixed that a sender gains a subject only through registration, that an unbound sender reaches nothing else and learns nothing from it, and that a rejected inbound is recorded in full, bounded, operator-only and inert. It deliberately left open the registration and authentication procedure itself, the adapter registration API, the per-channel configuration and credential schema, and the record's storage, retention, inspection surface and bounding policy. A chat adapter cannot be built until those are fixed, because each is a place where a wrong guess either lets a stranger in or lets a stranger fill the disk.
+
+## Decision
+
+1. **Registration is by an operator-issued, single-use invitation.** The operator, at pao's local operator surface, issues an invitation for one existing subject. The invitation is a random secret of at least 80 bits, shown to the operator once and handed to the human out of band. An unbound sender registers by sending the secret to the adapter's registration entry point; pao then binds that (channel, per-sender id) pair to the invited subject (ADR-0019 point 3). The invitation is how the human is authenticated: holding a secret the operator issued is the proof. Nothing the sender says about who it is, its display name or any claimed identity, is used.
+
+2. **An invitation is stored only as a digest, expires, and is consumed by use.** pao keeps a one-way digest of the secret, never the secret, so a copy of the store cannot register anyone. An invitation expires after a configured time (default 15 minutes), is valid for one registration, and is removed once used or expired. The operator can list the outstanding invitations by subject and expiry (never the secret) and revoke one.
+
+3. **The registration reply does not distinguish a wrong secret from anything else.** Any attempt that does not complete a registration, whether the secret is wrong, expired, already used, or presented by a pair that is already bound, gets one fixed reply, identical in content and timing class. A bound pair presenting a valid secret does not consume it and learns nothing about its own binding. A completed registration is the only reply that differs, and only the holder of a valid secret can produce it. This is what keeps the entry point from revealing a subject, an agent, an existing binding, or whether an invitation exists (ADR-0019 point 5).
+
+4. **Failed attempts are limited per sender and cannot be used to guess a secret.** After a configured number of failed attempts from one (channel, per-sender id) within a window (default 5 in 15 minutes), further attempts from that pair are not evaluated until the window passes, and are answered with the same fixed reply as any other failure, so the limit is not an oracle. The limit is per pair; a flood from many ids is bounded by point 7, and the secret's size (point 1) makes guessing infeasible inside the limit.
+
+5. **An adapter is wired through an explicit registry in pao's core.** The core holds one table from an adapter kind to the function that builds it. Adding an adapter adds one entry to that table and one package; there is no self-registration, no plugin loading, and no reflection, consistent with ADR-0019 point 1 and so the set of adapters a build contains is readable in one place. The contract an adapter implements is the channel contract of ADR-0009 plus an inbound hook that hands the layer a message carrying the channel's name and the platform's authenticated per-sender id (ADR-0019 point 2), and reports the registration entry point as a distinct kind of inbound so the layer, not the adapter, handles it.
+
+6. **A channel is configured by name, kind, credential reference and options.** The node configuration lists channels; each entry has a name, an adapter kind, the name of an environment variable that holds the credential, and a map of options the adapter alone interprets. The name is the namespace of the bindings of ADR-0019 point 3, so it is lowercase, bounded, and cannot be renamed without orphaning them. A secret never appears in a configuration file, as with the local channel's token; a missing credential variable fails the channel's startup loudly and does not start the node's other channels differently. A channel whose kind is not compiled in is a startup error, not a skipped entry.
+
+7. **The rejected-inbound record is one bounded entry per (channel, sender), coalesced.** The record is a store of its own in the node's state directory. For each pair it holds one entry: the channel, the external sender id, the reason of the most recent rejection, the first and last time, a count, and the most recent raw payload truncated to a fixed bound (default 4 KiB). A repeat from the same pair updates its entry and does not add one, so a flood from one sender costs one entry. The number of entries is capped (default 1000); at the cap the entry with the oldest last-seen time is dropped, so a flood of distinct ids is bounded at the cap and keeps the most recent. An entry also ages out after a retention period (default 30 days). A registration attempt is recorded the same way, but the secret presented is never stored, in full or in part.
+
+8. **The record is operator-only and inert by construction.** The record is read only through the local operator surface and the operator command line; no agent surface, no mesh call, and no channel reads it. It is a separate component the communication layer writes to and nothing routes from: it has no path to routing, so a rejected inbound cannot reach an agent through it. Turning a recorded inbound into agent input is an explicit operator act that does not exist yet and is not part of this ADR; until it does, the record is read-only.
+
+9. **Nothing here changes the access seam.** Registration binds a sender to a subject; what that subject may do remains ADR-0005, ADR-0012 and the access-enforcement work, and until that exists a registered human's inbound is attributed and routed under the seam's current default.
+
+## What this ADR deliberately does NOT decide
+
+Which platforms ship first (ADR-0009, ADR-0019). The access and grant semantics for a subject (ADR-0005, ADR-0012). The operator act that turns a recorded inbound into agent input. The rest of the binding lifecycle beyond creation and operator revocation (rebinding, expiry). The group-conversation configuration (ADR-0019 point 6). Which node holds a channel's credentials in a mesh (ADR-0013, ADR-0017). A general audit log beyond these two records (ADR-0002).
+
+## Consequences
+
+A human is authenticated by something only the operator can mint, and a copy of pao's stores cannot register anyone. The registration entry point answers every failure the same way, and the per-pair limit is not itself observable, so a stranger learns nothing and cannot guess a secret within the limit. A hostile flood, from one id or from many, costs a bounded amount of disk and keeps the most recent evidence for the operator. The adapter set of a build is one readable table, and a channel's credential never sits in a file. Because the record has no route to routing, the risk ADR-0019 point 7 names, stranger content reaching an agent without a human in the loop, is closed by construction and not by a check.
