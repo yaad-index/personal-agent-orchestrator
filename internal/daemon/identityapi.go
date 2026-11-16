@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/local"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/identity"
@@ -16,7 +17,7 @@ func identityErr(err error) error {
 	switch {
 	case err == nil:
 		return nil
-	case errors.Is(err, identity.ErrNoSubject), errors.Is(err, identity.ErrNoBinding):
+	case errors.Is(err, identity.ErrNoSubject), errors.Is(err, identity.ErrNoBinding), errors.Is(err, identity.ErrNoInvitation):
 		return translated{local.ErrNotFound, err}
 	case errors.Is(err, identity.ErrSubjectExists), errors.Is(err, identity.ErrBound):
 		return translated{local.ErrConflict, err}
@@ -58,4 +59,25 @@ func (a identityAPI) Bindings(_ context.Context, subject string) ([]local.Bindin
 		out = append(out, local.BindingJSON{Channel: b.Channel, Sender: b.Sender, Subject: b.Subject})
 	}
 	return out, identityErr(err)
+}
+
+func (a identityAPI) Invite(_ context.Context, subject string, ttl time.Duration) (local.InvitationJSON, error) {
+	secret, inv, err := a.s.Invite(subject, ttl)
+	if err != nil {
+		return local.InvitationJSON{}, identityErr(err)
+	}
+	return local.InvitationJSON{ID: inv.ID, Subject: inv.Subject, Expires: inv.Expires, Secret: secret}, nil
+}
+
+func (a identityAPI) Invitations(context.Context) ([]local.InvitationJSON, error) {
+	invs, err := a.s.Invitations()
+	out := make([]local.InvitationJSON, 0, len(invs))
+	for _, i := range invs {
+		out = append(out, local.InvitationJSON{ID: i.ID, Subject: i.Subject, Expires: i.Expires})
+	}
+	return out, identityErr(err)
+}
+
+func (a identityAPI) RevokeInvitation(_ context.Context, id string) error {
+	return identityErr(a.s.RevokeInvitation(id))
 }

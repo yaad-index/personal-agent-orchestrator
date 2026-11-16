@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -36,4 +37,17 @@ func TestTheOperatorManagesSubjectsAndBindingsOverTheLocalChannel(t *testing.T) 
 	require.NoError(t, err)
 	assert.Empty(t, bs, "removing a subject takes its bindings")
 	assert.ErrorContains(t, c.RemoveSubject(ctx, "alice"), "404")
+
+	require.NoError(t, c.AddSubject(ctx, "bob"))
+	inv, err := c.Invite(ctx, "bob", time.Hour)
+	require.NoError(t, err)
+	assert.NotEmpty(t, inv.Secret)
+	invs, err := c.Invitations(ctx)
+	require.NoError(t, err)
+	require.Len(t, invs, 1)
+	assert.Empty(t, invs[0].Secret, "the list never carries a secret")
+	_, err = c.Invite(ctx, "ghost", 0)
+	assert.ErrorContains(t, err, "404")
+	require.NoError(t, c.RevokeInvitation(ctx, inv.ID))
+	assert.ErrorContains(t, c.RevokeInvitation(ctx, inv.ID), "404")
 }
