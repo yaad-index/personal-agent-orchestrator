@@ -43,12 +43,26 @@ func (b *botFake) Run(ctx context.Context) error {
 	return nil
 }
 
-func fakeTable(out **botFake) adapter.Table {
+// fakeTable builds botFakes and hands each over a channel: the factory runs on the
+// node's own goroutine, so the test must not read what it made except by receiving
+// it here.
+func fakeTable(built chan<- *botFake) adapter.Table {
 	return adapter.Table{"bot": func(s adapter.Spec, h adapter.Handler) (adapter.Adapter, error) {
 		b := &botFake{spec: s, h: h, started: make(chan struct{}), stopped: make(chan struct{})}
-		*out = b
+		built <- b
 		return b, nil
 	}}
+}
+
+func theBot(t *testing.T, built <-chan *botFake) *botFake {
+	t.Helper()
+	select {
+	case b := <-built:
+		return b
+	case <-time.After(10 * time.Second):
+		t.Fatal("no adapter was built")
+		return nil
+	}
 }
 
 func withChannel(cfg *config.Config) {
@@ -57,10 +71,10 @@ func withChannel(cfg *config.Config) {
 
 func TestAConfiguredChannelIsBuiltRunStoppedAndItsCredentialIsKeptFromAgents(t *testing.T) {
 	t.Setenv("PAO_TEST_BOT_CRED", "s3cret")
-	var bot *botFake
+	built := make(chan *botFake, 1)
 	n := startNodeWith(t, map[string]string{"bee": ""}, func(_, _ string, cfg *config.Config) { withChannel(cfg) },
-		func(o *Options) { o.Adapters = fakeTable(&bot) })
-	require.NotNil(t, bot)
+		func(o *Options) { o.Adapters = fakeTable(built) })
+	bot := theBot(t, built)
 	select {
 	case <-bot.started:
 	case <-time.After(5 * time.Second):
@@ -89,9 +103,10 @@ func TestAConfiguredChannelIsBuiltRunStoppedAndItsCredentialIsKeptFromAgents(t *
 
 func TestInboundThroughAChannelIsRecordedRoutedAndAttributedBySubject(t *testing.T) {
 	t.Setenv("PAO_TEST_BOT_CRED", "x")
-	var bot *botFake
+	built := make(chan *botFake, 1)
 	n := startNodeWith(t, map[string]string{"bee": ""}, func(_, _ string, cfg *config.Config) { withChannel(cfg) },
-		func(o *Options) { o.Adapters = fakeTable(&bot) })
+		func(o *Options) { o.Adapters = fakeTable(built) })
+	bot := theBot(t, built)
 	ctx := context.Background()
 	<-bot.started
 
@@ -145,19 +160,19 @@ func TestAReusedChannelIdStopsTheNodeBeforeAnythingStarts(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "channels.json"), []byte(`{"channels":{"1":"oldchat"}}`), 0o600))
 	cfg := &config.Config{Orchestrator: config.Orchestrator{StateDir: dir, MessageWindow: 10,
 		Channels: []config.Channel{{ID: 1, Name: "newchat", Kind: "bot", CredentialEnv: "E"}}}}
-	var bot *botFake
-	_, err := wireChannels(cfg, map[string]string{"newchat": "x"}, fakeTable(&bot), comm.New(nil, nil), nil, nil)
+	built := make(chan *botFake, 1)
+	_, err := wireChannels(cfg, map[string]string{"newchat": "x"}, fakeTable(built), comm.New(nil, nil), nil, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "never reused")
-	assert.Nil(t, bot, "no adapter was built")
+	assert.Empty(t, built, "no adapter was built")
 }
 
 func TestAConfiguredChannelBecomesAChannelOfTheLayer(t *testing.T) {
-	var bot *botFake
+	built := make(chan *botFake, 1)
 	cfg := &config.Config{Orchestrator: config.Orchestrator{StateDir: t.TempDir(), MessageWindow: 10,
 		Channels: []config.Channel{{ID: 4, Name: "chat", Kind: "bot", CredentialEnv: "E"}}}}
 	l := comm.New(nil, nil)
-	as, err := wireChannels(cfg, map[string]string{"chat": "x"}, fakeTable(&bot), l, nil, nil)
+	as, err := wireChannels(cfg, map[string]string{"chat": "x"}, fakeTable(built), l, nil, nil)
 	require.NoError(t, err)
 	require.Len(t, as, 1)
 	assert.True(t, l.HasChannel("chat"))
@@ -168,8 +183,8 @@ func TestAConfiguredChannelBecomesAChannelOfTheLayer(t *testing.T) {
 
 func wireChannelsForTest(t *testing.T, c config.Channel, cred string) ([]adapter.Adapter, error) {
 	t.Helper()
-	var bot *botFake
+	built := make(chan *botFake, 1)
 	cfg := &config.Config{Orchestrator: config.Orchestrator{StateDir: t.TempDir(), MessageWindow: 10, Channels: []config.Channel{c}}}
 	l := comm.New(nil, nil)
-	return wireChannels(cfg, map[string]string{c.Name: cred}, fakeTable(&bot), l, nil, nil)
+	return wireChannels(cfg, map[string]string{c.Name: cred}, fakeTable(built), l, nil, nil)
 }
