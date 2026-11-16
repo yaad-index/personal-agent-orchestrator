@@ -38,14 +38,14 @@ func TestIdentityCommandsCallTheirRoutes(t *testing.T) {
 func TestIdentityListsPrintOneRowEach(t *testing.T) {
 	s := newStubNode(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/identity/subjects" {
-			writeJSON(w, 200, []local.SubjectJSON{{Name: "alice", Created: time.Date(2026, 11, 16, 1, 2, 3, 0, time.UTC)}})
+			writeJSON(w, 200, []local.SubjectJSON{{Name: "alice", Created: time.Date(2026, 11, 16, 1, 2, 3, 0, time.UTC), Operator: true}})
 			return
 		}
 		writeJSON(w, 200, []local.BindingJSON{{Channel: "chat", Sender: "7", Subject: "alice"}})
 	})
 	var out bytes.Buffer
 	require.NoError(t, SubjectsCmd{NodeFlags: s.flags(t)}.run(&out))
-	assert.Equal(t, "alice\t2026-11-16T01:02:03Z\n", out.String())
+	assert.Equal(t, "alice\t2026-11-16T01:02:03Z\toperator\n", out.String())
 
 	out.Reset()
 	require.NoError(t, BindingsCmd{NodeFlags: s.flags(t), Subject: "alice"}.run(&out))
@@ -85,4 +85,18 @@ func TestInviteShowsTheSecretOnceAndListsNeverDo(t *testing.T) {
 	require.NoError(t, UninviteCmd{NodeFlags: s2.flags(t), ID: "ab12"}.run(&out))
 	assert.Equal(t, "DELETE /v1/identity/invitations/ab12", s2.path)
 	assert.Contains(t, out.String(), "ab12 revoked")
+}
+
+func TestOperatorFlagsAndClears(t *testing.T) {
+	s := newStubNode(t, noContent)
+	var out bytes.Buffer
+	require.NoError(t, OperatorCmd{NodeFlags: s.flags(t), Name: "alice"}.run(&out))
+	assert.Equal(t, "PUT /v1/identity/subjects/alice/operator", s.path)
+	assert.JSONEq(t, `{"operator":true}`, s.body)
+	assert.Contains(t, out.String(), "alice now acts as the operator")
+
+	out.Reset()
+	require.NoError(t, OperatorCmd{NodeFlags: s.flags(t), Name: "alice", Off: true}.run(&out))
+	assert.JSONEq(t, `{"operator":false}`, s.body)
+	assert.Contains(t, out.String(), "alice is no longer an operator")
 }

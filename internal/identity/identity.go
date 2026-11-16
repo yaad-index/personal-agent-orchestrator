@@ -6,6 +6,7 @@
 package identity
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -52,6 +53,28 @@ type Binding struct {
 type Subject struct {
 	Name    string
 	Created time.Time
+	// Operator marks a human acting as the operator (ADR-0022). Only the operator
+	// surface sets it.
+	Operator bool
+}
+
+// record is what is stored for a subject.
+type record struct {
+	Created  time.Time `json:"created"`
+	Operator bool      `json:"operator,omitempty"`
+}
+
+func (r record) bytes() []byte {
+	b, _ := json.Marshal(r)
+	return b
+}
+
+func parseRecord(v []byte) record {
+	var r record
+	if json.Unmarshal(v, &r) != nil {
+		return record{}
+	}
+	return r
 }
 
 // Store is safe for concurrent use.
@@ -114,7 +137,7 @@ func (s *Store) AddSubject(name string) error {
 		if b.Get([]byte(name)) != nil {
 			return ErrSubjectExists
 		}
-		return b.Put([]byte(name), []byte(s.now().UTC().Format(time.RFC3339Nano)))
+		return b.Put([]byte(name), record{Created: s.now().UTC()}.bytes())
 	})
 }
 
@@ -123,8 +146,8 @@ func (s *Store) Subjects() ([]Subject, error) {
 	var out []Subject
 	err := s.db.View(func(tx *bolt.Tx) error {
 		return tx.Bucket(subjects).ForEach(func(k, v []byte) error {
-			t, _ := time.Parse(time.RFC3339Nano, string(v))
-			out = append(out, Subject{Name: string(k), Created: t})
+			r := parseRecord(v)
+			out = append(out, Subject{Name: string(k), Created: r.Created, Operator: r.Operator})
 			return nil
 		})
 	})
@@ -223,4 +246,34 @@ func (s *Store) Bindings(subject string) ([]Binding, error) {
 		})
 	})
 	return out, err
+}
+
+// SetOperator flags a subject as a human acting as the operator, or clears the
+// flag (ADR-0022 points 1 and 2). It is the only way the flag changes, and it is
+// reached from the operator's surface alone.
+func (s *Store) SetOperator(name string, on bool) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(subjects)
+		v := b.Get([]byte(name))
+		if v == nil {
+			return ErrNoSubject
+		}
+		r := parseRecord(v)
+		r.Operator = on
+		return b.Put([]byte(name), r.bytes())
+	})
+}
+
+// IsOperator reports whether the subject exists and is flagged operator. It is
+// read afresh for each inbound (ADR-0022 point 5); a subject that does not exist
+// is not an operator.
+func (s *Store) IsOperator(name string) bool {
+	op := false
+	_ = s.db.View(func(tx *bolt.Tx) error {
+		if v := tx.Bucket(subjects).Get([]byte(name)); v != nil {
+			op = parseRecord(v).Operator
+		}
+		return nil
+	})
+	return op
 }

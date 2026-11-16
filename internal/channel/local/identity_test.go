@@ -15,6 +15,7 @@ type fakeIdentity struct {
 	invitations []InvitationJSON
 	gotTTL      time.Duration
 	gotID       string
+	gotOp       bool
 
 	subjects []SubjectJSON
 	bindings []BindingJSON
@@ -40,6 +41,10 @@ func (f *fakeIdentity) Bindings(_ context.Context, s string) ([]BindingJSON, err
 	return f.bindings, f.err
 }
 
+func (f *fakeIdentity) SetOperator(_ context.Context, n string, on bool) error {
+	f.gotName, f.gotOp = n, on
+	return f.err
+}
 func (f *fakeIdentity) Invite(_ context.Context, subject string, ttl time.Duration) (InvitationJSON, error) {
 	f.gotSubject, f.gotTTL = subject, ttl
 	return InvitationJSON{ID: "ab12", Subject: subject, Secret: "S-E-C"}, f.err
@@ -197,6 +202,25 @@ func TestInvitationRoutesNeedTheTokenAndARefusedOneKeepsItsStatus(t *testing.T) 
 
 	cl := identityClient(t, &fakeIdentity{err: ErrNotFound})
 	_, err := cl.Invite(context.Background(), "ghost", 0)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "404")
+}
+
+func TestTheClientFlagsAndClearsAnOperator(t *testing.T) {
+	f := &fakeIdentity{}
+	c := identityClient(t, f)
+	require.NoError(t, c.SetOperator(context.Background(), "a b", true))
+	assert.Equal(t, "a b", f.gotName)
+	assert.True(t, f.gotOp)
+	require.NoError(t, c.SetOperator(context.Background(), "a b", false))
+	assert.False(t, f.gotOp)
+
+	_, ts := newServer(t, &fakeLayer{}, WithIdentity(f))
+	assert.Equal(t, http.StatusUnauthorized, do(t, ts, "PUT", "/v1/identity/subjects/a/operator", `{"operator":true}`, "").StatusCode)
+	assert.Equal(t, http.StatusBadRequest, do(t, ts, "PUT", "/v1/identity/subjects/a/operator", `{nope`, bearer()).StatusCode)
+
+	cl := identityClient(t, &fakeIdentity{err: ErrNotFound})
+	err := cl.SetOperator(context.Background(), "ghost", true)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "404")
 }

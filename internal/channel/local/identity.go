@@ -10,8 +10,13 @@ import (
 
 // SubjectJSON is a human subject as the operator sees it.
 type SubjectJSON struct {
-	Name    string    `json:"name"`
-	Created time.Time `json:"created"`
+	Name     string    `json:"name"`
+	Created  time.Time `json:"created"`
+	Operator bool      `json:"operator,omitempty"`
+}
+
+type operatorRequest struct {
+	Operator bool `json:"operator"`
 }
 
 // BindingJSON ties one (channel, per-sender id) pair to a subject.
@@ -42,6 +47,9 @@ type inviteRequest struct {
 type IdentityAPI interface {
 	AddSubject(ctx context.Context, name string) error
 	RemoveSubject(ctx context.Context, name string) error
+	// SetOperator flags a subject as a human acting as the operator, or clears
+	// the flag (ADR-0022). Only this surface sets it.
+	SetOperator(ctx context.Context, name string, on bool) error
 	Subjects(ctx context.Context) ([]SubjectJSON, error)
 	Bind(ctx context.Context, b BindingJSON) error
 	Revoke(ctx context.Context, channel, sender string) error
@@ -63,6 +71,7 @@ func (s *Server) registerIdentity(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/identity/subjects", s.auth(s.listSubjects))
 	mux.HandleFunc("POST /v1/identity/subjects", s.auth(s.addSubject))
 	mux.HandleFunc("DELETE /v1/identity/subjects/{name}", s.auth(s.removeSubject))
+	mux.HandleFunc("PUT /v1/identity/subjects/{name}/operator", s.auth(s.setOperator))
 	mux.HandleFunc("GET /v1/identity/bindings", s.auth(s.listBindings))
 	mux.HandleFunc("POST /v1/identity/bindings", s.auth(s.bind))
 	// The sender id is opaque and may hold a slash, so it travels in the query.
@@ -99,6 +108,19 @@ func (s *Server) addSubject(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) removeSubject(w http.ResponseWriter, r *http.Request) {
 	if err := s.identity.RemoveSubject(r.Context(), r.PathValue("name")); err != nil {
+		writeError(w, tempStatus(err), err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) setOperator(w http.ResponseWriter, r *http.Request) {
+	var req operatorRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad request body")
+		return
+	}
+	if err := s.identity.SetOperator(r.Context(), r.PathValue("name"), req.Operator); err != nil {
 		writeError(w, tempStatus(err), err.Error())
 		return
 	}
@@ -188,6 +210,11 @@ func (c *Client) AddSubject(ctx context.Context, name string) error {
 // RemoveSubject deletes a subject and its bindings.
 func (c *Client) RemoveSubject(ctx context.Context, name string) error {
 	return c.do(ctx, http.MethodDelete, "/v1/identity/subjects/"+url.PathEscape(name), nil, http.StatusNoContent, nil)
+}
+
+// SetOperator flags a subject as an operator, or clears the flag.
+func (c *Client) SetOperator(ctx context.Context, name string, on bool) error {
+	return c.do(ctx, http.MethodPut, "/v1/identity/subjects/"+url.PathEscape(name)+"/operator", operatorRequest{Operator: on}, http.StatusNoContent, nil)
 }
 
 // Bindings lists the bindings, of one subject when subject is not empty.
