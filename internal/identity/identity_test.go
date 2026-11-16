@@ -210,3 +210,20 @@ func TestTheFlagSurvivesReopening(t *testing.T) {
 	defer func() { _ = s.Close() }()
 	assert.True(t, s.IsOperator("alice"))
 }
+
+func TestOperatorsAreTheFlaggedSubjectsSendersOnThatChannelOnly(t *testing.T) {
+	s := open(t)
+	require.NoError(t, s.AddSubject("alice"))
+	require.NoError(t, s.AddSubject("bob"))
+	require.NoError(t, s.SetOperator("alice", true))
+	require.NoError(t, s.Bind("chat", "1", "alice"))
+	require.NoError(t, s.Bind("chat", "2", "bob"))
+	require.NoError(t, s.Bind("other", "3", "alice"))
+
+	assert.Equal(t, []string{"1"}, s.Operators("chat"), "bob is bound but not flagged, and other is another channel")
+	assert.Equal(t, []string{"3"}, s.Operators("other"))
+	assert.Empty(t, s.Operators("none"))
+
+	require.NoError(t, s.SetOperator("alice", false))
+	assert.Empty(t, s.Operators("chat"), "cleared, it is read afresh")
+}

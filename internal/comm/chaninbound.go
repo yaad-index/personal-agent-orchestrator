@@ -37,6 +37,9 @@ type Identity interface {
 	Register(channel, sender, secret string) (subject string, ok bool)
 	// IsOperator reports whether the subject is flagged operator, read afresh.
 	IsOperator(subject string) bool
+	// Operators returns the sender ids on the channel that resolve to an
+	// operator-flagged subject, read afresh.
+	Operators(channel string) []string
 }
 
 // Recorder keeps what the layer did not act on (ADR-0019 point 7). It is write-only
@@ -84,6 +87,16 @@ type ChannelResult struct {
 // SetIdentity gives the layer the identity store and the record of rejections that
 // channel inbound needs. Call it before the layer starts receiving.
 func (l *Layer) SetIdentity(id Identity, rec Recorder) { l.identity, l.recorder = id, rec }
+
+// Recipients returns the sender ids on a channel that pao's own output goes to:
+// those bound to an operator-flagged subject (ADR-0022). A human who is not
+// flagged is sent nothing.
+func (l *Layer) Recipients(channel string) []string {
+	if l.identity == nil {
+		return nil
+	}
+	return l.identity.Operators(channel)
+}
 
 func (l *Layer) reject(in ChannelInbound, kind, reason, payload string) error {
 	if l.recorder == nil {
@@ -134,11 +147,20 @@ func (l *Layer) ReceiveFromChannel(ctx context.Context, in ChannelInbound) (Chan
 			reply, _ = l.composites.id(FormatComposite(n, in.ReplyNative))
 		}
 	}
+	target := in.Target
+	if target.Kind == 0 && reply != "" {
+		// A reply to an agent's message with no address goes to that agent.
+		if m, err := l.store.Get(reply); err == nil {
+			if _, err := l.router.Resolve(core.Target{Kind: core.ByName, Value: m.Sender}); err == nil {
+				target = core.Target{Kind: core.ByName, Value: m.Sender}
+			}
+		}
+	}
 	d, err := l.Receive(ctx, Inbound{
 		Source:     in.Channel,
 		Sender:     subject,
 		Text:       in.Text,
-		Target:     in.Target,
+		Target:     target,
 		Reply:      reply,
 		ReplyQuote: in.ReplyQuote,
 	})

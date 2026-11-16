@@ -3,6 +3,7 @@ package comm
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -31,6 +32,15 @@ func (f *fakeIdentity) Register(ch, snd, secret string) (string, bool) {
 	return "alice", true
 }
 func (f *fakeIdentity) IsOperator(s string) bool { return f.operators[s] }
+func (f *fakeIdentity) Operators(ch string) []string {
+	var out []string
+	for k, subj := range f.bound {
+		if c, snd, _ := strings.Cut(k, "\x00"); c == ch && f.operators[subj] {
+			out = append(out, snd)
+		}
+	}
+	return out
+}
 
 type rec struct{ channel, sender, kind, reason, payload string }
 
@@ -192,4 +202,51 @@ func TestARejectionWithNoRecorderIsStillSilentAndSafe(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, ChannelResult{}, res)
 	assert.Empty(t, r.routed)
+}
+
+func TestRecipientsAreTheOperatorFlaggedSendersOnTheChannel(t *testing.T) {
+	l, _, id, _ := chanSetup(t)
+	id.bound["other\x00op2"] = "alice"
+	assert.Equal(t, []string{"op"}, l.Recipients("chat"), "bob is bound but not flagged: nothing is sent him")
+	assert.Equal(t, []string{"op2"}, l.Recipients("other"))
+	assert.Empty(t, l.Recipients("none"))
+
+	bare, _, _ := setup(t)
+	assert.Empty(t, bare.Recipients("chat"), "no identity store, no recipients")
+}
+
+func TestAReplyWithNoAddressGoesToTheAgentThatWroteTheMessage(t *testing.T) {
+	l, r, _, _ := chanSetup(t)
+	q, err := l.Send(context.Background(), "a", core.Message{Sender: "a", Text: "question?"})
+	require.NoError(t, err)
+
+	res, err := l.ReceiveFromChannel(context.Background(), ChannelInbound{Channel: "chat", Sender: "op", Text: "yes", Reply: q.ID})
+	require.NoError(t, err)
+	require.NotNil(t, res.Delivery)
+	assert.Equal(t, [][]string{{"a"}}, r.to)
+
+}
+
+func TestAnUnaddressedMessageThatIsNotAReplyIsNotRouted(t *testing.T) {
+	l, r, _, rc := chanSetup(t)
+	_, err := l.ReceiveFromChannel(context.Background(), ChannelInbound{Channel: "chat", Sender: "op", Text: "hi"})
+	require.Error(t, err)
+	assert.Empty(t, r.routed)
+	assert.Empty(t, rc.got)
+
+	own, err := l.ReceiveFromChannel(context.Background(), ChannelInbound{Channel: "chat", Sender: "op", Text: "first", Target: byName("a")})
+	require.NoError(t, err)
+	_, err = l.ReceiveFromChannel(context.Background(), ChannelInbound{Channel: "chat", Sender: "op", Text: "re", Reply: own.Delivery.Message.ID})
+	require.Error(t, err, "a reply to one's own message names no agent")
+	assert.Equal(t, "", r.resolved[len(r.resolved)-1], "and nothing was guessed from the subject's name")
+}
+
+func TestAnAddressedReplyGoesWhereItWasAddressedNotToTheAuthor(t *testing.T) {
+	l, r, _, _ := chanSetup(t)
+	r.agents["b"] = []string{"b"}
+	m, err := l.store.Add(core.Message{Sender: "b", Text: "from b"}, "a", "b")
+	require.NoError(t, err)
+	_, err = l.ReceiveFromChannel(context.Background(), ChannelInbound{Channel: "chat", Sender: "op", Text: "re", Reply: m.ID, Target: byName("a")})
+	require.NoError(t, err)
+	assert.Equal(t, [][]string{{"a"}}, r.to)
 }

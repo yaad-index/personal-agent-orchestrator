@@ -277,3 +277,23 @@ func (s *Store) IsOperator(name string) bool {
 	})
 	return op
 }
+
+// Operators returns the sender ids bound on a channel to an operator-flagged
+// subject, read afresh (ADR-0022).
+func (s *Store) Operators(channel string) []string {
+	var out []string
+	_ = s.db.View(func(tx *bolt.Tx) error {
+		sb := tx.Bucket(subjects)
+		return tx.Bucket(bindings).ForEach(func(k, v []byte) error {
+			ch, snd, _ := strings.Cut(string(k), "\x00")
+			if ch != channel {
+				return nil
+			}
+			if parseRecord(sb.Get(v)).Operator {
+				out = append(out, snd)
+			}
+			return nil
+		})
+	})
+	return out
+}

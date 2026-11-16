@@ -23,6 +23,8 @@ type fakeRouter struct {
 	// nodes maps an agent name to the node that holds it; an agent not listed is local.
 	nodes  map[string]string
 	routed []core.Message
+	// resolved is every target value asked of Resolve, in order.
+	resolved []string
 	// to records, per delivery, the agents it was for.
 	to [][]string
 	// seenInStore, when set, is called at Route time to check the message was
@@ -31,6 +33,7 @@ type fakeRouter struct {
 }
 
 func (f *fakeRouter) Resolve(t core.Target) ([]core.Profile, error) {
+	f.resolved = append(f.resolved, t.Value)
 	names, ok := f.agents[t.Value]
 	if !ok {
 		return nil, core.ErrNoMatch

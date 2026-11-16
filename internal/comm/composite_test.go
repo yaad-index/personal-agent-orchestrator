@@ -152,9 +152,12 @@ type nativeChan struct {
 	nerr   error
 }
 
-func (c *nativeChan) SendNative(_ context.Context, m core.Message) (string, error) {
+func (c *nativeChan) SendNative(_ context.Context, m core.Message) ([]string, error) {
 	c.got = append(c.got, m)
-	return c.native, c.nerr
+	if c.native == "" {
+		return nil, c.nerr
+	}
+	return []string{c.native}, c.nerr
 }
 
 func TestAMessagePaoSendsIsNamedByTheIdThePlatformGaveIt(t *testing.T) {
@@ -176,7 +179,7 @@ func TestAMessagePaoSendsIsNamedByTheIdThePlatformGaveIt(t *testing.T) {
 	assert.Len(t, nc.got, 2, "the targeted path goes through the same delivery")
 }
 
-func TestAChannelThatGivesNoNativeIdOrFailsRecordsNothing(t *testing.T) {
+func TestAChannelThatGivesNoNativeIdRecordsNothingAndOneThatFailsNamesOnlyWhatWentOut(t *testing.T) {
 	l, _, _ := compSetup(t)
 	nc := &nativeChan{fakeChannel: fakeChannel{name: "chat"}}
 	l.AddChannel(nc)
@@ -185,11 +188,18 @@ func TestAChannelThatGivesNoNativeIdOrFailsRecordsNothing(t *testing.T) {
 	_, ok := l.CompositeOf(stored.ID)
 	assert.False(t, ok, "no native id, no composite")
 
-	nc.native, nc.nerr = "9", errors.New("down")
+	nc.nerr = errors.New("down")
 	stored, err = l.Send(context.Background(), "a", core.Message{Sender: "a", Text: "y"})
 	require.Error(t, err)
 	_, ok = l.CompositeOf(stored.ID)
-	assert.False(t, ok, "a send that failed names nothing")
+	assert.False(t, ok, "a send that reached nobody names nothing")
+
+	nc.native = "9"
+	stored, err = l.Send(context.Background(), "a", core.Message{Sender: "a", Text: "z"})
+	require.Error(t, err)
+	comp, ok := l.CompositeOf(stored.ID)
+	require.True(t, ok, "a copy that did go out is still named, whatever failed after it")
+	assert.Equal(t, "1-9", comp)
 }
 
 func TestARepliedToNativeIdResolvesToThePaoMessage(t *testing.T) {

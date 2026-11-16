@@ -34,6 +34,9 @@ type Handler interface {
 	// ReceiveFromChannel hands the layer one inbound message or registration
 	// attempt and returns what to do next.
 	ReceiveFromChannel(ctx context.Context, in comm.ChannelInbound) (comm.ChannelResult, error)
+	// Recipients returns the sender ids on the channel that pao's own output goes
+	// to: those bound to an operator-flagged subject.
+	Recipients(channel string) []string
 	// NativeOf recovers the platform's own message id from a composite id, only if
 	// it is this channel's own (ADR-0021 point 4).
 	NativeOf(channel, composite string) (native string, ok bool)
