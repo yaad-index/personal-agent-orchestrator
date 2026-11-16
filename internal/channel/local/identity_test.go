@@ -12,6 +12,10 @@ import (
 )
 
 type fakeIdentity struct {
+	invitations []InvitationJSON
+	gotTTL      time.Duration
+	gotID       string
+
 	subjects []SubjectJSON
 	bindings []BindingJSON
 	err      error
@@ -34,6 +38,18 @@ func (f *fakeIdentity) Revoke(_ context.Context, c, s string) error {
 func (f *fakeIdentity) Bindings(_ context.Context, s string) ([]BindingJSON, error) {
 	f.gotSubject = s
 	return f.bindings, f.err
+}
+
+func (f *fakeIdentity) Invite(_ context.Context, subject string, ttl time.Duration) (InvitationJSON, error) {
+	f.gotSubject, f.gotTTL = subject, ttl
+	return InvitationJSON{ID: "ab12", Subject: subject, Secret: "S-E-C"}, f.err
+}
+func (f *fakeIdentity) Invitations(context.Context) ([]InvitationJSON, error) {
+	return f.invitations, f.err
+}
+func (f *fakeIdentity) RevokeInvitation(_ context.Context, id string) error {
+	f.gotID = id
+	return f.err
 }
 
 func identityClient(t *testing.T, f *fakeIdentity) *Client {
@@ -139,4 +155,48 @@ func TestABadIdentityBodyIsRefused(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, resp.StatusCode, p)
 	}
 	assert.Equal(t, fakeIdentity{}, *f)
+}
+
+func TestTheClientIssuesListsAndRevokesInvitations(t *testing.T) {
+	f := &fakeIdentity{invitations: []InvitationJSON{{ID: "ab12", Subject: "alice", Expires: time.Unix(9, 0).UTC()}}}
+	c := identityClient(t, f)
+	ctx := context.Background()
+
+	inv, err := c.Invite(ctx, "alice", 90*time.Second)
+	require.NoError(t, err)
+	assert.Equal(t, "S-E-C", inv.Secret, "the secret comes back once, with the issue")
+	assert.Equal(t, "alice", f.gotSubject)
+	assert.Equal(t, 90*time.Second, f.gotTTL)
+
+	invs, err := c.Invitations(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, f.invitations, invs)
+	assert.Empty(t, invs[0].Secret)
+
+	require.NoError(t, c.RevokeInvitation(ctx, "ab12"))
+	assert.Equal(t, "ab12", f.gotID)
+
+	empty := identityClient(t, &fakeIdentity{})
+	invs, err = empty.Invitations(ctx)
+	require.NoError(t, err)
+	assert.NotNil(t, invs)
+}
+
+func TestInvitationRoutesNeedTheTokenAndARefusedOneKeepsItsStatus(t *testing.T) {
+	f := &fakeIdentity{}
+	_, ts := newServer(t, &fakeLayer{}, WithIdentity(f))
+	for _, c := range [][2]string{{"POST", "/v1/identity/invitations"}, {"GET", "/v1/identity/invitations"}, {"DELETE", "/v1/identity/invitations/x"}} {
+		resp := do(t, ts, c[0], c[1], `{"subject":"a"}`, "")
+		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode, c[0])
+	}
+	assert.Empty(t, f.gotSubject)
+	resp := do(t, ts, "POST", "/v1/identity/invitations", `{"subject":"a","ttl_seconds":-1}`, bearer())
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "a negative lifetime is refused")
+	resp = do(t, ts, "POST", "/v1/identity/invitations", `{nope`, bearer())
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+	cl := identityClient(t, &fakeIdentity{err: ErrNotFound})
+	_, err := cl.Invite(context.Background(), "ghost", 0)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "404")
 }

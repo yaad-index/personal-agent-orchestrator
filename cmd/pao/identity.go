@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/local"
 )
@@ -169,4 +170,77 @@ func (c RevokeCmd) run(w io.Writer) error {
 
 func bindingOf(channel, sender, subject string) local.BindingJSON {
 	return local.BindingJSON{Channel: channel, Sender: sender, Subject: subject}
+}
+
+// InviteCmd issues an invitation.
+type InviteCmd struct {
+	NodeFlags
+	Subject string        `arg:"" help:"Subject the invitation registers its holder as."`
+	TTL     time.Duration `help:"How long the invitation lasts. Default 15m." default:"0s"`
+}
+
+// Run implements identity invite.
+func (c InviteCmd) Run() error { return c.run(os.Stdout) }
+
+func (c InviteCmd) run(w io.Writer) error {
+	cl, err := c.client()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := opCtx()
+	defer cancel()
+	inv, err := cl.Invite(ctx, c.Subject, c.TTL)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(w, "invitation %s for %s, valid until %s\nsecret (shown once): %s\n", inv.ID, inv.Subject, inv.Expires.UTC().Format("2006-01-02T15:04:05Z"), inv.Secret)
+	return err
+}
+
+// InvitesCmd lists invitations.
+type InvitesCmd struct{ NodeFlags }
+
+// Run implements identity invites.
+func (c InvitesCmd) Run() error { return c.run(os.Stdout) }
+
+func (c InvitesCmd) run(w io.Writer) error {
+	cl, err := c.client()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := opCtx()
+	defer cancel()
+	invs, err := cl.Invitations(ctx)
+	if err != nil {
+		return err
+	}
+	for _, i := range invs {
+		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\n", i.ID, i.Subject, i.Expires.UTC().Format("2006-01-02T15:04:05Z")); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// UninviteCmd revokes an invitation.
+type UninviteCmd struct {
+	NodeFlags
+	ID string `arg:"" help:"Invitation id, as invites lists it."`
+}
+
+// Run implements identity uninvite.
+func (c UninviteCmd) Run() error { return c.run(os.Stdout) }
+
+func (c UninviteCmd) run(w io.Writer) error {
+	cl, err := c.client()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := opCtx()
+	defer cancel()
+	if err := cl.RevokeInvitation(ctx, c.ID); err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(w, "invitation %s revoked\n", c.ID)
+	return err
 }

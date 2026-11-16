@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	bolt "go.etcd.io/bbolt"
@@ -57,6 +58,10 @@ type Subject struct {
 type Store struct {
 	db  *bolt.DB
 	now func() time.Time
+	lim *limiter
+	// compares counts the digest comparisons registration makes, so a test can
+	// hold every outcome to the same work.
+	compares atomic.Int64
 }
 
 // Open opens (creating if needed) the store at path.
@@ -66,7 +71,7 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	if err := db.Update(func(tx *bolt.Tx) error {
-		for _, b := range [][]byte{subjects, bindings} {
+		for _, b := range [][]byte{subjects, bindings, invites} {
 			if _, err := tx.CreateBucketIfNotExists(b); err != nil {
 				return err
 			}
@@ -76,7 +81,7 @@ func Open(path string) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	return &Store{db: db, now: time.Now}, nil
+	return &Store{db: db, now: time.Now, lim: &limiter{failures: map[string][]time.Time{}, max: DefaultFailures, window: DefaultWindow, track: maxTracked}}, nil
 }
 
 // Close closes the store.

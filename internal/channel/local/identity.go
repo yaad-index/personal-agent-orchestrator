@@ -21,6 +21,20 @@ type BindingJSON struct {
 	Subject string `json:"subject"`
 }
 
+// InvitationJSON is an outstanding invitation. Secret is set only in the answer
+// to issuing it, the one time it is shown.
+type InvitationJSON struct {
+	ID      string    `json:"id"`
+	Subject string    `json:"subject"`
+	Expires time.Time `json:"expires"`
+	Secret  string    `json:"secret,omitempty"`
+}
+
+type inviteRequest struct {
+	Subject    string `json:"subject"`
+	TTLSeconds int    `json:"ttl_seconds,omitempty"`
+}
+
 // IdentityAPI is the operator's view of who the humans are and which sender ids
 // are theirs (ADR-0019). Only the operator, the one caller the bearer token
 // identifies, reaches it. An error wraps ErrNotFound, ErrConflict or
@@ -32,6 +46,11 @@ type IdentityAPI interface {
 	Bind(ctx context.Context, b BindingJSON) error
 	Revoke(ctx context.Context, channel, sender string) error
 	Bindings(ctx context.Context, subject string) ([]BindingJSON, error)
+	// Invite issues a single-use invitation for a subject (ADR-0020 point 1);
+	// ttl 0 means the default.
+	Invite(ctx context.Context, subject string, ttl time.Duration) (InvitationJSON, error)
+	Invitations(ctx context.Context) ([]InvitationJSON, error)
+	RevokeInvitation(ctx context.Context, id string) error
 }
 
 // WithIdentity serves the identity routes.
@@ -48,6 +67,9 @@ func (s *Server) registerIdentity(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/identity/bindings", s.auth(s.bind))
 	// The sender id is opaque and may hold a slash, so it travels in the query.
 	mux.HandleFunc("DELETE /v1/identity/bindings", s.auth(s.revoke))
+	mux.HandleFunc("POST /v1/identity/invitations", s.auth(s.invite))
+	mux.HandleFunc("GET /v1/identity/invitations", s.auth(s.listInvitations))
+	mux.HandleFunc("DELETE /v1/identity/invitations/{id}", s.auth(s.revokeInvitation))
 }
 
 func (s *Server) listSubjects(w http.ResponseWriter, r *http.Request) {
@@ -117,6 +139,40 @@ func (s *Server) revoke(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (s *Server) invite(w http.ResponseWriter, r *http.Request) {
+	var req inviteRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil || req.TTLSeconds < 0 {
+		writeError(w, http.StatusBadRequest, "bad request body")
+		return
+	}
+	inv, err := s.identity.Invite(r.Context(), req.Subject, time.Duration(req.TTLSeconds)*time.Second)
+	if err != nil {
+		writeError(w, tempStatus(err), err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, inv)
+}
+
+func (s *Server) listInvitations(w http.ResponseWriter, r *http.Request) {
+	out, err := s.identity.Invitations(r.Context())
+	if err != nil {
+		writeError(w, tempStatus(err), err.Error())
+		return
+	}
+	if out == nil {
+		out = []InvitationJSON{}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) revokeInvitation(w http.ResponseWriter, r *http.Request) {
+	if err := s.identity.RevokeInvitation(r.Context(), r.PathValue("id")); err != nil {
+		writeError(w, tempStatus(err), err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // Subjects lists the human subjects.
 func (c *Client) Subjects(ctx context.Context) ([]SubjectJSON, error) {
 	var out []SubjectJSON
@@ -154,4 +210,24 @@ func (c *Client) Bind(ctx context.Context, b BindingJSON) error {
 func (c *Client) Revoke(ctx context.Context, channel, sender string) error {
 	q := url.Values{"channel": {channel}, "sender": {sender}}
 	return c.do(ctx, http.MethodDelete, "/v1/identity/bindings?"+q.Encode(), nil, http.StatusNoContent, nil)
+}
+
+// Invite issues an invitation for a subject; the answer carries its secret, shown
+// only here. ttl 0 means the default.
+func (c *Client) Invite(ctx context.Context, subject string, ttl time.Duration) (InvitationJSON, error) {
+	var out InvitationJSON
+	err := c.do(ctx, http.MethodPost, "/v1/identity/invitations", inviteRequest{Subject: subject, TTLSeconds: int(ttl / time.Second)}, http.StatusCreated, &out)
+	return out, err
+}
+
+// Invitations lists the outstanding invitations, without their secrets.
+func (c *Client) Invitations(ctx context.Context) ([]InvitationJSON, error) {
+	var out []InvitationJSON
+	err := c.do(ctx, http.MethodGet, "/v1/identity/invitations", nil, http.StatusOK, &out)
+	return out, err
+}
+
+// RevokeInvitation removes an outstanding invitation.
+func (c *Client) RevokeInvitation(ctx context.Context, id string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/identity/invitations/"+url.PathEscape(id), nil, http.StatusNoContent, nil)
 }
