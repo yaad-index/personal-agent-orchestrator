@@ -80,11 +80,16 @@ type Layer struct {
 	// identity and recorder serve channel inbound (ReceiveFromChannel).
 	identity Identity
 	recorder Recorder
+
+	// channelIDs and composites are the composite message id (ADR-0021).
+	channelIDs map[string]int
+	composites *compositeMap
 }
 
 // New returns a Layer.
 func New(store *msgstore.Store, router Router) *Layer {
-	return &Layer{store: store, router: router, pre: make(map[string]Preprocessor), bound: make(map[string]string)}
+	return &Layer{store: store, router: router, pre: make(map[string]Preprocessor), bound: make(map[string]string),
+		channelIDs: map[string]int{}, composites: newCompositeMap(DefaultCompositeWindow)}
 }
 
 // SetNode makes the layer part of a mesh. Message ids shown to a human are then
@@ -323,7 +328,7 @@ func (l *Layer) Send(ctx context.Context, from string, m core.Message) (core.Mes
 func (l *Layer) sendTo(ctx context.Context, name string, m core.Message) error {
 	for _, c := range l.channels {
 		if c.Name() == name {
-			if err := c.Send(ctx, m); err != nil {
+			if err := l.deliver(ctx, c, m); err != nil {
 				return fmt.Errorf("channel %q: %w", name, err)
 			}
 			return nil
@@ -364,7 +369,7 @@ func (l *Layer) NotifyOn(ctx context.Context, channel string, m core.Message) (c
 func (l *Layer) fanOut(ctx context.Context, m core.Message) error {
 	var errs []error
 	for _, c := range l.channels {
-		if err := c.Send(ctx, m); err != nil {
+		if err := l.deliver(ctx, c, m); err != nil {
 			errs = append(errs, fmt.Errorf("channel %q: %w", c.Name(), err))
 		}
 	}

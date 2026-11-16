@@ -58,6 +58,13 @@ type ChannelInbound struct {
 	// Registration marks the registration entry point: Text is a secret and not
 	// a message.
 	Registration bool
+	// Native is the platform's own id for this message. The layer forms the
+	// composite from it and the channel's id (ADR-0021 point 5).
+	Native string
+	// ReplyNative is the platform's own id for the message this one answers, when
+	// the platform says so. It is resolved through the composite map; one that
+	// does not resolve falls back to ReplyQuote.
+	ReplyNative string
 	// Target says which agents the message is for.
 	Target core.Target
 	// Reply and ReplyQuote reference the message this one answers, as for Inbound.
@@ -121,16 +128,23 @@ func (l *Layer) ReceiveFromChannel(ctx context.Context, in ChannelInbound) (Chan
 		return ChannelResult{Reply: ReplyNoAccess}, l.reject(in, RecordMessage, "outside access", in.Raw)
 	}
 
+	reply := in.Reply
+	if reply == "" && in.ReplyNative != "" {
+		if n, ok := l.channelIDs[in.Channel]; ok {
+			reply, _ = l.composites.id(FormatComposite(n, in.ReplyNative))
+		}
+	}
 	d, err := l.Receive(ctx, Inbound{
 		Source:     in.Channel,
 		Sender:     subject,
 		Text:       in.Text,
 		Target:     in.Target,
-		Reply:      in.Reply,
+		Reply:      reply,
 		ReplyQuote: in.ReplyQuote,
 	})
 	if err != nil {
 		return ChannelResult{}, err
 	}
+	l.noteComposite(in.Channel, in.Native, d.Message.ID)
 	return ChannelResult{Delivery: &d}, nil
 }
