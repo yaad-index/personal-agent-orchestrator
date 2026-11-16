@@ -27,6 +27,7 @@ type CLI struct {
 	Watch        WatchCmd        `cmd:"" help:"Follow an agent's output on demand, here or on another node."`
 	View         ViewCmd         `cmd:"" help:"Pause, resume or backtrack the view of an agent's output."`
 	Agent        AgentCmd        `cmd:"" help:"Start, stop or restart a configured agent."`
+	Identity     IdentityCmd     `cmd:"" help:"Human subjects and the sender ids bound to them."`
 	Harvests     HarvestsCmd     `cmd:"" help:"Outputs harvested from killed temporary agents."`
 	Hook         HookCmd         `cmd:"" help:"The backend's pre-tool-call hook: ask the node's gate about an action."`
 	HookSettings HookSettingsCmd `cmd:"" name:"hook-settings" help:"Print the backend settings JSON that installs the hook."`

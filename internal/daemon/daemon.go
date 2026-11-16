@@ -28,6 +28,7 @@ import (
 	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/gate"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/harvest"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/identity"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/mcpsrv"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/mesh"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/mesh/directory"
@@ -103,6 +104,11 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		return err
 	}
 	defer func() { _ = rejects.Close() }()
+	ids, err := identity.Open(filepath.Join(cfg.Orchestrator.StateDir, "identity.db"))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = ids.Close() }()
 
 	var ctlOpts []control.Option
 	if opts.PollInterval > 0 {
@@ -242,7 +248,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		localOpts = append(localOpts, local.WithMesh(meshStatusWith(meshNode, dir)))
 	}
 
-	srv, err := local.New(layer, token, append([]local.Option{local.WithDecider(decider), local.WithTemp(tempOps), local.WithStream(streamOps), local.WithWatch(streamOps), local.WithLifecycle(lifeOps), local.WithRejected(rejectedAPI{rejects}),
+	srv, err := local.New(layer, token, append([]local.Option{local.WithDecider(decider), local.WithTemp(tempOps), local.WithStream(streamOps), local.WithWatch(streamOps), local.WithLifecycle(lifeOps), local.WithRejected(rejectedAPI{rejects}), local.WithIdentity(identityAPI{ids}),
 		local.WithMount("/mcp", mcpHandler)}, localOpts...)...)
 	if err != nil {
 		return err
