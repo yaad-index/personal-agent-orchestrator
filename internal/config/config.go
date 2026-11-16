@@ -69,6 +69,61 @@ type Orchestrator struct {
 	Gate Gate `yaml:"gate"`
 	// Temp configures temporary agents (ADR-0006).
 	Temp Temp `yaml:"temp"`
+	// Channels are the human fronts to bring up beyond the local channel
+	// (ADR-0020 point 6).
+	Channels []Channel `yaml:"channels"`
+}
+
+// Channel configures one channel adapter (ADR-0020 point 6, ADR-0021 points 1
+// and 2).
+type Channel struct {
+	// ID is the channel's numeric id, positive and unique, assigned once and never
+	// reused: it names the channel in every composite message id.
+	ID int `yaml:"id"`
+	// Name is the channel's name, the namespace of its bindings.
+	Name string `yaml:"name"`
+	// Kind selects an adapter compiled into this build.
+	Kind string `yaml:"kind"`
+	// CredentialEnv names the environment variable that holds the channel's
+	// credential. The credential itself never lives in a config file.
+	CredentialEnv string `yaml:"credential_env"`
+	// Options are the adapter's own settings; only the adapter interprets them.
+	Options map[string]any `yaml:"options"`
+}
+
+var (
+	channelNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
+	envNamePattern     = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+)
+
+// reservedChannelNames are names the node itself uses for a channel.
+var reservedChannelNames = map[string]bool{"local": true}
+
+func checkChannels(path string, chs []Channel) error {
+	ids, names := map[int]string{}, map[string]bool{}
+	for i, c := range chs {
+		at := fmt.Sprintf("%s: channels[%d]", path, i)
+		switch {
+		case c.ID < 1:
+			return fmt.Errorf("%s: id must be a positive integer", at)
+		case !channelNamePattern.MatchString(c.Name):
+			return fmt.Errorf("%s: name %q must be lowercase letters, digits, '-' or '_', at most 32", at, c.Name)
+		case reservedChannelNames[c.Name]:
+			return fmt.Errorf("%s: name %q is reserved", at, c.Name)
+		case c.Kind == "":
+			return fmt.Errorf("%s: kind is required", at)
+		case !envNamePattern.MatchString(c.CredentialEnv):
+			return fmt.Errorf("%s: credential_env must name an environment variable", at)
+		}
+		if prev, dup := ids[c.ID]; dup {
+			return fmt.Errorf("%s: id %d is already channel %q", at, c.ID, prev)
+		}
+		if names[c.Name] {
+			return fmt.Errorf("%s: name %q is already used", at, c.Name)
+		}
+		ids[c.ID], names[c.Name] = c.Name, true
+	}
+	return nil
 }
 
 // Temp is the temporary-agent settings.
@@ -199,6 +254,9 @@ func load(path string, withMesh bool) (*Config, error) {
 		o.MeshKey = filepath.Join(o.StateDir, "mesh.key")
 	} else if !filepath.IsAbs(o.MeshKey) {
 		o.MeshKey = filepath.Join(filepath.Dir(path), o.MeshKey)
+	}
+	if err := checkChannels(path, o.Channels); err != nil {
+		return nil, err
 	}
 	var meshDoc *mesh.Document
 	if o.MeshFile != "" && !withMesh {
