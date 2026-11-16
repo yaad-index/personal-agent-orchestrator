@@ -317,3 +317,53 @@ func TestMeshKeyAndFileResolution(t *testing.T) {
 	assert.Equal(t, "/abs/mesh.yaml", cfg.Orchestrator.MeshFile)
 	assert.Equal(t, filepath.Join(filepath.Dir(path), "keys", "n1.key"), cfg.Orchestrator.MeshKey)
 }
+
+func channelsConfig(t *testing.T, channels string) (string, error) {
+	t.Helper()
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "pao.yaml"), "node: n1\nprofiles_dir: profiles\nstate_dir: state\ntoken_env: PAO_TOKEN\n"+channels)
+	write(t, filepath.Join(dir, "profiles", "a.yaml"), "name: a\nbackend: claude-code\n"+startup)
+	_, err := Load(filepath.Join(dir, "pao.yaml"))
+	return filepath.Join(dir, "pao.yaml"), err
+}
+
+func TestChannelsAreLoadedWithTheirIdNameKindCredentialAndOptions(t *testing.T) {
+	path, err := channelsConfig(t, "channels:\n  - id: 1\n    name: chat\n    kind: bot\n    credential_env: PAO_BOT\n    options:\n      poll: 30\n  - id: 2\n    name: alt-chat\n    kind: bot\n    credential_env: PAO_BOT2\n")
+	require.NoError(t, err)
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	require.Len(t, cfg.Orchestrator.Channels, 2)
+	assert.Equal(t, Channel{ID: 1, Name: "chat", Kind: "bot", CredentialEnv: "PAO_BOT", Options: map[string]any{"poll": 30}}, cfg.Orchestrator.Channels[0])
+	assert.Equal(t, 2, cfg.Orchestrator.Channels[1].ID)
+}
+
+func TestNoChannelsIsFine(t *testing.T) {
+	path, err := channelsConfig(t, "")
+	require.NoError(t, err)
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	assert.Empty(t, cfg.Orchestrator.Channels)
+}
+
+func TestChannelsRejects(t *testing.T) {
+	ok := "    kind: bot\n    credential_env: PAO_BOT\n"
+	for name, c := range map[string]struct{ body, want string }{
+		"no id":          {"channels:\n  - name: chat\n" + ok, "id must be a positive integer"},
+		"zero id":        {"channels:\n  - id: 0\n    name: chat\n" + ok, "id must be a positive integer"},
+		"negative id":    {"channels:\n  - id: -3\n    name: chat\n" + ok, "id must be a positive integer"},
+		"no name":        {"channels:\n  - id: 1\n" + ok, "name"},
+		"bad name":       {"channels:\n  - id: 1\n    name: Chat Room\n" + ok, "name"},
+		"long name":      {"channels:\n  - id: 1\n    name: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n" + ok, "name"},
+		"reserved name":  {"channels:\n  - id: 1\n    name: local\n" + ok, "reserved"},
+		"no kind":        {"channels:\n  - id: 1\n    name: chat\n    credential_env: PAO_BOT\n", "kind is required"},
+		"no credential":  {"channels:\n  - id: 1\n    name: chat\n    kind: bot\n", "credential_env"},
+		"bad credential": {"channels:\n  - id: 1\n    name: chat\n    kind: bot\n    credential_env: \"has space\"\n", "credential_env"},
+		"duplicate id":   {"channels:\n  - id: 1\n    name: a\n" + ok + "  - id: 1\n    name: b\n" + ok, "id 1 is already channel"},
+		"duplicate name": {"channels:\n  - id: 1\n    name: a\n" + ok + "  - id: 2\n    name: a\n" + ok, "name \"a\" is already used"},
+		"unknown field":  {"channels:\n  - id: 1\n    name: chat\n    token: x\n" + ok, "token"},
+	} {
+		_, err := channelsConfig(t, c.body)
+		require.Error(t, err, name)
+		assert.Contains(t, err.Error(), c.want, name)
+	}
+}

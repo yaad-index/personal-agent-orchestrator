@@ -21,6 +21,7 @@ import (
 	"github.com/yaad-index/personal-agent-orchestrator/internal/access"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/agenttoken"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/backend/claudecode"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/adapter"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/local"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/comm"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/config"
@@ -64,6 +65,9 @@ type Options struct {
 	// the operator may do anything and every agent nothing, until the access
 	// matrix exists to say otherwise.
 	Authorizer access.Authorizer
+	// Adapters is the table of channel adapters to build configured channels from.
+	// Nil means the adapters compiled into this build.
+	Adapters adapter.Table
 }
 
 // Run serves the node until ctx is done. token is the local channel's bearer
@@ -76,6 +80,15 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	// to another process of the same user.
 	if name := cfg.Orchestrator.TokenEnv; name != "" {
 		_ = os.Unsetenv(name)
+	}
+	// A channel's credential is read once and then taken out of the environment
+	// for the same reason: an agent must not be able to read it.
+	creds := make(map[string]string, len(cfg.Orchestrator.Channels))
+	for _, c := range cfg.Orchestrator.Channels {
+		creds[c.Name] = os.Getenv(c.CredentialEnv)
+	}
+	for _, c := range cfg.Orchestrator.Channels {
+		_ = os.Unsetenv(c.CredentialEnv)
 	}
 	for _, p := range cfg.Profiles {
 		if _, ok := readers[p.Transcript.Format]; !ok {
@@ -255,6 +268,27 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	}
 	layer.AddChannel(srv)
 
+	table := opts.Adapters
+	if table == nil {
+		table = adapter.Builtin()
+	}
+	adapters, err := wireChannels(cfg, creds, table, layer, ids, rejects)
+	if err != nil {
+		return err
+	}
+	adaptersCtx, stopAdapters := context.WithCancel(ctx)
+	defer stopAdapters()
+	var adaptersWG sync.WaitGroup
+	for _, a := range adapters {
+		adaptersWG.Add(1)
+		go func() {
+			defer adaptersWG.Done()
+			if err := a.Run(adaptersCtx); err != nil && adaptersCtx.Err() == nil {
+				slog.Error("channel stopped", "channel", a.Name(), "error", err)
+			}
+		}()
+	}
+
 	ln := opts.Listener
 	if ln == nil {
 		if ln, err = net.Listen("tcp", cfg.Orchestrator.Listen); err != nil {
@@ -296,6 +330,8 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		_ = httpSrv.Close()
 		stopMesh()
 		<-meshDone
+		stopAdapters()
+		adaptersWG.Wait()
 		return err
 	case <-ctx.Done():
 	}
@@ -312,6 +348,8 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	}
 	stopMesh()
 	<-meshDone
+	stopAdapters()
+	adaptersWG.Wait()
 	hook.follow.wait()
 	return err
 }
