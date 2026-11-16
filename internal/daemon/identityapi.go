@@ -35,11 +35,15 @@ func (a identityAPI) RemoveSubject(_ context.Context, name string) error {
 	return identityErr(a.s.RemoveSubject(name))
 }
 
+func (a identityAPI) SetOperator(_ context.Context, name string, on bool) error {
+	return identityErr(a.s.SetOperator(name, on))
+}
+
 func (a identityAPI) Subjects(context.Context) ([]local.SubjectJSON, error) {
 	subs, err := a.s.Subjects()
 	out := make([]local.SubjectJSON, 0, len(subs))
 	for _, s := range subs {
-		out = append(out, local.SubjectJSON{Name: s.Name, Created: s.Created})
+		out = append(out, local.SubjectJSON{Name: s.Name, Created: s.Created, Operator: s.Operator})
 	}
 	return out, identityErr(err)
 }

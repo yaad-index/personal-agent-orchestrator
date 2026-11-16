@@ -14,6 +14,7 @@ import (
 type IdentityCmd struct {
 	Subjects SubjectsCmd      `cmd:"" help:"List the human subjects."`
 	Add      SubjectAddCmd    `cmd:"" help:"Create a human subject."`
+	Operator OperatorCmd      `cmd:"" help:"Flag a subject as acting as the operator, or clear the flag."`
 	Remove   SubjectRemoveCmd `cmd:"" help:"Delete a subject and every binding that resolves to it."`
 	Bindings BindingsCmd      `cmd:"" help:"List the bindings, of one subject or of all."`
 	Bind     BindCmd          `cmd:"" help:"Tie a channel's sender id to a subject."`
@@ -38,7 +39,7 @@ func (c SubjectsCmd) run(w io.Writer) error {
 		return err
 	}
 	for _, s := range subs {
-		if _, err := fmt.Fprintf(w, "%s\t%s\n", s.Name, s.Created.UTC().Format("2006-01-02T15:04:05Z")); err != nil {
+		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\n", s.Name, s.Created.UTC().Format("2006-01-02T15:04:05Z"), flagWord(s.Operator)); err != nil {
 			return err
 		}
 	}
@@ -242,5 +243,40 @@ func (c UninviteCmd) run(w io.Writer) error {
 		return err
 	}
 	_, err = fmt.Fprintf(w, "invitation %s revoked\n", c.ID)
+	return err
+}
+
+func flagWord(op bool) string {
+	if op {
+		return "operator"
+	}
+	return "-"
+}
+
+// OperatorCmd flags or unflags an operator subject.
+type OperatorCmd struct {
+	NodeFlags
+	Name string `arg:"" help:"Subject to flag."`
+	Off  bool   `help:"Clear the flag instead of setting it."`
+}
+
+// Run implements identity operator.
+func (c OperatorCmd) Run() error { return c.run(os.Stdout) }
+
+func (c OperatorCmd) run(w io.Writer) error {
+	cl, err := c.client()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := opCtx()
+	defer cancel()
+	if err := cl.SetOperator(ctx, c.Name, !c.Off); err != nil {
+		return err
+	}
+	if c.Off {
+		_, err = fmt.Fprintf(w, "subject %s is no longer an operator\n", c.Name)
+	} else {
+		_, err = fmt.Fprintf(w, "subject %s now acts as the operator\n", c.Name)
+	}
 	return err
 }

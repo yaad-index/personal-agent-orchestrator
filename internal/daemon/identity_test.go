@@ -39,6 +39,17 @@ func TestTheOperatorManagesSubjectsAndBindingsOverTheLocalChannel(t *testing.T) 
 	assert.ErrorContains(t, c.RemoveSubject(ctx, "alice"), "404")
 
 	require.NoError(t, c.AddSubject(ctx, "bob"))
+	require.NoError(t, c.SetOperator(ctx, "bob", true))
+	subs, err := c.Subjects(ctx)
+	require.NoError(t, err)
+	flags := map[string]bool{}
+	for _, s := range subs {
+		flags[s.Name] = s.Operator
+	}
+	assert.Equal(t, map[string]bool{"bob": true}, flags)
+	assert.ErrorContains(t, c.SetOperator(ctx, "ghost", true), "404")
+	require.NoError(t, c.SetOperator(ctx, "bob", false))
+
 	inv, err := c.Invite(ctx, "bob", time.Hour)
 	require.NoError(t, err)
 	assert.NotEmpty(t, inv.Secret)

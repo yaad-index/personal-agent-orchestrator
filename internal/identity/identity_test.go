@@ -152,3 +152,61 @@ func TestAnIllFormedPairCannotBeBoundOrRevoked(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, bs, 1)
 }
+
+func TestASubjectIsNotAnOperatorUntilTheOperatorFlagsIt(t *testing.T) {
+	s := open(t)
+	require.NoError(t, s.AddSubject("alice"))
+	require.NoError(t, s.AddSubject("bob"))
+	assert.False(t, s.IsOperator("alice"), "created unflagged")
+
+	require.NoError(t, s.SetOperator("alice", true))
+	assert.True(t, s.IsOperator("alice"))
+	assert.False(t, s.IsOperator("bob"), "and nobody else is")
+	subs, err := s.Subjects()
+	require.NoError(t, err)
+	flags := map[string]bool{}
+	for _, sub := range subs {
+		flags[sub.Name] = sub.Operator
+		assert.False(t, sub.Created.IsZero(), "setting the flag keeps the creation time")
+	}
+	assert.Equal(t, map[string]bool{"alice": true, "bob": false}, flags)
+
+	require.NoError(t, s.SetOperator("alice", false))
+	assert.False(t, s.IsOperator("alice"), "cleared, it takes effect at once")
+}
+
+func TestTheOperatorFlagNeedsAnExistingSubjectAndGoesWhenTheSubjectDoes(t *testing.T) {
+	s := open(t)
+	assert.ErrorIs(t, s.SetOperator("ghost", true), ErrNoSubject)
+	assert.False(t, s.IsOperator("ghost"))
+
+	require.NoError(t, s.AddSubject("alice"))
+	require.NoError(t, s.SetOperator("alice", true))
+	require.NoError(t, s.RemoveSubject("alice"))
+	assert.False(t, s.IsOperator("alice"))
+	require.NoError(t, s.AddSubject("alice"))
+	assert.False(t, s.IsOperator("alice"), "a subject made again under the name is not flagged")
+}
+
+func TestRegistrationNeverFlagsAnOperator(t *testing.T) {
+	s := open(t)
+	require.NoError(t, s.AddSubject("alice"))
+	secret, _, err := s.Invite("alice", 0)
+	require.NoError(t, err)
+	_, ok := s.Register("chat", "1", secret)
+	require.True(t, ok)
+	assert.False(t, s.IsOperator("alice"))
+}
+
+func TestTheFlagSurvivesReopening(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "id.db")
+	s, err := Open(path)
+	require.NoError(t, err)
+	require.NoError(t, s.AddSubject("alice"))
+	require.NoError(t, s.SetOperator("alice", true))
+	require.NoError(t, s.Close())
+	s, err = Open(path)
+	require.NoError(t, err)
+	defer func() { _ = s.Close() }()
+	assert.True(t, s.IsOperator("alice"))
+}

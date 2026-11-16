@@ -76,6 +76,10 @@ type Layer struct {
 	// is a node of the mesh.
 	self  string
 	known func(string) bool
+
+	// identity and recorder serve channel inbound (ReceiveFromChannel).
+	identity Identity
+	recorder Recorder
 }
 
 // New returns a Layer.
