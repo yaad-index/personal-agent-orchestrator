@@ -79,6 +79,10 @@ type ChannelInbound struct {
 	ReplyQuote string
 	// Raw is the platform payload, kept only in the record of a rejection.
 	Raw string
+	// Group marks a message from a group conversation. A group is denied by
+	// default whoever the sender is (ADR-0019 point 6): the layer records it and
+	// routes nothing, replies with nothing, and never reads it as a registration.
+	Group bool
 }
 
 // ChannelResult is what the adapter does next. Reply is the fixed text to send
@@ -128,6 +132,10 @@ func (l *Layer) reject(in ChannelInbound, kind, reason, payload string) error {
 func (l *Layer) ReceiveFromChannel(ctx context.Context, in ChannelInbound) (ChannelResult, error) {
 	if l.identity == nil {
 		return ChannelResult{}, ErrNoIdentity
+	}
+
+	if in.Group {
+		return ChannelResult{}, l.reject(in, RecordMessage, "group", in.Raw)
 	}
 
 	if in.Registration {

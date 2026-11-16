@@ -84,6 +84,24 @@ func TestASubjectThatIsNotFlaggedIsRecordedAndNeverRouted(t *testing.T) {
 	assert.Equal(t, []rec{{"chat", "plain", RecordMessage, "outside access", "RAW"}}, rc.got)
 }
 
+func TestAGroupMessageIsRecordedAndNeverRoutedWhoeverSendsIt(t *testing.T) {
+	l, r, id, rc := chanSetup(t)
+	for _, sender := range []string{"op", "plain", "stranger"} {
+		res, err := l.ReceiveFromChannel(context.Background(), ChannelInbound{Channel: "chat", Sender: sender, Text: "hi", Target: byName("a"), Raw: "RAW", Group: true})
+		require.NoError(t, err)
+		assert.Equal(t, ChannelResult{}, res, sender)
+	}
+	assert.Empty(t, r.routed, "a flagged subject's group message is not routed")
+	assert.Equal(t, []rec{{"chat", "op", RecordMessage, "group", "RAW"}, {"chat", "plain", RecordMessage, "group", "RAW"}, {"chat", "stranger", RecordMessage, "group", "RAW"}}, rc.got)
+
+	// A group never registers, even with the right secret.
+	res, err := l.ReceiveFromChannel(context.Background(), ChannelInbound{Channel: "chat", Sender: "new", Text: "SEC", Registration: true, Group: true})
+	require.NoError(t, err)
+	assert.Equal(t, ChannelResult{}, res)
+	_, bound := id.bound["chat\x00new"]
+	assert.False(t, bound)
+}
+
 func TestAnUnboundSenderIsRecordedAnsweredWithNothingAndNeverRouted(t *testing.T) {
 	l, r, _, rc := chanSetup(t)
 	res, err := l.ReceiveFromChannel(context.Background(), ChannelInbound{Channel: "chat", Sender: "stranger", Text: "hi", Target: byName("a"), Raw: "RAW"})

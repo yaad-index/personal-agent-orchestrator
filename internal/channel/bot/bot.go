@@ -258,16 +258,27 @@ func (b *Bot) Run(ctx context.Context) error {
 
 const usage = "address an agent: @name or #tag, then the message."
 
-// handle acts on one update. Only a private message with text from a person is
-// considered: a group is denied by default (ADR-0019 point 6), and anything else is
-// not a message to a bot.
+// handle acts on one update. A text from a person is considered. One from a group
+// goes to the layer marked as such, which records and denies it (ADR-0019 point 6);
+// anything without a person or text is not a message to a bot.
 func (b *Bot) handle(ctx context.Context, u update) {
 	m := u.Message
-	if m == nil || m.From == nil || m.From.IsBot || m.From.ID == 0 || m.Chat.Type != "private" || m.Text == "" {
+	if m == nil || m.From == nil || m.From.IsBot || m.From.ID == 0 || m.Text == "" {
 		return
 	}
 	sender := strconv.FormatInt(m.From.ID, 10)
 	in := comm.ChannelInbound{Channel: b.name, Sender: sender, Native: native(m.Chat.ID, m.ID), Raw: truncate(m.Text, 4096)}
+	if m.Chat.Type != "private" {
+		// A secret said in a group is not kept, even in the record of a denial.
+		if _, reg := cutCommand(m.Text, "/register"); reg {
+			in.Raw = ""
+		}
+		in.Group = true
+		if _, err := b.h.ReceiveFromChannel(ctx, in); err != nil {
+			slog.Error("channel could not record a rejected inbound", "channel", b.name, "error", err)
+		}
+		return
+	}
 	if m.ReplyTo != nil {
 		in.ReplyNative = native(m.Chat.ID, m.ReplyTo.ID)
 	}

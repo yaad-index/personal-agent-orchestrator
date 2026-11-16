@@ -222,16 +222,34 @@ func TestAPrivateMessageReachesTheLayerWithTheServicesSenderIdAndNativeIds(t *te
 		Target: core.Target{Kind: core.ByName, Value: "bee"}}, in)
 }
 
-func TestOnlyAPrivateTextFromAPersonIsConsidered(t *testing.T) {
+func TestAGroupTextGoesToTheLayerMarkedAsAGroupAndNeverAsARegistration(t *testing.T) {
 	s, h := newServer(t), &handler{}
 	grp := priv(1, 1, 900, "@bee hi")
-	grp.Message.Chat.Type = "group"
+	grp.Message.Chat.Type = "supergroup"
+	reg := priv(2, 2, 901, "/register@thebot s3cret")
+	reg.Message.Chat.Type = "group"
+	s.queue(grp, reg)
+	start(t, s, h, nil)
+	waitFor(t, func() bool { return len(h.inbound()) == 2 }, "both")
+	got := h.inbound()
+	assert.True(t, got[0].Group)
+	assert.Equal(t, "@bee hi", got[0].Raw)
+	assert.True(t, got[1].Group)
+	assert.False(t, got[1].Registration, "a group never registers")
+	assert.Empty(t, got[1].Raw, "a secret said in a group is not kept")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	assert.Empty(t, s.sent, "a group is answered with nothing")
+}
+
+func TestOnlyATextFromAPersonIsConsidered(t *testing.T) {
+	s, h := newServer(t), &handler{}
 	bot := priv(2, 2, 901, "@bee hi")
 	bot.Message.From.IsBot = true
 	nofrom := priv(3, 3, 902, "@bee hi")
 	nofrom.Message.From = nil
 	notext := priv(4, 4, 903, "")
-	s.queue(grp, bot, nofrom, notext, update{ID: 5}, priv(6, 6, 904, "@bee ok"))
+	s.queue(bot, nofrom, notext, update{ID: 5}, priv(6, 6, 904, "@bee ok"))
 	start(t, s, h, nil)
 	waitFor(t, func() bool { return len(h.inbound()) == 1 }, "inbound")
 	assert.Equal(t, "904", h.inbound()[0].Sender, "only the last was a private text from a person")
