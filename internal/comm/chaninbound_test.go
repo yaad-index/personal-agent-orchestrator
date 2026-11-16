@@ -166,6 +166,7 @@ func TestAFailureToRecordIsReturnedAndNeverSentToTheSender(t *testing.T) {
 	res, err := l.ReceiveFromChannel(context.Background(), ChannelInbound{Channel: "chat", Sender: "stranger", Text: "hi", Target: byName("a")})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "disk full")
+	assert.ErrorIs(t, err, ErrRecord, "so the adapter can tell it from an error for the operator")
 	assert.Empty(t, res.Reply, "the sender is told nothing of it")
 }
 

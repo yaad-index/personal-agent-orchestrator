@@ -23,6 +23,10 @@ const (
 	ReplyNoAccess   = "no access."
 )
 
+// ErrRecord wraps a failure to keep the record of a rejected inbound. It is for the
+// adapter to log; the sender, who may be a stranger, is told nothing of it.
+var ErrRecord = errors.New("could not record a rejected inbound")
+
 // ErrNoIdentity means the layer was not given an identity store, so a channel
 // inbound has no way to be attributed and none is accepted.
 var ErrNoIdentity = errors.New("no identity store: channel inbound is not accepted")
@@ -103,7 +107,7 @@ func (l *Layer) reject(in ChannelInbound, kind, reason, payload string) error {
 		return nil
 	}
 	if err := l.recorder.Record(in.Channel, in.Sender, kind, reason, payload); err != nil {
-		return fmt.Errorf("record of a rejected inbound: %w", err)
+		return fmt.Errorf("%w: %w", ErrRecord, err)
 	}
 	return nil
 }

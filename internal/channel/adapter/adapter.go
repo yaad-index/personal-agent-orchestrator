@@ -2,7 +2,7 @@
 // point 1, ADR-0020 points 5 and 6). An adapter is compiled in behind one
 // contract; the node configuration only selects and configures the adapters this
 // build contains, and the table of them is one explicit map in this package, so
-// what a build can talk to is readable in one place.
+// what a build can talk to is readable in one place (package builtin).
 package adapter
 
 import (
@@ -57,12 +57,6 @@ type Factory func(spec Spec, h Handler) (Adapter, error)
 
 // Table maps an adapter kind to its factory.
 type Table map[string]Factory
-
-// Builtin is the table of adapters compiled into this build. Adding an adapter is
-// one entry here and one package.
-func Builtin() Table {
-	return Table{}
-}
 
 // Kinds lists the kinds in the table, sorted.
 func (t Table) Kinds() []string {

@@ -36,8 +36,7 @@ func (nilHandler) ReceiveFromChannel(context.Context, comm.ChannelInbound) (comm
 func (nilHandler) Recipients(string) []string             { return nil }
 func (nilHandler) NativeOf(string, string) (string, bool) { return "", false }
 
-func TestBuiltinHasNoAdapterYetAndTheTableListsKindsSorted(t *testing.T) {
-	assert.Empty(t, Builtin().Kinds())
+func TestTheTableListsKindsSorted(t *testing.T) {
 	assert.Equal(t, []string{"a", "b"}, Table{"b": okFactory, "a": okFactory}.Kinds())
 }
 
