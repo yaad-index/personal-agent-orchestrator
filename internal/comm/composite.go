@@ -23,9 +23,9 @@ const DefaultCompositeWindow = 500
 // so a reply or reaction to that message can be found again.
 type NativeSender interface {
 	Channel
-	// SendNative sends m and returns the platform's own id for it, empty when the
-	// platform gave none.
-	SendNative(ctx context.Context, m core.Message) (native string, err error)
+	// SendNative sends m and returns the platform's own id for each copy it sent
+	// (one per recipient), none when the platform gave none.
+	SendNative(ctx context.Context, m core.Message) (natives []string, err error)
 }
 
 // FormatComposite builds "<channel-id>-<native-id>".
@@ -187,12 +187,11 @@ func (l *Layer) NativeOf(channel, s string) (string, bool) {
 // it, notes the composite.
 func (l *Layer) deliver(ctx context.Context, c Channel, m core.Message) error {
 	if ns, ok := c.(NativeSender); ok {
-		native, err := ns.SendNative(ctx, m)
-		if err != nil {
-			return err
+		natives, err := ns.SendNative(ctx, m)
+		for _, native := range natives {
+			l.noteComposite(c.Name(), native, m.ID)
 		}
-		l.noteComposite(c.Name(), native, m.ID)
-		return nil
+		return err
 	}
 	return c.Send(ctx, m)
 }

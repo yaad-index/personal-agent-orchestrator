@@ -22,6 +22,7 @@ import (
 	"github.com/yaad-index/personal-agent-orchestrator/internal/agenttoken"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/backend/claudecode"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/adapter"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/builtin"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/local"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/comm"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/config"
@@ -270,7 +271,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 
 	table := opts.Adapters
 	if table == nil {
-		table = adapter.Builtin()
+		table = builtin.Table()
 	}
 	adapters, err := wireChannels(cfg, creds, table, layer, ids, rejects)
 	if err != nil {

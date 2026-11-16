@@ -23,6 +23,10 @@ const (
 	ReplyNoAccess   = "no access."
 )
 
+// ErrRecord wraps a failure to keep the record of a rejected inbound. It is for the
+// adapter to log; the sender, who may be a stranger, is told nothing of it.
+var ErrRecord = errors.New("could not record a rejected inbound")
+
 // ErrNoIdentity means the layer was not given an identity store, so a channel
 // inbound has no way to be attributed and none is accepted.
 var ErrNoIdentity = errors.New("no identity store: channel inbound is not accepted")
@@ -37,6 +41,9 @@ type Identity interface {
 	Register(channel, sender, secret string) (subject string, ok bool)
 	// IsOperator reports whether the subject is flagged operator, read afresh.
 	IsOperator(subject string) bool
+	// Operators returns the sender ids on the channel that resolve to an
+	// operator-flagged subject, read afresh.
+	Operators(channel string) []string
 }
 
 // Recorder keeps what the layer did not act on (ADR-0019 point 7). It is write-only
@@ -72,6 +79,10 @@ type ChannelInbound struct {
 	ReplyQuote string
 	// Raw is the platform payload, kept only in the record of a rejection.
 	Raw string
+	// Group marks a message from a group conversation. A group is denied by
+	// default whoever the sender is (ADR-0019 point 6): the layer records it and
+	// routes nothing, replies with nothing, and never reads it as a registration.
+	Group bool
 }
 
 // ChannelResult is what the adapter does next. Reply is the fixed text to send
@@ -85,12 +96,22 @@ type ChannelResult struct {
 // channel inbound needs. Call it before the layer starts receiving.
 func (l *Layer) SetIdentity(id Identity, rec Recorder) { l.identity, l.recorder = id, rec }
 
+// Recipients returns the sender ids on a channel that pao's own output goes to:
+// those bound to an operator-flagged subject (ADR-0022). A human who is not
+// flagged is sent nothing.
+func (l *Layer) Recipients(channel string) []string {
+	if l.identity == nil {
+		return nil
+	}
+	return l.identity.Operators(channel)
+}
+
 func (l *Layer) reject(in ChannelInbound, kind, reason, payload string) error {
 	if l.recorder == nil {
 		return nil
 	}
 	if err := l.recorder.Record(in.Channel, in.Sender, kind, reason, payload); err != nil {
-		return fmt.Errorf("record of a rejected inbound: %w", err)
+		return fmt.Errorf("%w: %w", ErrRecord, err)
 	}
 	return nil
 }
@@ -111,6 +132,10 @@ func (l *Layer) reject(in ChannelInbound, kind, reason, payload string) error {
 func (l *Layer) ReceiveFromChannel(ctx context.Context, in ChannelInbound) (ChannelResult, error) {
 	if l.identity == nil {
 		return ChannelResult{}, ErrNoIdentity
+	}
+
+	if in.Group {
+		return ChannelResult{}, l.reject(in, RecordMessage, "group", in.Raw)
 	}
 
 	if in.Registration {
@@ -134,11 +159,20 @@ func (l *Layer) ReceiveFromChannel(ctx context.Context, in ChannelInbound) (Chan
 			reply, _ = l.composites.id(FormatComposite(n, in.ReplyNative))
 		}
 	}
+	target := in.Target
+	if target.Kind == 0 && reply != "" {
+		// A reply to an agent's message with no address goes to that agent.
+		if m, err := l.store.Get(reply); err == nil {
+			if _, err := l.router.Resolve(core.Target{Kind: core.ByName, Value: m.Sender}); err == nil {
+				target = core.Target{Kind: core.ByName, Value: m.Sender}
+			}
+		}
+	}
 	d, err := l.Receive(ctx, Inbound{
 		Source:     in.Channel,
 		Sender:     subject,
 		Text:       in.Text,
-		Target:     in.Target,
+		Target:     target,
 		Reply:      reply,
 		ReplyQuote: in.ReplyQuote,
 	})
