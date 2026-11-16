@@ -54,6 +54,7 @@ type Server struct {
 	watch      WatchAPI
 	lifecycle  LifecycleAPI
 	rejected   RejectedAPI
+	identity   IdentityAPI
 	meshStatus func() MeshJSON
 	mounts     []mount
 	token      []byte
@@ -138,6 +139,7 @@ func (s *Server) Handler() http.Handler {
 	s.registerWatch(mux)
 	s.registerLifecycle(mux)
 	s.registerRejected(mux)
+	s.registerIdentity(mux)
 	s.registerMesh(mux)
 	for _, m := range s.mounts {
 		mux.Handle(m.path, m.h)
