@@ -30,6 +30,7 @@ type CLI struct {
 	View         ViewCmd         `cmd:"" help:"Pause, resume or backtrack the view of an agent's output."`
 	Agent        AgentCmd        `cmd:"" help:"Start, stop or restart a configured agent."`
 	Identity     IdentityCmd     `cmd:"" help:"Human subjects and the sender ids bound to them."`
+	Channel      ChannelCmd      `cmd:"" help:"The node's chat channels and their default agents."`
 	Inbound      InboundCmd      `cmd:"" help:"Inbounds the node received but did not act on."`
 	Harvests     HarvestsCmd     `cmd:"" help:"Outputs harvested from killed temporary agents."`
 	Hook         HookCmd         `cmd:"" help:"The backend's pre-tool-call hook: ask the node's gate about an action."`

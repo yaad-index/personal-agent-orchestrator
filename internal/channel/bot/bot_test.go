@@ -173,6 +173,7 @@ type handler struct {
 	res        comm.ChannelResult
 	err        error
 	recipients []string
+	defaults   map[string]string // channel to default agent
 	// slowFirst holds the first inbound back before it is taken in.
 	slowFirst time.Duration
 	calls     int
@@ -193,6 +194,10 @@ func (h *handler) ReceiveFromChannel(_ context.Context, in comm.ChannelInbound) 
 }
 func (h *handler) Recipients(string) []string             { return h.recipients }
 func (h *handler) NativeOf(string, string) (string, bool) { return "", false }
+func (h *handler) DefaultAgent(channel string) (string, bool) {
+	a, ok := h.defaults[channel]
+	return a, ok
+}
 func (h *handler) inbound() []comm.ChannelInbound {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -456,6 +461,17 @@ func TestPaoOutputGoesToEachRecipientAsALineAndIsNamedByTheFirstPiece(t *testing
 	assert.Equal(t, []string{"[bee]: done"}, s.sentTo(901))
 	assert.Equal(t, []string{"900:101", "901:102"}, natives)
 	require.NoError(t, b.Send(context.Background(), core.Message{Sender: "bee", Text: "again"}))
+}
+
+func TestTheChannelsDefaultAgentSpeaksUnprefixedAndAnyOtherIsNamed(t *testing.T) {
+	s, h := newServer(t), &handler{recipients: []string{"900"}, defaults: map[string]string{"chat": "bee", "other": "wasp"}}
+	b, err := newBot(spec(s, nil), h)
+	require.NoError(t, err)
+	require.NoError(t, b.Send(context.Background(), core.Message{Sender: "bee", Text: "from the default"}))
+	require.NoError(t, b.Send(context.Background(), core.Message{Sender: "wasp", Text: "from another"}))
+	require.NoError(t, b.Send(context.Background(), core.Message{Sender: "beetle", Text: "a longer name"}))
+	assert.Equal(t, []string{"from the default", "[wasp]: from another", "[beetle]: a longer name"}, s.sentTo(900),
+		"only this channel's default drops the prefix; another channel's default is named here")
 }
 
 func TestALongMessageIsSplitAtTheConfiguredLimitAndNamedByItsFirstPiece(t *testing.T) {

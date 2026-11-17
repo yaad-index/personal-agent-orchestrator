@@ -269,3 +269,47 @@ func TestAnAddressedReplyGoesWhereItWasAddressedNotToTheAuthor(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, [][]string{{"a"}}, r.to)
 }
+
+type mapDefaults map[string]string
+
+func (m mapDefaults) Get(channel string) (string, bool) { a, ok := m[channel]; return a, ok }
+
+func TestAMessageNamingNoAgentGoesToTheChannelsDefaultLast(t *testing.T) {
+	l, r, _, rc := chanSetup(t)
+	r.agents["b"] = []string{"b"}
+	l.SetDefaults(mapDefaults{"chat": "b"})
+
+	_, err := l.ReceiveFromChannel(context.Background(), ChannelInbound{Channel: "chat", Sender: "op", Text: "hi"})
+	require.NoError(t, err)
+	assert.Equal(t, [][]string{{"b"}}, r.to, "no target, no reply: the default")
+
+	_, err = l.ReceiveFromChannel(context.Background(), ChannelInbound{Channel: "chat", Sender: "op", Text: "to a", Target: byName("a")})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"a"}, r.to[len(r.to)-1], "an address (explicit or sticky) comes before the default")
+
+	q, err := l.Send(context.Background(), "a", core.Message{Sender: "a", Text: "question?"})
+	require.NoError(t, err)
+	_, err = l.ReceiveFromChannel(context.Background(), ChannelInbound{Channel: "chat", Sender: "op", Text: "yes", Reply: q.ID})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"a"}, r.to[len(r.to)-1], "a reply to an agent comes before the default")
+
+	assert.Empty(t, rc.got)
+}
+
+func TestADefaultIsPerChannelAndOneThatIsGoneIsAnErrorNotAGuess(t *testing.T) {
+	l, r, id, _ := chanSetup(t)
+	id.bound["other\x00op"] = "alice"
+	l.SetDefaults(mapDefaults{"chat": "gone"})
+
+	_, err := l.ReceiveFromChannel(context.Background(), ChannelInbound{Channel: "other", Sender: "op", Text: "hi"})
+	require.Error(t, err, "another channel's default does not answer here")
+	_, err = l.ReceiveFromChannel(context.Background(), ChannelInbound{Channel: "chat", Sender: "op", Text: "hi"})
+	require.Error(t, err, "a default agent that does not exist is not replaced by any other")
+	assert.Empty(t, r.routed)
+
+	a, ok := l.DefaultAgent("chat")
+	assert.True(t, ok)
+	assert.Equal(t, "gone", a)
+	_, ok = l.DefaultAgent("other")
+	assert.False(t, ok)
+}

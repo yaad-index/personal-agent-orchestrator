@@ -395,7 +395,7 @@ func (b *Bot) Send(ctx context.Context, m core.Message) error {
 func (b *Bot) SendNative(ctx context.Context, m core.Message) ([]string, error) {
 	var natives []string
 	var errs []error
-	pieces := split(m.Line(), b.limit)
+	pieces := split(b.line(m), b.limit)
 	for _, to := range b.h.Recipients(b.name) {
 		chat, err := strconv.ParseInt(to, 10, 64)
 		if err != nil {
@@ -414,6 +414,16 @@ func (b *Bot) SendNative(ctx context.Context, m core.Message) ([]string, error) 
 		}
 	}
 	return natives, errors.Join(errs...)
+}
+
+// line is the text a message is shown as: its sender's name before it, except for
+// the channel's default agent, which speaks as the channel's own voice (ADR-0023
+// point 5).
+func (b *Bot) line(m core.Message) string {
+	if agent, ok := b.h.DefaultAgent(b.name); ok && agent == m.Sender {
+		return m.Text
+	}
+	return m.Line()
 }
 
 // split cuts text into pieces of at most limit characters, at a line or word

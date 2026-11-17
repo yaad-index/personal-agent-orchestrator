@@ -73,6 +73,9 @@ func TestEveryCommandLineParsesToItsCommand(t *testing.T) {
 		"identity invites":               "identity invites",
 		"identity uninvite inv-1":        "identity uninvite <id>",
 		"inbound rejected":               "inbound rejected",
+		"channel default chat bee":       "channel default <channel> <agent>",
+		"channel default chat --clear":   "channel default <channel>",
+		"channel defaults":               "channel defaults",
 	} {
 		ctx, err := parser.Parse(strings.Fields(line))
 		if assert.NoError(t, err, line) {

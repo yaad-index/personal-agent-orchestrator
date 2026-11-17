@@ -41,6 +41,9 @@ type Handler interface {
 	// NativeOf recovers the platform's own message id from a composite id, only if
 	// it is this channel's own (ADR-0021 point 4).
 	NativeOf(channel, composite string) (native string, ok bool)
+	// DefaultAgent returns the channel's default agent, whose output the adapter
+	// shows without a name prefix (ADR-0023 point 5).
+	DefaultAgent(channel string) (agent string, ok bool)
 }
 
 // Adapter is a channel the node brings up: the channel contract of ADR-0009 and the

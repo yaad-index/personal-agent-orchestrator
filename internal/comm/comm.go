@@ -80,6 +80,7 @@ type Layer struct {
 	// identity and recorder serve channel inbound (ReceiveFromChannel).
 	identity Identity
 	recorder Recorder
+	defaults Defaults
 
 	// channelIDs and composites are the composite message id (ADR-0021).
 	channelIDs map[string]int
