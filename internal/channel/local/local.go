@@ -52,6 +52,7 @@ type Server struct {
 	temp       TempAPI
 	streams    StreamAPI
 	defaults   DefaultsAPI
+	grants     GrantsAPI
 	watch      WatchAPI
 	lifecycle  LifecycleAPI
 	rejected   RejectedAPI
@@ -142,6 +143,7 @@ func (s *Server) Handler() http.Handler {
 	s.registerRejected(mux)
 	s.registerIdentity(mux)
 	s.registerDefaults(mux)
+	s.registerGrants(mux)
 	s.registerMesh(mux)
 	for _, m := range s.mounts {
 		mux.Handle(m.path, m.h)

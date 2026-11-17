@@ -30,6 +30,7 @@ import (
 	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/defaultagent"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/gate"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/grants"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/harvest"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/identity"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/mcpsrv"
@@ -63,9 +64,8 @@ type Options struct {
 	PollInterval time.Duration
 	// MeshListener, when set, replaces listening on the configured mesh address.
 	MeshListener net.Listener
-	// Authorizer is the access seam every surface asks. Nil means operator-only:
-	// the operator may do anything and every agent nothing, until the access
-	// matrix exists to say otherwise.
+	// Authorizer is the access seam every surface asks. Nil means the access
+	// matrix read from the grants in the state directory.
 	Authorizer access.Authorizer
 	// Adapters is the table of channel adapters to build configured channels from.
 	// Nil means the adapters compiled into this build.
@@ -127,6 +127,14 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	defaults, err := defaultagent.Open(filepath.Join(cfg.Orchestrator.StateDir, defaultsFile))
 	if err != nil {
 		return err
+	}
+	grantStore, err := grants.Open(filepath.Join(cfg.Orchestrator.StateDir, grantsFile))
+	if err != nil {
+		return err
+	}
+	auth := opts.Authorizer
+	if auth == nil {
+		auth = access.Matrix{Grants: grantStore}
 	}
 
 	var ctlOpts []control.Option
@@ -193,11 +201,11 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	}
 	gateSrv := &http.Server{Handler: (&gate.Server{Gate: gt}).Handler(), ReadHeaderTimeout: 10 * time.Second}
 
-	harvests := harvest.New(filepath.Join(cfg.Orchestrator.StateDir, "harvest"), opts.Authorizer)
+	harvests := harvest.New(filepath.Join(cfg.Orchestrator.StateDir, "harvest"), auth)
 	mgr := &temp.Manager{
 		Registry: reg, Plane: plane, Starter: router, Channels: bindings{layer, hook.follow.views},
 		Workdirs: &workdir.Provisioner{Root: filepath.Join(cfg.Orchestrator.StateDir, "temp")},
-		Harvests: harvests, Auth: opts.Authorizer,
+		Harvests: harvests, Auth: auth,
 		Recipes: func() (*recipe.Set, error) { return recipe.LoadDir(cfg.Orchestrator.RecipesDir) },
 		Locate:  locate, Check: checkProfile, Gate: gt, Follow: hook.follow,
 		Surface:    surface(layer, router),
@@ -206,9 +214,10 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 
 	tempOps := &tempAPI{mgr: mgr, store: harvests}
 	watch := newWatcher(reg, opts.MirrorPoll)
+	watch.auth = auth
 	streamOps := &streamAPI{streams: streams, watcher: watch}
 	lifeOps := &lifecycleAPI{life: life}
-	ops := &mcpOps{reg: reg, thresholds: mgr.Thresholds, recipes: mgr.Recipes, mgr: mgr, store: harvests, layer: layer, auth: opts.Authorizer}
+	ops := &mcpOps{reg: reg, thresholds: mgr.Thresholds, recipes: mgr.Recipes, mgr: mgr, store: harvests, layer: layer, auth: auth}
 	resolver := mcpsrv.Chain{
 		mcpsrv.NewOperatorResolver(token),
 		mcpsrv.AgentResolver{Tokens: tokens, Alive: func(agent string) bool {
@@ -217,7 +226,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 			return plane.Alive(ctx, agent)
 		}},
 	}
-	mcpHandler := mcpsrv.New(ops, resolver, mcpsrv.WithAuthorizer(opts.Authorizer)).Handler()
+	mcpHandler := mcpsrv.New(ops, resolver, mcpsrv.WithAuthorizer(auth)).Handler()
 
 	var meshNode *transport.Node
 	var dir *directory.Directory
@@ -269,7 +278,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	}
 
 	srv, err := local.New(layer, token, append([]local.Option{local.WithDecider(decider), local.WithTemp(tempOps), local.WithStream(streamOps), local.WithWatch(streamOps), local.WithLifecycle(lifeOps), local.WithRejected(rejectedAPI{rejects}), local.WithIdentity(identityAPI{ids}),
-		local.WithDefaults(newDefaultsAPI(defaults, cfg.Orchestrator.Channels, router.Resolve)),
+		local.WithDefaults(newDefaultsAPI(defaults, cfg.Orchestrator.Channels, router.Resolve)), local.WithGrants(grantsAPI{grantStore}),
 		local.WithMount("/mcp", mcpHandler)}, localOpts...)...)
 	if err != nil {
 		return err

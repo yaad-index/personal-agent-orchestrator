@@ -1,8 +1,13 @@
-// Package access is the seam where the access matrix (ADR-0005, ADR-0012)
-// plugs in. The matrix itself is a later milestone; until it exists the only
-// implementation is OperatorOnly, so the paths that agents will one day use
-// are enforced now and stay closed.
+// Package access is the access matrix (ADR-0005, ADR-0012): who may reach which
+// resource. Matrix decides from grants; OperatorOnly is the closed fallback used
+// where no matrix is given.
 package access
+
+import (
+	"fmt"
+	"slices"
+	"strings"
+)
 
 // Kind says what kind of subject is asking.
 type Kind int
@@ -48,11 +53,24 @@ const (
 	Watch Action = "watch"
 )
 
-// Resource is what the action is on: an agent, by name and tags (a tag is an
-// access scope, ADR-0012 point 3).
+// ResourceKind is the kind of a resource: a column group of the matrix (ADR-0005
+// point 1: agents, tools, channels). Only agents are enforced so far.
+type ResourceKind string
+
+// ResourceAgent is an agent, by name and tags.
+const ResourceAgent ResourceKind = "agent"
+
+// Resource is what the action is on, by kind, name and tags (a tag is an access
+// scope, ADR-0012 point 3).
 type Resource struct {
-	Agent string
-	Tags  []string
+	Kind ResourceKind
+	Name string
+	Tags []string
+}
+
+// AgentResource is the agent of that name and tags as a resource.
+func AgentResource(name string, tags []string) Resource {
+	return Resource{Kind: ResourceAgent, Name: name, Tags: tags}
 }
 
 // Authorizer decides whether a subject may do an action on a resource.
@@ -61,8 +79,8 @@ type Authorizer interface {
 	Allow(s Subject, a Action, r Resource) bool
 }
 
-// OperatorOnly allows the operator everything and every agent nothing. It is
-// the default until the access matrix is built.
+// OperatorOnly allows the operator everything and every agent nothing. It is the
+// closed fallback where no Authorizer is given.
 type OperatorOnly struct{}
 
 // Allow implements Authorizer.
@@ -75,4 +93,96 @@ func Allowed(a Authorizer, s Subject, act Action, r Resource) bool {
 		a = OperatorOnly{}
 	}
 	return a.Allow(s, act, r)
+}
+
+// String is the subject as grants name it: "operator", or "agent:<name>".
+func (s Subject) String() string {
+	switch s.Kind {
+	case KindOperator:
+		return "operator"
+	case KindAgent:
+		return "agent:" + s.Name
+	}
+	return ""
+}
+
+// ParseSubject reads a subject as String writes it.
+func ParseSubject(v string) (Subject, error) {
+	if v == "operator" {
+		return Operator, nil
+	}
+	if name, ok := strings.CutPrefix(v, "agent:"); ok && name != "" && !strings.ContainsAny(name, " \t\n:") {
+		return Agent(name), nil
+	}
+	return Subject{}, fmt.Errorf("subject %q is not \"operator\" or \"agent:<name>\"", v)
+}
+
+// Grant gives a subject one cell of the matrix (a resource by name) or a tag
+// scope (every resource of the kind carrying the tag), ADR-0012 points 3 and 5.
+// Exactly one of Name and Tag is set. A grant carries no actions: the matrix
+// decides what a subject may reach, and the approval gate decides whether each
+// action runs (ADR-0005).
+type Grant struct {
+	Subject Subject
+	Kind    ResourceKind
+	Name    string
+	Tag     string
+}
+
+// Validate reports whether the grant is well formed.
+func (g Grant) Validate() error {
+	if _, err := ParseSubject(g.Subject.String()); err != nil {
+		return fmt.Errorf("a grant names a subject: %w", err)
+	}
+	switch {
+	case g.Kind != ResourceAgent:
+		return fmt.Errorf("resource kind %q is not one access is enforced for", g.Kind)
+	case (g.Name == "") == (g.Tag == ""):
+		return fmt.Errorf("a grant names one resource or one tag, not both or neither")
+	case strings.ContainsAny(g.Name+g.Tag, " \t\n"):
+		return fmt.Errorf("a resource name or tag has no spaces")
+	}
+	return nil
+}
+
+// covers reports whether the grant reaches r.
+func (g Grant) covers(r Resource) bool {
+	if g.Kind != r.Kind {
+		return false
+	}
+	if g.Name != "" {
+		return g.Name == r.Name
+	}
+	return slices.Contains(r.Tags, g.Tag)
+}
+
+// Grants is where Matrix reads the grants of a subject, afresh at each decision.
+type Grants interface {
+	Of(s Subject) []Grant
+}
+
+// Matrix allows a subject an action on a resource when one of the subject's
+// grants covers the resource; anything else is denied (ADR-0005 point 1,
+// ADR-0012 point 2). The operator is allowed every action for now: putting the
+// operator behind grants is its own step.
+type Matrix struct {
+	Grants Grants
+}
+
+// Allow implements Authorizer.
+func (m Matrix) Allow(s Subject, _ Action, r Resource) bool {
+	switch s.Kind {
+	case KindOperator:
+		return true
+	case KindAgent:
+		if s.Name == "" || m.Grants == nil {
+			return false
+		}
+		for _, g := range m.Grants.Of(s) {
+			if g.covers(r) {
+				return true
+			}
+		}
+	}
+	return false
 }
