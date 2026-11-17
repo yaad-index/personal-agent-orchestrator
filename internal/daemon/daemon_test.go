@@ -123,6 +123,10 @@ func startNodeWith(t *testing.T, agents map[string]string, adjust func(dir, scri
 	// granted itself in. A hook may write its own grants over these.
 	require.NoError(t, os.MkdirAll(cfg.Orchestrator.StateDir, 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(cfg.Orchestrator.StateDir, grantsFile), []byte(operatorTestGrants), 0o600))
+	// And it has once answered "always" to an agent's message to another: pao's
+	// sending is judged on pao's side, and the tests about something else should
+	// not wait on that question. A hook may write its own policy over this.
+	require.NoError(t, os.WriteFile(filepath.Join(cfg.Orchestrator.StateDir, "policy.json"), []byte(`[{"tool":"pao.route","effect":"allow"}]`), 0o600))
 
 	if adjust != nil {
 		adjust(dir, scriptPath, cfg)

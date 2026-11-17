@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/access"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/gate"
 )
 
 // fakeOps records who each operation was called as, and what with.
@@ -68,10 +70,13 @@ func (f fakeOps) Harvest(who access.Subject, id string) (HarvestInfo, error) {
 	f.rec("harvest", who, id)
 	return f.harvest, f.opErr
 }
-func (f fakeOps) Send(_ context.Context, who access.Subject, byTag bool, target, text string) ([]Delivered, error) {
+func (f fakeOps) Send(_ context.Context, who access.Subject, byTag bool, target, text string, approve func() error) ([]Delivered, error) {
 	kind := "name"
 	if byTag {
 		kind = "tag"
+	}
+	if err := approve(); err != nil {
+		return nil, err
 	}
 	f.rec("send", who, kind, target, text)
 	return f.sent, f.sendErr
@@ -110,7 +115,9 @@ func (b bearer) RoundTrip(r *http.Request) (*http.Response, error) {
 func serve(t *testing.T, ops Operations, res Resolver, opts ...Option) string {
 	t.Helper()
 	mux := http.NewServeMux()
-	mux.Handle("/mcp", New(ops, res, opts...).Handler())
+	// A gate that allows, unless the test brings its own: what is under test
+	// elsewhere is not the gate.
+	mux.Handle("/mcp", New(ops, res, append([]Option{WithGate(recordingGate{allow: true, asked: &[]gate.Request{}})}, opts...)...).Handler())
 	ts := httptest.NewServer(mux)
 	t.Cleanup(ts.Close)
 	return ts.URL + "/mcp"
@@ -597,4 +604,110 @@ func TestUnderTheMatrixAnAgentSeesTheRecipesWhoseTagsItMayReach(t *testing.T) {
 	res, err = connect(t, url, "op").CallTool(context.Background(), &mcp.CallToolParams{Name: "list_recipes"})
 	require.NoError(t, err)
 	assert.True(t, res.IsError, "the operator is")
+}
+
+// allowAllSeam lets every subject reach everything, so what is under test is the
+// gate alone.
+type allowAllSeam struct{}
+
+func (allowAllSeam) Allow(access.Subject, access.Action, access.Resource) bool { return true }
+
+// recordingGate answers every question the same way and keeps what it was asked.
+type recordingGate struct {
+	allow bool
+	asked *[]gate.Request
+}
+
+func (g recordingGate) Decide(_ context.Context, req gate.Request) gate.Decision {
+	*g.asked = append(*g.asked, req)
+	if g.allow {
+		return gate.Decision{Allow: true}
+	}
+	return gate.Decision{Reason: "the operator said no"}
+}
+
+func TestEveryToolAnAgentCallsIsPaosActionAndJudgedOnPaosSide(t *testing.T) {
+	ops := sampleOps
+	ops.sent = []Delivered{{Agent: "tmp-a"}}
+	asked := &[]gate.Request{}
+	url := serve(t, ops, staticResolver{"a": access.Agent("boss"), "op": access.Operator},
+		WithAuthorizer(allowAllSeam{}), WithGate(recordingGate{allow: true, asked: asked}))
+	a := connect(t, url, "a")
+	for _, c := range []struct {
+		tool string
+		args map[string]any
+	}{
+		{"list_agents", nil},
+		{"list_recipes", nil},
+		{"list_harvests", nil},
+		{"read_harvest", map[string]any{"id": "h1"}},
+		{"send_message", map[string]any{"name": "tmp-a", "text": "hi"}},
+	} {
+		res, err := a.CallTool(context.Background(), &mcp.CallToolParams{Name: c.tool, Arguments: c.args})
+		require.NoError(t, err, c.tool)
+		assert.False(t, res.IsError, c.tool)
+	}
+	var names []string
+	for _, r := range *asked {
+		names = append(names, r.Tool)
+		assert.Equal(t, "boss", r.Agent, "the question says whom pao acts for")
+	}
+	assert.Equal(t, []string{ActionList, ActionListRecipes, ActionListHarvests, ActionReadHarvest, ActionRoute}, names, "one question per call")
+	assert.JSONEq(t, `{"name":"tmp-a","text":"hi"}`, string((*asked)[4].Input), "with the call's own arguments")
+
+	*asked = nil
+	op := connect(t, url, "op")
+	_, err := op.CallTool(context.Background(), &mcp.CallToolParams{Name: "list_agents"})
+	require.NoError(t, err)
+	assert.Empty(t, *asked, "the operator's own call is not asked of the operator")
+}
+
+func TestADeniedActionIsNotTakenAndTheAgentIsToldSo(t *testing.T) {
+	ops := sampleOps
+	var calls []opCall
+	ops.calls = &calls
+	asked := &[]gate.Request{}
+	url := serve(t, ops, staticResolver{"a": access.Agent("boss")}, WithAuthorizer(allowAllSeam{}), WithGate(recordingGate{asked: asked}))
+	a := connect(t, url, "a")
+
+	failed, msg := toolText(t, a, "send_message", map[string]any{"name": "tmp-a", "text": "hi"})
+	assert.True(t, failed)
+	assert.Contains(t, msg, "denied: the operator said no")
+	assert.Empty(t, calls, "nothing was sent")
+
+	for tool, args := range map[string]map[string]any{
+		"list_agents":   nil,
+		"list_recipes":  nil,
+		"list_harvests": nil,
+		"read_harvest":  {"id": "h1"},
+	} {
+		failed, msg = toolText(t, a, tool, args)
+		assert.True(t, failed, tool)
+		assert.Contains(t, msg, "denied", tool)
+		assert.NotContains(t, msg, "tmp-a", "and nothing was shown: %s", tool)
+	}
+	assert.Len(t, *asked, 5)
+}
+
+func TestWithoutAGateEveryAgentActionIsDenied(t *testing.T) {
+	srv := New(sampleOps, staticResolver{}, WithAuthorizer(allowAllSeam{}))
+	assert.ErrorIs(t, srv.approve(context.Background(), access.Agent("boss"), ActionList, nil), ErrDenied)
+	assert.NoError(t, srv.approve(context.Background(), access.Operator, ActionList, nil))
+	assert.ErrorIs(t, srv.approve(context.Background(), access.Subject{}, ActionList, nil), ErrDenied)
+}
+
+func TestTheGateRulesReadPaosReadsAsLowRiskAndLetTheAgentsCallsThrough(t *testing.T) {
+	p, err := gate.LoadPolicy(filepath.Join(t.TempDir(), "policy.json"), GateRules("pao")...)
+	require.NoError(t, err)
+	g := &gate.Gate{Policy: p, AutoAllow: gate.DefaultAutoAllow()}
+	for _, a := range []string{ActionList, ActionListRecipes, ActionListHarvests, ActionReadHarvest} {
+		assert.True(t, g.Decide(context.Background(), gate.Request{Agent: "boss", Tool: a, Input: []byte("null")}).Allow, a)
+	}
+	for _, tool := range ToolNames {
+		assert.True(t, g.Decide(context.Background(), gate.Request{Agent: "boss", Tool: "mcp__pao__" + tool, Input: []byte("{}")}).Allow, "the hook lets %s through", tool)
+	}
+	for _, a := range []string{ActionRoute, ActionSpawn, ActionKill, "mcp__other__send_message"} {
+		d := g.Decide(context.Background(), gate.Request{Agent: "boss", Tool: a, Input: []byte("{}")})
+		assert.False(t, d.Allow, "%s is not waved through: with no one to ask it is denied", a)
+	}
 }

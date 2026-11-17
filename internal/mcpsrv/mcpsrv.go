@@ -14,6 +14,9 @@ package mcpsrv
 import (
 	"context"
 	"crypto/subtle"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -21,6 +24,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/access"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/gate"
 )
 
 // Resolver says which subject a bearer token identifies. A token it does not
@@ -91,6 +95,7 @@ type Server struct {
 	srv      *mcp.Server
 	resolver Resolver
 	auth     access.Authorizer
+	gate     Gate
 	ops      Operations
 }
 
@@ -99,6 +104,45 @@ type Option func(*Server)
 
 // WithAuthorizer sets the access seam. The default is operator-only.
 func WithAuthorizer(a access.Authorizer) Option { return func(s *Server) { s.auth = a } }
+
+// Gate judges an action pao is about to take (ADR-0004).
+type Gate interface {
+	Decide(ctx context.Context, req gate.Request) gate.Decision
+}
+
+// WithGate sets the approval gate. Without one, every action asked for by an
+// agent is denied.
+func WithGate(g Gate) Option { return func(s *Server) { s.gate = g } }
+
+// ErrDenied is an action the approval gate did not allow.
+var ErrDenied = errors.New("denied")
+
+// approve asks the gate about an action pao is about to take for who: when an
+// agent calls a tool, pao is the actor, so pao's action is what is judged, here
+// on pao's side, where no agent's setup can skip it. The operator's own call is
+// not asked: the gate's questions go to the operator. A denial means pao does not
+// act; the agent is told so.
+func (s *Server) approve(ctx context.Context, who access.Subject, action string, input any) error {
+	switch who.Kind {
+	case access.KindOperator:
+		return nil
+	case access.KindAgent:
+	default:
+		return fmt.Errorf("%w: nobody asked", ErrDenied)
+	}
+	if s.gate == nil {
+		return fmt.Errorf("%w: no approval gate is configured", ErrDenied)
+	}
+	b, err := json.Marshal(input)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrDenied, err)
+	}
+	d := s.gate.Decide(ctx, gate.Request{Agent: who.Name, Tool: action, Input: b})
+	if !d.Allow {
+		return fmt.Errorf("%w: %s", ErrDenied, d.Reason)
+	}
+	return nil
+}
 
 // New returns a Server over the given operations.
 func New(ops Operations, r Resolver, opts ...Option) *Server {

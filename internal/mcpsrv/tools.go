@@ -10,6 +10,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/access"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/gate"
 )
 
 // AgentInfo is one agent as a tool reports it.
@@ -61,6 +62,45 @@ type HarvestInfo struct {
 	Files     []FileInfo `json:"files,omitempty" jsonschema:"the harvested files; only when one harvest is read"`
 }
 
+// The names the gate judges pao's actions by, one per tool. Spawning and killing
+// are judged where the temporary-agent manager acts, by these same names.
+const (
+	ActionList         = "pao.list"
+	ActionListRecipes  = "pao.list_recipes"
+	ActionListHarvests = "pao.list_harvests"
+	ActionReadHarvest  = "pao.read_harvest"
+	ActionRoute        = "pao.route"
+	ActionSpawn        = "pao.spawn"
+	ActionKill         = "pao.kill"
+)
+
+// DefaultServerName is the name a backend gives pao's MCP server unless told
+// otherwise (pao mcp-config --name).
+const DefaultServerName = "pao"
+
+// ToolNames are the names of pao's own tools.
+var ToolNames = []string{"list_agents", "list_recipes", "send_message", "spawn_agent", "kill_agent", "list_harvests", "read_harvest"}
+
+// GateRules are the builtin gate rules pao's MCP surface brings: what each of
+// pao's actions is read as (reading is low risk; the rest is unclassified, so
+// asked unless a stored rule says otherwise), and, at the calling agent's own
+// hook, an allow for a call of one of pao's tools, under the name the backend
+// gives the tool (mcp__<server>__<tool>). That call is not the agent acting: pao
+// is, and pao's action is judged here. A backend that names the server
+// otherwise is not matched, so its hook asks too: twice, never not at all.
+func GateRules(server string) []gate.Rule {
+	rules := []gate.Rule{
+		{Tool: ActionList, Risk: gate.RiskRead},
+		{Tool: ActionListRecipes, Risk: gate.RiskRead},
+		{Tool: ActionListHarvests, Risk: gate.RiskRead},
+		{Tool: ActionReadHarvest, Risk: gate.RiskRead},
+	}
+	for _, t := range ToolNames {
+		rules = append(rules, gate.Rule{Tool: "mcp__" + server + "__" + t, Effect: gate.EffectAllow})
+	}
+	return rules
+}
+
 // Operations is what the tools call. It is the node's existing operations, seen
 // from the MCP surface; the daemon supplies it. Operations that act on behalf
 // of a caller take its subject, and the operation decides what that subject may
@@ -83,8 +123,10 @@ type Operations interface {
 	HarvestFile(who access.Subject, id, path string) ([]byte, error)
 	// Send delivers a message to the agent named, or to every agent carrying
 	// the tag, that who may address. The sender the recipients read is who, not
-	// anything the caller supplies.
-	Send(ctx context.Context, who access.Subject, byTag bool, target, text string) ([]Delivered, error)
+	// anything the caller supplies. approve is called once the recipients who
+	// may be addressed are known and before anything is delivered; an error
+	// from it delivers nothing.
+	Send(ctx context.Context, who access.Subject, byTag bool, target, text string, approve func() error) ([]Delivered, error)
 }
 
 // Delivered is the outcome for one addressed agent.
@@ -195,12 +237,19 @@ type listHarvestsOutput struct {
 	Harvests []HarvestInfo `json:"harvests"`
 }
 
-func (s *Server) listHarvests(_ context.Context, req *mcp.CallToolRequest, _ noInput) (*mcp.CallToolResult, listHarvestsOutput, error) {
-	hs, err := s.ops.Harvests(subject(req))
+func (s *Server) listHarvests(ctx context.Context, req *mcp.CallToolRequest, _ noInput) (*mcp.CallToolResult, listHarvestsOutput, error) {
+	who := subject(req)
+	hs, err := s.ops.Harvests(who)
 	if hs == nil {
 		hs = []HarvestInfo{}
 	}
-	return nil, listHarvestsOutput{Harvests: hs}, err
+	if err != nil {
+		return nil, listHarvestsOutput{Harvests: hs}, err
+	}
+	if err := s.approve(ctx, who, ActionListHarvests, nil); err != nil {
+		return nil, listHarvestsOutput{Harvests: []HarvestInfo{}}, err
+	}
+	return nil, listHarvestsOutput{Harvests: hs}, nil
 }
 
 type readHarvestInput struct {
@@ -215,7 +264,7 @@ type readHarvestOutput struct {
 	Content  string       `json:"content,omitempty" jsonschema:"the file's content"`
 }
 
-func (s *Server) readHarvest(_ context.Context, req *mcp.CallToolRequest, in readHarvestInput) (*mcp.CallToolResult, readHarvestOutput, error) {
+func (s *Server) readHarvest(ctx context.Context, req *mcp.CallToolRequest, in readHarvestInput) (*mcp.CallToolResult, readHarvestOutput, error) {
 	who := subject(req)
 	if in.ID == "" {
 		return nil, readHarvestOutput{}, errors.New("an id is required")
@@ -225,10 +274,16 @@ func (s *Server) readHarvest(_ context.Context, req *mcp.CallToolRequest, in rea
 		if err != nil {
 			return nil, readHarvestOutput{}, err
 		}
+		if err := s.approve(ctx, who, ActionReadHarvest, in); err != nil {
+			return nil, readHarvestOutput{}, err
+		}
 		return nil, readHarvestOutput{Harvest: &h}, nil
 	}
 	b, err := s.ops.HarvestFile(who, in.ID, in.Path)
 	if err != nil {
+		return nil, readHarvestOutput{}, err
+	}
+	if err := s.approve(ctx, who, ActionReadHarvest, in); err != nil {
 		return nil, readHarvestOutput{}, err
 	}
 	if len(b) > maxFileBytes {
@@ -243,13 +298,16 @@ func (s *Server) readHarvest(_ context.Context, req *mcp.CallToolRequest, in rea
 
 // listAgents lists only the agents the caller may see: an agent the caller may
 // not see is left out, as if it did not exist.
-func (s *Server) listAgents(_ context.Context, req *mcp.CallToolRequest, _ noInput) (*mcp.CallToolResult, listAgentsOutput, error) {
+func (s *Server) listAgents(ctx context.Context, req *mcp.CallToolRequest, _ noInput) (*mcp.CallToolResult, listAgentsOutput, error) {
 	who := subject(req)
 	out := listAgentsOutput{Agents: []AgentInfo{}}
 	for _, a := range s.ops.Agents() {
 		if access.Allowed(s.auth, who, access.List, access.AgentResource(a.Name, a.Tags)) {
 			out.Agents = append(out.Agents, a)
 		}
+	}
+	if err := s.approve(ctx, who, ActionList, nil); err != nil {
+		return nil, listAgentsOutput{Agents: []AgentInfo{}}, err
 	}
 	return nil, out, nil
 }
@@ -258,7 +316,7 @@ func (s *Server) listAgents(_ context.Context, req *mcp.CallToolRequest, _ noInp
 // spawned from a recipe carries the recipe's tags, so a recipe is shown when one
 // of those tags is in the caller's scope. A recipe out of reach is left out, as if
 // it did not exist.
-func (s *Server) listRecipes(_ context.Context, req *mcp.CallToolRequest, _ noInput) (*mcp.CallToolResult, listRecipesOutput, error) {
+func (s *Server) listRecipes(ctx context.Context, req *mcp.CallToolRequest, _ noInput) (*mcp.CallToolResult, listRecipesOutput, error) {
 	who := subject(req)
 	out := listRecipesOutput{Recipes: []RecipeInfo{}}
 	rs, err := s.ops.Recipes()
@@ -274,6 +332,9 @@ func (s *Server) listRecipes(_ context.Context, req *mcp.CallToolRequest, _ noIn
 		if access.Allowed(s.auth, who, access.ListRecipes, access.AgentResource("", r.Tags)) {
 			out.Recipes = append(out.Recipes, r)
 		}
+	}
+	if err := s.approve(ctx, who, ActionListRecipes, nil); err != nil {
+		return nil, listRecipesOutput{Recipes: []RecipeInfo{}}, err
 	}
 	return nil, out, nil
 }
@@ -299,7 +360,8 @@ func (s *Server) sendMessage(ctx context.Context, req *mcp.CallToolRequest, in s
 	if in.Tag != "" {
 		target, byTag = in.Tag, true
 	}
-	ds, err := s.ops.Send(ctx, subject(req), byTag, target, in.Text)
+	who := subject(req)
+	ds, err := s.ops.Send(ctx, who, byTag, target, in.Text, func() error { return s.approve(ctx, who, ActionRoute, in) })
 	if ds == nil {
 		ds = []Delivered{}
 	}

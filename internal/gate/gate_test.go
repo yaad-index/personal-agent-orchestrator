@@ -351,3 +351,27 @@ func TestNumbersInInputKeepTheirExactForm(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, `{"f":1.50,"n":12345678901234567890}`, got)
 }
+
+func TestExtraBuiltinRulesApplyButAreNeverStored(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "policy.json")
+	p, err := LoadPolicy(path, Rule{Tool: "node.read", Risk: RiskRead}, Rule{Tool: "node.pass", Effect: EffectAllow, Source: "operator"})
+	require.NoError(t, err)
+	r, ok := p.Lookup("node.pass", "{}")
+	require.True(t, ok)
+	assert.Equal(t, "builtin", r.Source, "an extra rule is builtin whatever it says")
+
+	require.NoError(t, p.Remember("Bash", `{"command":"ls"}`))
+	b, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var stored []Rule
+	require.NoError(t, json.Unmarshal(b, &stored))
+	require.Len(t, stored, 1, "only the operator's own answer is stored, no builtin rule: %s", b)
+	assert.Equal(t, "Bash", stored[0].Tool)
+
+	again, err := LoadPolicy(path, Rule{Tool: "node.read", Risk: RiskRead})
+	require.NoError(t, err)
+	_, ok = again.Lookup("Bash", `{"command":"ls"}`)
+	assert.True(t, ok, "the remembered answer comes back")
+	_, ok = again.Lookup("node.pass", "{}")
+	assert.False(t, ok, "and an extra rule only while it is given")
+}

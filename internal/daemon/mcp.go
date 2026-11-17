@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"slices"
 	"sort"
 	"time"
 
@@ -32,6 +33,8 @@ type mcpOps struct {
 	store      *harvest.Store
 	layer      *comm.Layer
 	auth       access.Authorizer
+	// resolve finds the agents a target names, as routing does.
+	resolve func(core.Target) ([]core.Profile, error)
 	// dir is the master's directory of agents on other nodes; nil off the mesh.
 	dir *directory.Directory
 }
@@ -161,7 +164,7 @@ func senderName(who access.Subject) (string, bool) {
 	}
 }
 
-func (o mcpOps) Send(ctx context.Context, who access.Subject, byTag bool, target, text string) ([]mcpsrv.Delivered, error) {
+func (o mcpOps) Send(ctx context.Context, who access.Subject, byTag bool, target, text string, approve func() error) ([]mcpsrv.Delivered, error) {
 	sender, ok := senderName(who)
 	if !ok {
 		// Nobody sends nothing; to whoever it was it is the same as an agent
@@ -172,14 +175,27 @@ func (o mcpOps) Send(ctx context.Context, who access.Subject, byTag bool, target
 	if byTag {
 		kind = core.ByTag
 	}
+	allow := func(p core.Profile) bool {
+		return access.Allowed(o.auth, who, access.Route, access.AgentResource(p.Name, p.Tags))
+	}
+	// Who may be addressed is settled before the gate is asked, so a message to
+	// no reachable agent is a not found and asks nobody.
+	ps, err := o.resolve(core.Target{Kind: kind, Value: target})
+	if err != nil {
+		return nil, err
+	}
+	if !slices.ContainsFunc(ps, allow) {
+		return nil, route.NoMatch(core.Target{Kind: kind, Value: target})
+	}
+	if err := approve(); err != nil {
+		return nil, err
+	}
 	d, err := o.layer.Receive(ctx, comm.Inbound{
 		Source: "mcp", Sender: sender, Text: text, Kind: core.MessageContent,
 		Target: core.Target{Kind: kind, Value: target},
 		// Routing is bounded by what the caller may address: an agent it may
 		// not is left out, and when none is left the target matches nothing.
-		Allow: func(p core.Profile) bool {
-			return access.Allowed(o.auth, who, access.Route, access.AgentResource(p.Name, p.Tags))
-		},
+		Allow: allow,
 	})
 	if err != nil {
 		return nil, err
