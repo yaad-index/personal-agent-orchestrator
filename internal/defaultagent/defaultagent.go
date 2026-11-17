@@ -14,8 +14,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sync"
+
+	"github.com/yaad-index/personal-agent-orchestrator/internal/statefile"
 )
 
 // Document is the stored form: the bindings and a version that increases with each
@@ -138,31 +139,7 @@ func (s *Store) copyLocked() Document {
 }
 
 func (s *Store) commitLocked(next Document) error {
-	b, err := json.MarshalIndent(next, "", "  ")
-	if err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(s.path), ".defaults-*")
-	if err != nil {
-		return err
-	}
-	defer func() { _ = os.Remove(tmp.Name()) }()
-	if _, err := tmp.Write(append(b, '\n')); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp.Name(), s.path); err != nil {
+	if err := statefile.Write(s.path, next); err != nil {
 		return err
 	}
 	s.doc = next

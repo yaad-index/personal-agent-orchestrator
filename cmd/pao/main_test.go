@@ -68,14 +68,17 @@ func TestEveryCommandLineParsesToItsCommand(t *testing.T) {
 	require.NoError(t, err)
 
 	for line, want := range map[string]string{
-		"identity invite alice":          "identity invite <subject>",
-		"identity invite alice --ttl 1h": "identity invite <subject>",
-		"identity invites":               "identity invites",
-		"identity uninvite inv-1":        "identity uninvite <id>",
-		"inbound rejected":               "inbound rejected",
-		"channel default chat bee":       "channel default <channel> <agent>",
-		"channel default chat --clear":   "channel default <channel>",
-		"channel defaults":               "channel defaults",
+		"identity invite alice":           "identity invite <subject>",
+		"identity invite alice --ttl 1h":  "identity invite <subject>",
+		"identity invites":                "identity invites",
+		"identity uninvite inv-1":         "identity uninvite <id>",
+		"inbound rejected":                "inbound rejected",
+		"channel default chat bee":        "channel default <channel> <agent>",
+		"channel default chat --clear":    "channel default <channel>",
+		"channel defaults":                "channel defaults",
+		"access grant agent:a --agent b":  "access grant <subject>",
+		"access revoke agent:a --tag t":   "access revoke <subject>",
+		"access grants --subject agent:a": "access grants",
 	} {
 		ctx, err := parser.Parse(strings.Fields(line))
 		if assert.NoError(t, err, line) {

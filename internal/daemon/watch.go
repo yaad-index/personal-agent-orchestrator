@@ -61,7 +61,7 @@ func (w *watcher) watch(ctx context.Context, who access.Subject, agent string, l
 	}
 	// An agent the caller may not watch is answered as one that is not there, so a
 	// watch cannot be used to learn which agents exist (ADR-0018 point 6).
-	if found && !access.Allowed(w.auth, who, access.Watch, access.Resource{Agent: p.Name, Tags: p.Tags}) {
+	if found && !access.Allowed(w.auth, who, access.Watch, access.AgentResource(p.Name, p.Tags)) {
 		found = false
 	}
 	if !found {

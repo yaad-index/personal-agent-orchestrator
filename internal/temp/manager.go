@@ -245,7 +245,7 @@ func (m *Manager) Spawn(ctx context.Context, req SpawnRequest) (core.Profile, er
 		return core.Profile{}, fmt.Errorf("%w: agent name %q is reserved", ErrBadRequest, name)
 	}
 	if !req.Authorized {
-		if err := m.authorize(ctx, req.Requester, access.Spawn, access.Resource{Agent: name, Tags: rec.Profile.Tags},
+		if err := m.authorize(ctx, req.Requester, access.Spawn, access.AgentResource(name, rec.Profile.Tags),
 			map[string]string{"recipe": rec.Name, "agent": name}); err != nil {
 			return core.Profile{}, err
 		}
@@ -350,7 +350,7 @@ func (m *Manager) Kill(ctx context.Context, req KillRequest) (KillResult, error)
 		return KillResult{}, ErrNotFound
 	}
 	if !req.Authorized {
-		if err := m.authorize(ctx, req.Requester, access.Kill, access.Resource{Agent: view.Profile.Name, Tags: view.Profile.Tags},
+		if err := m.authorize(ctx, req.Requester, access.Kill, access.AgentResource(view.Profile.Name, view.Profile.Tags),
 			map[string]string{"agent": view.Profile.Name}); err != nil {
 			return KillResult{}, err
 		}

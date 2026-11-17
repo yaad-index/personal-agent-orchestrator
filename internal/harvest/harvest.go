@@ -298,7 +298,7 @@ func (s *Store) load(id string) (Manifest, error) {
 }
 
 func (s *Store) allowed(who access.Subject, m Manifest) bool {
-	return access.Allowed(s.auth, who, access.ReadHarvest, access.Resource{Agent: m.Agent, Tags: m.Tags})
+	return access.Allowed(s.auth, who, access.ReadHarvest, access.AgentResource(m.Agent, m.Tags))
 }
 
 // Get returns a harvest's manifest if who may read it.

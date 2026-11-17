@@ -558,3 +558,39 @@ func TestAnAgentResolverWithNothingToCheckRefusesEverything(t *testing.T) {
 	_, ok = AgentResolver{Tokens: fakeTokens{"t": ""}, Alive: func(string) bool { return true }}.Resolve("t")
 	assert.False(t, ok, "a token that names no agent identifies nobody")
 }
+
+type grantList []access.Grant
+
+func (l grantList) Of(s access.Subject) []access.Grant {
+	var out []access.Grant
+	for _, g := range l {
+		if g.Subject == s {
+			out = append(out, g)
+		}
+	}
+	return out
+}
+
+func TestUnderTheMatrixAnAgentSeesTheRecipesWhoseTagsItMayReach(t *testing.T) {
+	ops := sampleOps
+	ops.recipes = []RecipeInfo{
+		{Name: "researcher", Description: "reads", Tags: []string{"research"}},
+		{Name: "deployer", Description: "ships", Tags: []string{"ops"}},
+		{Name: "bare", Description: "no tags"},
+	}
+	m := access.Matrix{Grants: grantList{{Subject: access.Agent("boss"), Kind: access.ResourceAgent, Tag: "research"}}}
+	url := serve(t, ops, staticResolver{"a": access.Agent("boss"), "b": access.Agent("other"), "op": access.Operator}, WithAuthorizer(m))
+
+	assert.Equal(t, []RecipeInfo{ops.recipes[0]}, call[recipesOut](t, connect(t, url, "a"), "list_recipes").Recipes)
+	assert.Empty(t, call[recipesOut](t, connect(t, url, "b"), "list_recipes").Recipes)
+	assert.Len(t, call[recipesOut](t, connect(t, url, "op"), "list_recipes").Recipes, 3)
+
+	ops.err = errors.New("recipes unreadable")
+	url = serve(t, ops, staticResolver{"a": access.Agent("boss"), "op": access.Operator}, WithAuthorizer(m))
+	res, err := connect(t, url, "a").CallTool(context.Background(), &mcp.CallToolParams{Name: "list_recipes"})
+	require.NoError(t, err)
+	assert.False(t, res.IsError, "an agent that reaches some recipes is still not told they could not be read")
+	res, err = connect(t, url, "op").CallTool(context.Background(), &mcp.CallToolParams{Name: "list_recipes"})
+	require.NoError(t, err)
+	assert.True(t, res.IsError, "the operator is")
+}

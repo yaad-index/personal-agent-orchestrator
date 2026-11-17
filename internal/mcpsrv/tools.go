@@ -28,8 +28,9 @@ type AgentInfo struct {
 
 // RecipeInfo is one recipe as a tool reports it.
 type RecipeInfo struct {
-	Name        string `json:"name" jsonschema:"the recipe's name"`
-	Description string `json:"description" jsonschema:"what the recipe is for"`
+	Name        string   `json:"name" jsonschema:"the recipe's name"`
+	Description string   `json:"description" jsonschema:"what the recipe is for"`
+	Tags        []string `json:"tags,omitempty" jsonschema:"the tags an agent spawned from it carries"`
 }
 
 // KillInfo is what a kill reports.
@@ -246,25 +247,34 @@ func (s *Server) listAgents(_ context.Context, req *mcp.CallToolRequest, _ noInp
 	who := subject(req)
 	out := listAgentsOutput{Agents: []AgentInfo{}}
 	for _, a := range s.ops.Agents() {
-		if access.Allowed(s.auth, who, access.List, access.Resource{Agent: a.Name, Tags: a.Tags}) {
+		if access.Allowed(s.auth, who, access.List, access.AgentResource(a.Name, a.Tags)) {
 			out.Agents = append(out.Agents, a)
 		}
 	}
 	return nil, out, nil
 }
 
-// listRecipes lists the recipes to a caller allowed to see them, and none to
-// anyone else.
+// listRecipes lists the recipes whose agents the caller may reach: an agent
+// spawned from a recipe carries the recipe's tags, so a recipe is shown when one
+// of those tags is in the caller's scope. A recipe out of reach is left out, as if
+// it did not exist.
 func (s *Server) listRecipes(_ context.Context, req *mcp.CallToolRequest, _ noInput) (*mcp.CallToolResult, listRecipesOutput, error) {
+	who := subject(req)
 	out := listRecipesOutput{Recipes: []RecipeInfo{}}
-	if !access.Allowed(s.auth, subject(req), access.ListRecipes, access.Resource{}) {
-		return nil, out, nil
-	}
 	rs, err := s.ops.Recipes()
 	if err != nil {
-		return nil, out, err
+		// Only a caller that reaches every recipe, tagged or not, is told the
+		// recipes could not be read; to anyone else there are none.
+		if access.Allowed(s.auth, who, access.ListRecipes, access.Resource{Kind: access.ResourceAgent}) {
+			return nil, out, err
+		}
+		return nil, out, nil
 	}
-	out.Recipes = append(out.Recipes, rs...)
+	for _, r := range rs {
+		if access.Allowed(s.auth, who, access.ListRecipes, access.AgentResource("", r.Tags)) {
+			out.Recipes = append(out.Recipes, r)
+		}
+	}
 	return nil, out, nil
 }
 

@@ -79,7 +79,7 @@ func (o mcpOps) Recipes() ([]mcpsrv.RecipeInfo, error) {
 	var out []mcpsrv.RecipeInfo
 	for _, n := range set.Names() {
 		r, _ := set.Get(n)
-		out = append(out, mcpsrv.RecipeInfo{Name: n, Description: r.Description})
+		out = append(out, mcpsrv.RecipeInfo{Name: n, Description: r.Description, Tags: r.Profile.Tags})
 	}
 	return out, nil
 }
@@ -178,7 +178,7 @@ func (o mcpOps) Send(ctx context.Context, who access.Subject, byTag bool, target
 		// Routing is bounded by what the caller may address: an agent it may
 		// not is left out, and when none is left the target matches nothing.
 		Allow: func(p core.Profile) bool {
-			return access.Allowed(o.auth, who, access.Route, access.Resource{Agent: p.Name, Tags: p.Tags})
+			return access.Allowed(o.auth, who, access.Route, access.AgentResource(p.Name, p.Tags))
 		},
 	})
 	if err != nil {
