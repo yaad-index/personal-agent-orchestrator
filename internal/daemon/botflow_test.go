@@ -4,10 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -49,9 +49,15 @@ func (s *service) texts(chat float64) []string {
 func (s *service) handler(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	b, _ := io.ReadAll(r.Body)
-	var body map[string]any
-	_ = json.Unmarshal(b, &body)
+	body := map[string]any{}
+	if err := r.ParseMultipartForm(1 << 20); err == nil {
+		for k, v := range r.MultipartForm.Value {
+			body[k] = v[0]
+			if n, err := strconv.ParseFloat(v[0], 64); err == nil && k == "chat_id" {
+				body[k] = n
+			}
+		}
+	}
 	switch {
 	case strings.HasSuffix(r.URL.Path, "/getUpdates"):
 		out := s.pending

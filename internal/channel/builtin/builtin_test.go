@@ -22,7 +22,7 @@ func (noHandler) NativeOf(string, string) (string, bool) { return "", false }
 func TestTheBuildContainsTheBotAdapterAndCanBuildOne(t *testing.T) {
 	tb := Table()
 	assert.Equal(t, []string{"bot"}, tb.Kinds())
-	as, err := tb.Build([]adapter.Spec{{ID: 1, Name: "chat", Kind: "bot", Credential: "x", Options: map[string]any{"endpoint": "https://api.example/{token}/{method}"}}}, noHandler{})
+	as, err := tb.Build([]adapter.Spec{{ID: 1, Name: "chat", Kind: "bot", Credential: "x", Options: map[string]any{"endpoint": "https://api.example/bot{token}/{method}"}}}, noHandler{})
 	require.NoError(t, err)
 	require.Len(t, as, 1)
 	assert.Equal(t, "chat", as[0].Name())

@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -23,6 +25,28 @@ import (
 
 const tok = "TOK-123"
 
+// update and message are the service's JSON shapes, as far as the fake needs them.
+type update struct {
+	ID      int64    `json:"update_id"`
+	Message *message `json:"message,omitempty"`
+}
+
+type message struct {
+	ID   int64 `json:"message_id"`
+	From *struct {
+		ID    int64 `json:"id"`
+		IsBot bool  `json:"is_bot"`
+	} `json:"from,omitempty"`
+	Chat struct {
+		ID   int64  `json:"id"`
+		Type string `json:"type"`
+	} `json:"chat"`
+	Text    string `json:"text"`
+	ReplyTo *struct {
+		ID int64 `json:"message_id"`
+	} `json:"reply_to_message,omitempty"`
+}
+
 // server is a fake of the service's API: it hands out queued batches of updates,
 // records what is sent, and can be made to fail.
 type server struct {
@@ -31,8 +55,8 @@ type server struct {
 
 	mu       sync.Mutex
 	batches  [][]update
-	polls    []map[string]any
-	sent     []map[string]any
+	polls    []map[string]string
+	sent     []map[string]string
 	nextID   int64
 	failNow  int              // polls to fail before serving
 	failSend map[float64]bool // chat ids whose sends fail
@@ -40,6 +64,8 @@ type server struct {
 	mode string
 	// describe, when set, is put in a failure's description.
 	describe string
+	// huge makes a send answer with more than the adapter reads.
+	huge bool
 }
 
 func newServer(t *testing.T) *server {
@@ -58,25 +84,24 @@ func (s *server) serve(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad path", 404)
 		return
 	}
-	var body map[string]any
-	b, _ := io.ReadAll(r.Body)
-	_ = json.Unmarshal(b, &body)
+	body := map[string]string{}
+	if err := r.ParseMultipartForm(1 << 20); err == nil {
+		for k, v := range r.MultipartForm.Value {
+			body[k] = v[0]
+		}
+	}
 	switch strings.TrimPrefix(r.URL.Path, "/bot"+tok+"/") {
 	case "getUpdates":
 		s.polls = append(s.polls, body)
 		if s.failNow > 0 {
 			s.failNow--
 			w.WriteHeader(500)
-			_, _ = fmt.Fprintf(w, `{"ok":false,"description":"boom %s"}`, s.describe)
+			_, _ = fmt.Fprintf(w, `{"ok":false,"error_code":500,"description":"boom %s"}`, s.describe)
 			return
 		}
 		switch s.mode {
 		case "okfalse":
-			_, _ = fmt.Fprintf(w, `{"ok":false,"description":%q}`, s.describe)
-			return
-		case "status":
-			w.WriteHeader(500)
-			_, _ = io.WriteString(w, `{"ok":true,"result":[]}`)
+			_, _ = fmt.Fprintf(w, `{"ok":false,"error_code":400,"description":%q}`, s.describe)
 			return
 		}
 		var batch []update
@@ -90,9 +115,23 @@ func (s *server) serve(w http.ResponseWriter, r *http.Request) {
 		raw, _ := json.Marshal(batch)
 		_, _ = fmt.Fprintf(w, `{"ok":true,"result":%s}`, raw)
 	case "sendMessage":
-		if s.failSend[body["chat_id"].(float64)] {
+		chat, _ := strconv.ParseFloat(body["chat_id"], 64)
+		if s.failSend[chat] {
 			w.WriteHeader(403)
-			_, _ = io.WriteString(w, `{"ok":false,"description":"blocked"}`)
+			_, _ = io.WriteString(w, `{"ok":false,"error_code":403,"description":"blocked"}`)
+			return
+		}
+		switch s.mode {
+		case "okfalse":
+			_, _ = fmt.Fprintf(w, `{"ok":false,"error_code":400,"description":%q}`, s.describe)
+			return
+		case "unknown":
+			w.WriteHeader(502)
+			_, _ = io.WriteString(w, `{"ok":false,"error_code":502,"description":"gateway"}`)
+			return
+		}
+		if s.huge {
+			_, _ = fmt.Fprintf(w, `{"ok":true,"result":{"message_id":1,"text":"%s"}}`, strings.Repeat("x", maxResponse))
 			return
 		}
 		s.sent = append(s.sent, body)
@@ -110,8 +149,8 @@ func (s *server) sentTo(chat float64) []string {
 	defer s.mu.Unlock()
 	var out []string
 	for _, m := range s.sent {
-		if m["chat_id"].(float64) == chat {
-			out = append(out, m["text"].(string))
+		if c, _ := strconv.ParseFloat(m["chat_id"], 64); c == chat {
+			out = append(out, m["text"])
 		}
 	}
 	return out
@@ -134,9 +173,19 @@ type handler struct {
 	res        comm.ChannelResult
 	err        error
 	recipients []string
+	// slowFirst holds the first inbound back before it is taken in.
+	slowFirst time.Duration
+	calls     int
 }
 
 func (h *handler) ReceiveFromChannel(_ context.Context, in comm.ChannelInbound) (comm.ChannelResult, error) {
+	h.mu.Lock()
+	h.calls++
+	first := h.calls == 1
+	h.mu.Unlock()
+	if first && h.slowFirst > 0 {
+		time.Sleep(h.slowFirst)
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.got = append(h.got, in)
@@ -160,9 +209,8 @@ func spec(s *server, opts map[string]any) adapter.Spec {
 
 func start(t *testing.T, s *server, h *handler, opts map[string]any) (*Bot, context.CancelFunc) {
 	t.Helper()
-	b, err := newBot(spec(s, opts), h, nil)
+	b, err := newBot(spec(s, opts), h)
 	require.NoError(t, err)
-	b.startBackoff, b.maxBackoff = time.Millisecond, 5*time.Millisecond
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- b.Run(ctx) }()
@@ -184,7 +232,7 @@ func waitFor(t *testing.T, f func() bool, msg string) {
 }
 
 func TestNewNeedsAnEndpointWithTokenAndMethodAndKnowsItsOptions(t *testing.T) {
-	good := map[string]any{"endpoint": "https://x.example/{token}/{method}"}
+	good := map[string]any{"endpoint": "https://x.example/bot{token}/{method}"}
 	for name, c := range map[string]struct {
 		opts map[string]any
 		want string
@@ -192,7 +240,10 @@ func TestNewNeedsAnEndpointWithTokenAndMethodAndKnowsItsOptions(t *testing.T) {
 		"none":            {nil, "endpoint"},
 		"no token":        {map[string]any{"endpoint": "https://x/{method}"}, "endpoint"},
 		"no method":       {map[string]any{"endpoint": "https://x/{token}"}, "endpoint"},
-		"not a url":       {map[string]any{"endpoint": "ftp://x/{token}/{method}"}, "http or https"},
+		"other path":      {map[string]any{"endpoint": "https://x/{token}/{method}"}, "endpoint"},
+		"no placeholders": {map[string]any{"endpoint": "https://x.example/plain"}, "ending in"},
+		"token in server": {map[string]any{"endpoint": "https://x/{token}/bot{token}/{method}"}, "endpoint"},
+		"not a url":       {map[string]any{"endpoint": "ftp://x/bot{token}/{method}"}, "http or https"},
 		"unknown":         {map[string]any{"endpoint": good["endpoint"], "nope": 1}, `unknown option "nope"`},
 		"poll too long":   {map[string]any{"endpoint": good["endpoint"], "poll_timeout": 600}, "poll_timeout"},
 		"poll negative":   {map[string]any{"endpoint": good["endpoint"], "poll_timeout": -1}, "poll_timeout"},
@@ -204,6 +255,8 @@ func TestNewNeedsAnEndpointWithTokenAndMethodAndKnowsItsOptions(t *testing.T) {
 		require.Error(t, err, name)
 		assert.Contains(t, err.Error(), c.want, name)
 	}
+	_, err := New(adapter.Spec{Name: "chat", Options: good}, &handler{})
+	require.ErrorContains(t, err, "credential", "no credential")
 	a, err := New(adapter.Spec{Name: "chat", Credential: tok, Options: map[string]any{"endpoint": good["endpoint"], "poll_timeout": 5.0, "message_limit": uint64(500)}}, &handler{})
 	require.NoError(t, err)
 	assert.Equal(t, "chat", a.Name())
@@ -263,10 +316,10 @@ func TestTheOffsetAdvancesPastWhatWasHandled(t *testing.T) {
 	waitFor(t, func() bool { s.mu.Lock(); defer s.mu.Unlock(); return len(s.polls) >= 2 }, "second poll")
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	assert.EqualValues(t, 0, s.polls[0]["offset"])
-	assert.EqualValues(t, 10, s.polls[1]["offset"], "one past the highest update handled")
-	assert.EqualValues(t, 0, s.polls[0]["timeout"])
-	assert.Equal(t, []any{"message"}, s.polls[0]["allowed_updates"])
+	assert.Equal(t, "1", s.polls[0]["offset"], "nothing confirmed yet: update ids start at 1")
+	assert.Equal(t, "10", s.polls[1]["offset"], "one past the last update handled")
+	assert.Empty(t, s.polls[0]["timeout"], "poll_timeout 0 asks for no wait")
+	assert.Equal(t, `["message"]`, s.polls[0]["allowed_updates"])
 }
 
 func TestRegisterIsTheRegistrationEntryPointAndItsSecretIsNotARoutedMessage(t *testing.T) {
@@ -334,6 +387,44 @@ func TestAFailureToRecordIsLoggedAndNeverSentToTheSender(t *testing.T) {
 	assert.Empty(t, s.sentTo(901))
 }
 
+func TestASendersMessagesAreHandledOneAtATimeInOrder(t *testing.T) {
+	s, h := newServer(t), &handler{res: comm.ChannelResult{Delivery: &comm.Delivery{}}, slowFirst: 150 * time.Millisecond}
+	s.queue(priv(1, 1, 900, "@bee one"), priv(2, 2, 900, "two"), priv(3, 3, 900, "three"))
+	start(t, s, h, nil)
+	waitFor(t, func() bool { return len(h.inbound()) == 3 }, "three")
+	in := h.inbound()
+	assert.Equal(t, []string{"one", "two", "three"}, []string{in[0].Text, in[1].Text, in[2].Text}, "a slow message is not overtaken")
+	assert.Equal(t, "bee", in[1].Target.Value, "so the next message finds the address the slow one set")
+}
+
+func TestAPollFailureIsNotLoggedOnceRunIsStopping(t *testing.T) {
+	var buf strings.Builder
+	var mu sync.Mutex
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(writerFunc(func(p []byte) (int, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		return buf.Write(p)
+	}), nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	b, err := newBot(spec(newServer(t), nil), &handler{})
+	require.NoError(t, err)
+
+	b.pollFailed(errors.New("x"))
+	ctx, cancel := context.WithCancel(context.Background())
+	b.runCtx = ctx
+	b.pollFailed(errors.New("x"))
+	cancel()
+	b.pollFailed(errors.New("x"))
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, 2, strings.Count(buf.String(), "channel poll failed"), "logged before Run and while running, not once stopping")
+}
+
+type writerFunc func([]byte) (int, error)
+
+func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
+
 func TestAStickyAddressIsKeptOnlyWhenTheMessageWasRouted(t *testing.T) {
 	s, h := newServer(t), &handler{} // nothing delivered: the sender is a stranger
 	s.queue(priv(1, 1, 900, "@bee hi"), priv(2, 2, 900, "again"))
@@ -355,7 +446,7 @@ func TestAFailedPollIsRetriedAndThenWorksAgain(t *testing.T) {
 
 func TestPaoOutputGoesToEachRecipientAsALineAndIsNamedByTheFirstPiece(t *testing.T) {
 	s, h := newServer(t), &handler{recipients: []string{"900", "901"}}
-	b, err := newBot(spec(s, nil), h, nil)
+	b, err := newBot(spec(s, nil), h)
 	require.NoError(t, err)
 	natives, err := b.SendNative(context.Background(), core.Message{Sender: "bee", Text: "done"})
 	require.NoError(t, err)
@@ -367,7 +458,7 @@ func TestPaoOutputGoesToEachRecipientAsALineAndIsNamedByTheFirstPiece(t *testing
 
 func TestALongMessageIsSplitAtTheConfiguredLimitAndNamedByItsFirstPiece(t *testing.T) {
 	s, h := newServer(t), &handler{recipients: []string{"900"}}
-	b, err := newBot(spec(s, map[string]any{"message_limit": 100}), h, nil)
+	b, err := newBot(spec(s, map[string]any{"message_limit": 100}), h)
 	require.NoError(t, err)
 	text := strings.Repeat("word ", 50)
 	natives, err := b.SendNative(context.Background(), core.Message{Sender: "bee", Text: text})
@@ -384,7 +475,7 @@ func TestALongMessageIsSplitAtTheConfiguredLimitAndNamedByItsFirstPiece(t *testi
 func TestOneRecipientBlockingTheBotDoesNotStopTheRest(t *testing.T) {
 	s, h := newServer(t), &handler{recipients: []string{"900", "901"}}
 	s.failSend[900] = true
-	b, err := newBot(spec(s, nil), h, nil)
+	b, err := newBot(spec(s, nil), h)
 	require.NoError(t, err)
 	natives, err := b.SendNative(context.Background(), core.Message{Sender: "bee", Text: "x"})
 	require.Error(t, err)
@@ -398,22 +489,47 @@ func TestOneRecipientBlockingTheBotDoesNotStopTheRest(t *testing.T) {
 
 func TestTheTokenIsNeverInAnError(t *testing.T) {
 	s := newServer(t)
-	b, err := newBot(spec(s, nil), &handler{}, nil)
+	b, err := newBot(spec(s, nil), &handler{})
 	require.NoError(t, err)
 	s.ts.Close()
-	err = b.call(context.Background(), "getUpdates", map[string]any{}, nil)
+	_, err = b.send(context.Background(), 900, "x")
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), tok, "a transport error names the URL, the URL holds the token")
 	assert.NotContains(t, err.Error(), "http://", "and the URL itself is not in the log either")
+	assert.Contains(t, err.Error(), "transport")
 
 	s2 := newServer(t)
-	b2, err := newBot(spec(s2, nil), &handler{}, nil)
+	sp := spec(s2, nil)
+	sp.Credential = "WRONG"
+	b2, err := newBot(sp, &handler{})
 	require.NoError(t, err)
-	b2.token = "WRONG"
-	err = b2.call(context.Background(), "getUpdates", map[string]any{}, nil)
+	_, err = b2.send(context.Background(), 900, "x")
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "WRONG")
-	assert.Contains(t, err.Error(), "404")
+	assert.Equal(t, "the service's answer could not be used", err.Error())
+}
+
+func TestAnErrorIsInTheAdaptersWordsNotTheLibrarys(t *testing.T) {
+	s := newServer(t)
+	s.mode = "unknown"
+	b, err := newBot(spec(s, nil), &handler{})
+	require.NoError(t, err)
+	_, err = b.send(context.Background(), 900, "x")
+	require.Error(t, err)
+	assert.Equal(t, "the service's answer could not be used", err.Error(), "an answer the adapter has no word for is not quoted")
+
+	s.failSend[901] = true
+	_, err = b.send(context.Background(), 901, "x")
+	assert.EqualError(t, err, "forbidden: blocked", "a known kind keeps what the service said")
+}
+
+func TestAnAnswerPastTheCapIsRefused(t *testing.T) {
+	s := newServer(t)
+	s.huge = true
+	b, err := newBot(spec(s, nil), &handler{})
+	require.NoError(t, err)
+	_, err = b.send(context.Background(), 900, "x")
+	assert.EqualError(t, err, "the service's answer was too large")
 }
 
 func TestSplitKeepsEverythingAndPrefersLinesThenWords(t *testing.T) {
@@ -433,19 +549,6 @@ func TestARunThatIsCancelledReturnsNilEvenWhileFailing(t *testing.T) {
 	cancel()
 }
 
-var _ = errors.New
-
-func TestAnUpdateOutOfOrderDoesNotMoveTheOffsetBack(t *testing.T) {
-	s, h := newServer(t), &handler{}
-	s.queue(priv(9, 1, 900, "@bee a"), priv(7, 2, 900, "@bee b"))
-	start(t, s, h, nil)
-	waitFor(t, func() bool { return len(h.inbound()) == 2 }, "both")
-	waitFor(t, func() bool { s.mu.Lock(); defer s.mu.Unlock(); return len(s.polls) >= 2 }, "second poll")
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	assert.EqualValues(t, 10, s.polls[1]["offset"])
-}
-
 func TestNothingIsSentWhenThereIsNothingToSay(t *testing.T) {
 	s, h := newServer(t), &handler{res: comm.ChannelResult{Delivery: &comm.Delivery{}}}
 	s.queue(priv(1, 1, 900, "@bee hi"))
@@ -460,53 +563,12 @@ func TestNothingIsSentWhenThereIsNothingToSay(t *testing.T) {
 func TestTheTokenIsScrubbedFromWhatTheServiceSays(t *testing.T) {
 	s := newServer(t)
 	s.mode, s.describe = "okfalse", "your token "+tok+" is bad"
-	b, err := newBot(spec(s, nil), &handler{}, nil)
+	b, err := newBot(spec(s, nil), &handler{})
 	require.NoError(t, err)
-	err = b.call(context.Background(), "getUpdates", map[string]any{}, nil)
+	_, err = b.send(context.Background(), 900, "x")
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), tok)
-	assert.Contains(t, err.Error(), "***")
-}
-
-func TestAnAnswerIsGoodOnlyIfTheStatusAndTheOkFlagAreBoth(t *testing.T) {
-	for _, mode := range []string{"okfalse", "status"} {
-		s := newServer(t)
-		s.mode = mode
-		b, err := newBot(spec(s, nil), &handler{}, nil)
-		require.NoError(t, err)
-		var out []update
-		assert.Error(t, b.call(context.Background(), "getUpdates", map[string]any{}, &out), mode)
-	}
-}
-
-func TestTheRetryPauseGrowsToACapAndStartsAgainAfterASuccess(t *testing.T) {
-	s, h := newServer(t), &handler{}
-	s.failNow = 5
-	b, err := newBot(spec(s, nil), h, nil)
-	require.NoError(t, err)
-	b.startBackoff, b.maxBackoff = time.Millisecond, 4*time.Millisecond
-	var mu sync.Mutex
-	var pauses []time.Duration
-	b.wait = func(ctx context.Context, d time.Duration) bool {
-		mu.Lock()
-		pauses = append(pauses, d)
-		mu.Unlock()
-		return ctx.Err() == nil
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() { _ = b.Run(ctx); close(done) }()
-	waitFor(t, func() bool { s.mu.Lock(); defer s.mu.Unlock(); return len(s.polls) >= 7 }, "recovered and polling")
-	s.mu.Lock()
-	s.failNow = 2
-	s.mu.Unlock()
-	waitFor(t, func() bool { mu.Lock(); defer mu.Unlock(); return len(pauses) >= 7 }, "failed again")
-	cancel()
-	<-done
-	mu.Lock()
-	defer mu.Unlock()
-	ms := time.Millisecond
-	assert.Equal(t, []time.Duration{ms, 2 * ms, 4 * ms, 4 * ms, 4 * ms, ms, 2 * ms}, pauses[:7], "doubles, stops at the cap, and a success starts it over")
+	assert.Equal(t, "bad request: your token *** is bad", err.Error())
 }
 
 func TestAnAddressNeedsAMarkerAndAName(t *testing.T) {
