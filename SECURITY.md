@@ -35,10 +35,14 @@ backend's hook covers is checked against the policy: what the policy allows
 runs, anything else is asked of the operator, and an unanswered or failed
 question is a denial. The access matrix sits behind the operations pao exposes to
 agents: an agent reaches another agent only through a grant the operator made
-(`pao access grant`), and with no grants it reaches none. The operator is not yet
-behind grants. The grants are a file in the state directory, read at start, so an
-agent the gate lets write files as the node's user can change them for the next
-start, as it could the gate's policy.
+(`pao access grant`), and with no grants it reaches none. The operator is behind
+grants too: a new node's operator reaches no agent until it grants itself in
+(`pao access grant operator --tag <tag>`), though administering the grants, the
+subjects and the channels never needs a grant. A node that ran before the access
+matrix is given, once, explicit operator grants for the tags and agents in its
+configuration, listed by `pao access grants`. The grants are a file in the state
+directory, read at start, so an agent the gate lets write files as the node's user
+can change them for the next start, as it could the gate's policy.
 
 **By default the gate does not guard reads.** Tools that only read (reading,
 listing and searching files) are classified as read-only, and read-only actions

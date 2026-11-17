@@ -56,7 +56,7 @@ func TestAGrantMadeAtRuntimeBoundsWhatAnAgentReachesAndARevocationTakesItBack(t 
 	require.NoError(t, err)
 	gs, err := n.client.Grants(ctx, "agent:tmp-a")
 	require.NoError(t, err)
-	assert.Equal(t, local.GrantsJSON{Version: 3, Grants: []local.GrantJSON{
+	assert.Equal(t, local.GrantsJSON{Version: 4, Grants: []local.GrantJSON{
 		{Subject: "agent:tmp-a", Kind: "agent", Tag: "team"},
 		{Subject: "agent:tmp-a", Kind: "agent", Name: "tmp-b"},
 	}}, gs)

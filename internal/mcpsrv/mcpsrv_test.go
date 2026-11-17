@@ -578,12 +578,16 @@ func TestUnderTheMatrixAnAgentSeesTheRecipesWhoseTagsItMayReach(t *testing.T) {
 		{Name: "deployer", Description: "ships", Tags: []string{"ops"}},
 		{Name: "bare", Description: "no tags"},
 	}
-	m := access.Matrix{Grants: grantList{{Subject: access.Agent("boss"), Kind: access.ResourceAgent, Tag: "research"}}}
+	m := access.Matrix{Grants: grantList{
+		{Subject: access.Agent("boss"), Kind: access.ResourceAgent, Tag: "research"},
+		{Subject: access.Operator, Kind: access.ResourceAgent, Tag: "research"},
+		{Subject: access.Operator, Kind: access.ResourceAgent, Tag: "ops"},
+	}}
 	url := serve(t, ops, staticResolver{"a": access.Agent("boss"), "b": access.Agent("other"), "op": access.Operator}, WithAuthorizer(m))
 
 	assert.Equal(t, []RecipeInfo{ops.recipes[0]}, call[recipesOut](t, connect(t, url, "a"), "list_recipes").Recipes)
 	assert.Empty(t, call[recipesOut](t, connect(t, url, "b"), "list_recipes").Recipes)
-	assert.Len(t, call[recipesOut](t, connect(t, url, "op"), "list_recipes").Recipes, 3)
+	assert.Len(t, call[recipesOut](t, connect(t, url, "op"), "list_recipes").Recipes, 2, "the operator too sees only the recipes its grants reach; the untagged one is out of everyone's reach")
 
 	ops.err = errors.New("recipes unreadable")
 	url = serve(t, ops, staticResolver{"a": access.Agent("boss"), "op": access.Operator}, WithAuthorizer(m))

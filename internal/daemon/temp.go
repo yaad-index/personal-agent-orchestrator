@@ -51,6 +51,8 @@ func checkProfile(p core.Profile) error {
 // shape the local channel serves. The channel's bearer token identifies the
 // operator, so every call is made as the operator.
 type tempAPI struct {
+	auth  access.Authorizer
+	reg   *registry.Registry
 	mgr   *temp.Manager
 	store *harvest.Store
 	// cmds sends the commands to other nodes; nil when this node is not in a mesh.
@@ -137,6 +139,10 @@ func (a tempAPI) holds(name string) bool {
 func (a tempAPI) Agents() []local.AgentJSON {
 	var out []local.AgentJSON
 	for _, s := range a.mgr.List() {
+		p, _, _ := a.reg.Lookup(s.Name)
+		if !access.Allowed(a.auth, access.Operator, access.List, access.AgentResource(s.Name, p.Tags)) {
+			continue
+		}
 		out = append(out, local.AgentJSON{
 			Name: s.Name, Recipe: s.Recipe, Channel: s.Channel, State: s.State.String(),
 			Flag: string(s.Flag), Created: s.Created, LastActivity: s.LastActivity,
@@ -144,7 +150,7 @@ func (a tempAPI) Agents() []local.AgentJSON {
 	}
 	if a.dir != nil {
 		for _, e := range a.dir.All() {
-			if !e.Agent.GetTemporary() {
+			if !e.Agent.GetTemporary() || !access.Allowed(a.auth, access.Operator, access.List, access.AgentResource(e.Agent.GetName(), e.Agent.GetTags())) {
 				continue
 			}
 			out = append(out, local.AgentJSON{

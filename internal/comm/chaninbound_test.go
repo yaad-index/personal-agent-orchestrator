@@ -313,3 +313,20 @@ func TestADefaultIsPerChannelAndOneThatIsGoneIsAnErrorNotAGuess(t *testing.T) {
 	_, ok = l.DefaultAgent("other")
 	assert.False(t, ok)
 }
+
+func TestTheOperatorsChannelMessagesAreBoundedByWhatTheOperatorMayReach(t *testing.T) {
+	l, r, _, _ := chanSetup(t)
+	r.agents["b"] = []string{"b"}
+	l.SetDefaults(mapDefaults{"chat": "b"})
+	l.SetOperatorAccess(func(p core.Profile) bool { return p.Name == "a" })
+
+	_, err := l.ReceiveFromChannel(context.Background(), ChannelInbound{Channel: "chat", Sender: "op", Text: "hi", Target: byName("b")})
+	require.Error(t, err, "an address out of reach is no agent")
+	_, err = l.ReceiveFromChannel(context.Background(), ChannelInbound{Channel: "chat", Sender: "op", Text: "hi"})
+	require.Error(t, err, "and so is a default out of reach")
+	assert.Empty(t, r.routed)
+
+	_, err = l.ReceiveFromChannel(context.Background(), ChannelInbound{Channel: "chat", Sender: "op", Text: "hi", Target: byName("a")})
+	require.NoError(t, err)
+	assert.Equal(t, [][]string{{"a"}}, r.to)
+}

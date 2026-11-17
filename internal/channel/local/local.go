@@ -35,7 +35,9 @@ const (
 
 // Layer is the part of the communication layer the channel uses.
 type Layer interface {
-	Receive(ctx context.Context, in comm.Inbound) (comm.Delivery, error)
+	// ReceiveAsOperator routes a message from the operator, bounded by what the
+	// operator may reach.
+	ReceiveAsOperator(ctx context.Context, in comm.Inbound) (comm.Delivery, error)
 	React(id, by, emoji string) error
 }
 
@@ -216,7 +218,7 @@ func (s *Server) postMessage(w http.ResponseWriter, r *http.Request) {
 		sender = defaultSender
 	}
 
-	d, err := s.layer.Receive(r.Context(), comm.Inbound{
+	d, err := s.layer.ReceiveAsOperator(r.Context(), comm.Inbound{
 		Source:     Source,
 		Sender:     sender,
 		Text:       req.Text,

@@ -185,11 +185,16 @@ func (m *Manager) lockFor(name string) *sync.Mutex {
 	return l
 }
 
-// authorize decides whether who may do action on res. The operator always may.
-// An agent needs the access seam to allow it and then the approval gate to
-// approve it; anything else, including a missing gate, is a refusal.
+// authorize decides whether who may do action on res. Both the operator and an
+// agent need the access matrix to allow it; an agent then needs the approval gate
+// to approve it, while the operator's own act is not asked of anyone. A refusal
+// by the matrix reads as an agent that does not exist; anything else, including a
+// missing gate, is a refusal.
 func (m *Manager) authorize(ctx context.Context, who access.Subject, action access.Action, res access.Resource, detail map[string]string) error {
 	if who.Kind == access.KindOperator {
+		if !access.Allowed(m.Auth, who, action, res) {
+			return ErrNotFound
+		}
 		return nil
 	}
 	if who.Kind != access.KindAgent || !access.Allowed(m.Auth, who, action, res) {

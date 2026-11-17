@@ -125,3 +125,27 @@ func TestTheStoreDrivesTheMatrix(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, m.Allow(access.Agent("a"), access.Route, b), "and a revocation too")
 }
+
+func TestASeedIsWrittenOnceIntoAnEmptyStoreOnly(t *testing.T) {
+	p := path(t)
+	s, err := Open(p)
+	require.NoError(t, err)
+	assert.False(t, s.Found())
+	op := access.Grant{Subject: access.Operator, Kind: access.ResourceAgent, Tag: "home"}
+	require.NoError(t, s.Seed([]access.Grant{op, op, cell}))
+	assert.Equal(t, uint64(1), s.Document().Version, "one write")
+	assert.Equal(t, []access.Grant{op}, s.Of(access.Operator), "repeats are folded")
+	assert.Error(t, s.Seed([]access.Grant{scope}), "not twice")
+
+	again, err := Open(p)
+	require.NoError(t, err)
+	assert.True(t, again.Found())
+	assert.Error(t, again.Seed([]access.Grant{scope}), "never over a stored document")
+
+	fresh, err := Open(path(t))
+	require.NoError(t, err)
+	_, err = fresh.Add(cell)
+	require.NoError(t, err)
+	assert.Error(t, fresh.Seed([]access.Grant{scope}), "never over grants made since")
+	assert.Error(t, (&Store{path: path(t)}).Seed([]access.Grant{{Subject: access.Operator, Kind: access.ResourceAgent}}), "a bad grant is refused")
+}

@@ -118,6 +118,12 @@ func startNodeWith(t *testing.T, agents map[string]string, adjust func(dir, scri
 		})
 	}
 
+	// The operator reaches the test agents (tag team) and the agents spawned from
+	// the test recipes (tag temp) through grants, as an operator does once it has
+	// granted itself in. A hook may write its own grants over these.
+	require.NoError(t, os.MkdirAll(cfg.Orchestrator.StateDir, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(cfg.Orchestrator.StateDir, grantsFile), []byte(operatorTestGrants), 0o600))
+
 	if adjust != nil {
 		adjust(dir, scriptPath, cfg)
 	}
@@ -176,6 +182,8 @@ func startNodeWith(t *testing.T, agents map[string]string, adjust func(dir, scri
 	})
 	return n
 }
+
+const operatorTestGrants = `{"version":1,"grants":[{"subject":"operator","kind":"agent","tag":"team"},{"subject":"operator","kind":"agent","tag":"temp"}]}`
 
 func (n *node) next(t *testing.T) local.MessageJSON {
 	t.Helper()
