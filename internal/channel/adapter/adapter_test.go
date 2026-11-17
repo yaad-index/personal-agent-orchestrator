@@ -37,12 +37,12 @@ func (nilHandler) Recipients(string) []string             { return nil }
 func (nilHandler) NativeOf(string, string) (string, bool) { return "", false }
 
 func TestTheTableListsKindsSorted(t *testing.T) {
-	assert.Equal(t, []string{"a", "b"}, Table{"b": okFactory, "a": okFactory}.Kinds())
+	assert.Equal(t, []string{"a", "b"}, Table{"b": {New: okFactory}, "a": {New: okFactory}}.Kinds())
 }
 
 func TestBuildMakesOneAdapterPerSpecWithItsSpecAndHandler(t *testing.T) {
 	h := nilHandler{}
-	got, err := Table{"bot": okFactory}.Build([]Spec{
+	got, err := Table{"bot": {New: okFactory}}.Build([]Spec{
 		{ID: 1, Name: "chat", Kind: "bot", Credential: "tok", Options: map[string]any{"x": 1}},
 		{ID: 2, Name: "alt", Kind: "bot", Credential: "tok2"},
 	}, h)
@@ -55,18 +55,18 @@ func TestBuildMakesOneAdapterPerSpecWithItsSpecAndHandler(t *testing.T) {
 }
 
 func TestAKindNotCompiledInIsAStartupErrorThatNamesWhatIs(t *testing.T) {
-	_, err := Table{"bot": okFactory}.Build([]Spec{{ID: 1, Name: "chat", Kind: "nope", Credential: "x"}}, nilHandler{})
+	_, err := Table{"bot": {New: okFactory}}.Build([]Spec{{ID: 1, Name: "chat", Kind: "nope", Credential: "x"}}, nilHandler{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `"nope" is not compiled into this build`)
 	assert.Contains(t, err.Error(), "bot")
 }
 
 func TestAnEmptyCredentialStopsTheNodeAndTheErrorNeverHoldsIt(t *testing.T) {
-	_, err := Table{"bot": okFactory}.Build([]Spec{{ID: 1, Name: "chat", Kind: "bot", Credential: ""}}, nilHandler{})
+	_, err := Table{"bot": {New: okFactory}}.Build([]Spec{{ID: 1, Name: "chat", Kind: "bot", Credential: ""}}, nilHandler{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "credential")
 
-	_, err = Table{"bot": func(s Spec, _ Handler) (Adapter, error) { return nil, errors.New("rejected") }}.Build(
+	_, err = Table{"bot": {New: func(s Spec, _ Handler) (Adapter, error) { return nil, errors.New("rejected") }}}.Build(
 		[]Spec{{ID: 1, Name: "chat", Kind: "bot", Credential: "SECRET-TOKEN"}}, nilHandler{})
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "SECRET-TOKEN")
@@ -74,10 +74,35 @@ func TestAnEmptyCredentialStopsTheNodeAndTheErrorNeverHoldsIt(t *testing.T) {
 }
 
 func TestAnAdapterThatRenamesItselfIsRefused(t *testing.T) {
-	_, err := Table{"bot": func(s Spec, h Handler) (Adapter, error) { return &fake{name: "other"}, nil }}.Build(
+	_, err := Table{"bot": {New: func(s Spec, h Handler) (Adapter, error) { return &fake{name: "other"}, nil }}}.Build(
 		[]Spec{{ID: 1, Name: "chat", Kind: "bot", Credential: "x"}}, nilHandler{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "named itself")
+}
+
+func TestCheckReportsEveryFailingChannelWithoutACredential(t *testing.T) {
+	tbl := Table{
+		"bot": {New: okFactory, Check: func(o map[string]any) error {
+			if _, bad := o["bad"]; bad {
+				return errors.New("bad option")
+			}
+			return nil
+		}},
+		"bare": {New: okFactory},
+	}
+	assert.NoError(t, tbl.Check([]Spec{{ID: 1, Name: "chat", Kind: "bot"}}), "no credential is needed")
+
+	err := tbl.Check([]Spec{
+		{ID: 1, Name: "one", Kind: "bot", Options: map[string]any{"bad": 1}},
+		{ID: 2, Name: "two", Kind: "nope"},
+		{ID: 3, Name: "three", Kind: "bare"},
+		{ID: 4, Name: "four", Kind: "bot"},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `channel "one": bad option`)
+	assert.Contains(t, err.Error(), `channel "two": kind "nope" is not compiled into this build`)
+	assert.Contains(t, err.Error(), `channel "three": kind "bare" has no option check`)
+	assert.NotContains(t, err.Error(), `"four"`)
 }
 
 func ledgerPath(t *testing.T) string { return filepath.Join(t.TempDir(), "channels.json") }

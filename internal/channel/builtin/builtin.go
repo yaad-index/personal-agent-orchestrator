@@ -9,5 +9,5 @@ import (
 
 // Table returns the adapters this build contains.
 func Table() adapter.Table {
-	return adapter.Table{"bot": bot.New}
+	return adapter.Table{"bot": {New: bot.New, Check: bot.CheckOptions}}
 }

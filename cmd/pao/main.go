@@ -9,6 +9,8 @@ import (
 
 	"github.com/alecthomas/kong"
 
+	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/adapter"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/builtin"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/config"
 )
 
@@ -36,7 +38,7 @@ type CLI struct {
 
 // ConfigCmd groups the configuration commands.
 type ConfigCmd struct {
-	Check ConfigCheckCmd `cmd:"" help:"Validate the orchestrator config and every agent profile it references."`
+	Check ConfigCheckCmd `cmd:"" help:"Validate the orchestrator config, every agent profile it references and every channel's adapter options."`
 }
 
 // ConfigCheckCmd loads and validates a config without starting anything.
@@ -49,6 +51,13 @@ func (c ConfigCheckCmd) Run() error {
 	cfg, err := config.Load(c.Path)
 	if err != nil {
 		return err
+	}
+	specs := make([]adapter.Spec, 0, len(cfg.Orchestrator.Channels))
+	for _, ch := range cfg.Orchestrator.Channels {
+		specs = append(specs, adapter.Spec{ID: ch.ID, Name: ch.Name, Kind: ch.Kind, Options: ch.Options})
+	}
+	if err := builtin.Table().Check(specs); err != nil {
+		return fmt.Errorf("%s: %w", c.Path, err)
 	}
 	_, err = fmt.Fprintf(os.Stdout, "ok: node %q, %d agent profile(s)\n", cfg.Orchestrator.Node, len(cfg.Profiles))
 	return err

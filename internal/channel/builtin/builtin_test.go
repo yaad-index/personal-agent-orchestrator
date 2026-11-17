@@ -33,3 +33,12 @@ func TestABotWithoutItsEndpointStopsTheBuild(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "endpoint")
 }
+
+func TestEveryKindCanCheckItsOptionsWithoutACredential(t *testing.T) {
+	for kind, k := range Table() {
+		assert.NotNil(t, k.Check, kind)
+	}
+	err := Table().Check([]adapter.Spec{{ID: 1, Name: "chat", Kind: "bot", Options: map[string]any{"endpoint": "https://api.example/bot{token}/{method}", "poll_timeout": "25s"}}})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `channel "chat": option "poll_timeout" must be a whole number`)
+}

@@ -64,42 +64,64 @@ func New(spec adapter.Spec, h adapter.Handler) (adapter.Adapter, error) {
 	return newBot(spec, h)
 }
 
-func newBot(spec adapter.Spec, h adapter.Handler) (*Bot, error) {
-	ep, _ := spec.Options["endpoint"].(string)
+// CheckOptions validates a channel's options as New does, without a credential
+// and without the network.
+func CheckOptions(o map[string]any) error {
+	_, err := options(o)
+	return err
+}
+
+// settings are the options, validated.
+type settings struct {
+	server string
+	poll   time.Duration
+	limit  int
+}
+
+func options(o map[string]any) (settings, error) {
+	ep, _ := o["endpoint"].(string)
 	server, ok := strings.CutSuffix(ep, endpointSuffix)
 	if !ok || strings.Contains(server, "{token}") || strings.Contains(server, "{method}") {
-		return nil, errors.New(`option "endpoint" is required: a URL ending in ` + endpointSuffix)
+		return settings{}, errors.New(`option "endpoint" is required: a URL ending in ` + endpointSuffix)
 	}
 	if u, err := url.Parse(server); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
-		return nil, errors.New(`option "endpoint" is not an http or https URL`)
+		return settings{}, errors.New(`option "endpoint" is not an http or https URL`)
 	}
-	poll, err := intOption(spec.Options, "poll_timeout", int(DefaultPollTimeout/time.Second))
+	poll, err := intOption(o, "poll_timeout", int(DefaultPollTimeout/time.Second))
 	if err != nil {
-		return nil, err
+		return settings{}, err
 	}
 	if poll < 0 || time.Duration(poll)*time.Second > maxPollTimeout {
-		return nil, fmt.Errorf(`option "poll_timeout" must be 0 to %d seconds`, int(maxPollTimeout/time.Second))
+		return settings{}, fmt.Errorf(`option "poll_timeout" must be 0 to %d seconds`, int(maxPollTimeout/time.Second))
 	}
-	limit, err := intOption(spec.Options, "message_limit", DefaultMessageLimit)
+	limit, err := intOption(o, "message_limit", DefaultMessageLimit)
 	if err != nil {
-		return nil, err
+		return settings{}, err
 	}
 	if limit < minMessageLimit {
-		return nil, fmt.Errorf(`option "message_limit" must be at least %d`, minMessageLimit)
+		return settings{}, fmt.Errorf(`option "message_limit" must be at least %d`, minMessageLimit)
 	}
-	for k := range spec.Options {
+	for k := range o {
 		switch k {
 		case "endpoint", "poll_timeout", "message_limit":
 		default:
-			return nil, fmt.Errorf("unknown option %q", k)
+			return settings{}, fmt.Errorf("unknown option %q", k)
 		}
+	}
+	return settings{server: server, poll: time.Duration(poll) * time.Second, limit: limit}, nil
+}
+
+func newBot(spec adapter.Spec, h adapter.Handler) (*Bot, error) {
+	set, err := options(spec.Options)
+	if err != nil {
+		return nil, err
 	}
 	if strings.TrimSpace(spec.Credential) == "" {
 		return nil, errors.New("the channel has no credential")
 	}
 	b := &Bot{
 		name: spec.Name, token: spec.Credential, h: h,
-		poll: time.Duration(poll) * time.Second, limit: limit, last: map[string]core.Target{},
+		poll: set.poll, limit: set.limit, last: map[string]core.Target{},
 	}
 	client := &http.Client{
 		Timeout:   b.poll + 15*time.Second,
@@ -109,7 +131,7 @@ func newBot(spec adapter.Spec, h adapter.Handler) (*Bot, error) {
 	// messages in order, which the sticky address depends on. The library asks for
 	// a long poll one second shorter than the timeout it is given.
 	b.api, err = api.New(spec.Credential,
-		api.WithServerURL(server),
+		api.WithServerURL(set.server),
 		api.WithHTTPClient(b.poll+time.Second, client),
 		api.WithSkipGetMe(),
 		api.WithAllowedUpdates(api.AllowedUpdates{"message"}),
