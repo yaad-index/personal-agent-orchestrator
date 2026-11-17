@@ -30,5 +30,6 @@ A superseded ADR is never edited or deleted: it keeps a **Superseded-by** header
 - **0020** — Registration, adapter configuration, and the rejected-inbound record (operator-issued single-use invitation; explicit adapter registry; bounded coalesced record; extends 0019)
 - **0021** — The composite message id (`<channel-id>-<native-id>`; numeric, never-reused channel ids; beside the pao id; extends 0010/0019)
 - **0022** — Operator subjects (an operator-flagged human subject is routed as the operator; set only at the operator surface; extends 0020)
+- **0023** — Agent I/O: channel bindings + the default agent (stdin/stdout/stderr per agent; stdout multiplexed, each channel a level against the profile map; default agent per channel, unprefixed, last in the routing precedence; `/pao` addressing by name or tag; channels as access-matrix resources shared by subjects; a single-conversation platform maps group topics to channels; extends 0003/0008/0009/0012/0013/0019)
 
 The audit log named as a foreseen role in ADR-0002 is not yet its own ADR; ADR-0019 is the first to require it, for recording a rejected channel inbound, and a full audit-log ADR would follow when more of the role is needed.
