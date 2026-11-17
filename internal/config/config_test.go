@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/gate"
 )
 
 func write(t *testing.T, path, body string) {
@@ -361,6 +363,40 @@ func TestChannelsRejects(t *testing.T) {
 		"duplicate id":   {"channels:\n  - id: 1\n    name: a\n" + ok + "  - id: 1\n    name: b\n" + ok, "id 1 is already channel"},
 		"duplicate name": {"channels:\n  - id: 1\n    name: a\n" + ok + "  - id: 2\n    name: a\n" + ok, "name \"a\" is already used"},
 		"unknown field":  {"channels:\n  - id: 1\n    name: chat\n    token: x\n" + ok, "token"},
+	} {
+		_, err := channelsConfig(t, c.body)
+		require.Error(t, err, name)
+		assert.Contains(t, err.Error(), c.want, name)
+	}
+}
+
+func TestUpstreamsAreLoadedWithTheirToolsTagsAndRisk(t *testing.T) {
+	path, err := channelsConfig(t, "mcp_upstreams:\n  - name: search\n    url: https://mcp.example/mcp\n    credential_env: PAO_SEARCH\n    tools:\n      query:\n        tags: [research]\n        risk: read\n      purge: {}\n")
+	require.NoError(t, err)
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	assert.Equal(t, []MCPUpstream{{Name: "search", URL: "https://mcp.example/mcp", CredentialEnv: "PAO_SEARCH", Tools: map[string]UpstreamTool{
+		"query": {Tags: []string{"research"}, Risk: gate.RiskRead},
+		"purge": {},
+	}}}, cfg.Orchestrator.MCPUpstreams)
+	assert.Equal(t, "search__query", ToolName("search", "query"))
+}
+
+func TestUpstreamsRejects(t *testing.T) {
+	tools := "    tools:\n      query: {}\n"
+	for name, c := range map[string]struct{ body, want string }{
+		"no name":        {"mcp_upstreams:\n  - url: https://x/mcp\n" + tools, "name"},
+		"underscore":     {"mcp_upstreams:\n  - name: a_b\n    url: https://x/mcp\n" + tools, "name"},
+		"duplicate":      {"mcp_upstreams:\n  - name: a\n    url: https://x/mcp\n" + tools + "  - name: a\n    url: https://y/mcp\n" + tools, `name "a" is already used`},
+		"no url":         {"mcp_upstreams:\n  - name: a\n" + tools, "url"},
+		"bad scheme":     {"mcp_upstreams:\n  - name: a\n    url: ftp://x/mcp\n" + tools, "url"},
+		"bad credential": {"mcp_upstreams:\n  - name: a\n    url: https://x/mcp\n    credential_env: \"has space\"\n" + tools, "credential_env"},
+		"no tools":       {"mcp_upstreams:\n  - name: a\n    url: https://x/mcp\n", "at least one"},
+		"bad tool":       {"mcp_upstreams:\n  - name: a\n    url: https://x/mcp\n    tools:\n      \"a b\": {}\n", `tool "a b"`},
+		"long tool":      {"mcp_upstreams:\n  - name: a\n    url: https://x/mcp\n    tools:\n      " + strings.Repeat("t", 62) + ": {}\n", "at most 64"},
+		"bad risk":       {"mcp_upstreams:\n  - name: a\n    url: https://x/mcp\n    tools:\n      q:\n        risk: harmless\n", "unknown risk"},
+		"bad tag":        {"mcp_upstreams:\n  - name: a\n    url: https://x/mcp\n    tools:\n      q:\n        tags: [\"a b\"]\n", "tag"},
+		"unknown field":  {"mcp_upstreams:\n  - name: a\n    url: https://x/mcp\n    token: x\n" + tools, "token"},
 	} {
 		_, err := channelsConfig(t, c.body)
 		require.Error(t, err, name)
