@@ -1,6 +1,6 @@
 # ADR 0024: pao as a proxy for upstream MCP servers
 
-**Status:** Proposed (2026-11-17)
+**Status:** Accepted (2026-11-17)
 
 Extends ADR-0004 (the approval gate), ADR-0005 (access matrix + management surface), ADR-0012 (tag-scoped access), ADR-0016 (pao as an MCP server).
 
