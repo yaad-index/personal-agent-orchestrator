@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -72,7 +73,43 @@ type Orchestrator struct {
 	// Channels are the human fronts to bring up beyond the local channel
 	// (ADR-0020 point 6).
 	Channels []Channel `yaml:"channels"`
+	// MCPUpstreams are the MCP servers pao reaches as a client and offers tools of
+	// on its own MCP surface (ADR-0024).
+	MCPUpstreams []MCPUpstream `yaml:"mcp_upstreams"`
 }
+
+// MCPUpstream configures one upstream MCP server (ADR-0024 points 1 and 7).
+type MCPUpstream struct {
+	// Name is the server's name: it begins every pao-side name of its tools, as
+	// "<name>__<tool>", so it holds no underscore.
+	Name string `yaml:"name"`
+	// URL is the server's streamable HTTP endpoint.
+	URL string `yaml:"url"`
+	// CredentialEnv names the environment variable holding the bearer token pao
+	// presents to the server, if it needs one. The token never lives in a file and
+	// is never given to an agent.
+	CredentialEnv string `yaml:"credential_env"`
+	// Tools are the server's tools pao offers, by the server's own tool name. A
+	// tool the server has and this does not name is not offered.
+	Tools map[string]UpstreamTool `yaml:"tools"`
+}
+
+// UpstreamTool is how pao offers one upstream tool. Both fields are the
+// operator's: nothing the upstream server says about its tool decides them.
+type UpstreamTool struct {
+	// Tags are the tool's tags in the access matrix (ADR-0012 point 3).
+	Tags []string `yaml:"tags"`
+	// Risk is the risk level the approval gate reads a call of the tool at
+	// (ADR-0004 point 2). Empty leaves it unclassified, so every call is asked.
+	Risk gate.Risk `yaml:"risk"`
+}
+
+// MaxToolName is the longest pao-side tool name: the limit MCP clients hold a tool
+// name to.
+const MaxToolName = 64
+
+// ToolName is the pao-side name of an upstream server's tool.
+func ToolName(upstream, tool string) string { return upstream + "__" + tool }
 
 // Channel configures one channel adapter (ADR-0020 point 6, ADR-0021 points 1
 // and 2).
@@ -92,8 +129,10 @@ type Channel struct {
 }
 
 var (
-	channelNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
-	envNamePattern     = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	upstreamNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
+	toolNamePattern     = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+	channelNamePattern  = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
+	envNamePattern      = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 )
 
 // reservedChannelNames are names the node itself uses for a channel.
@@ -122,6 +161,43 @@ func checkChannels(path string, chs []Channel) error {
 			return fmt.Errorf("%s: name %q is already used", at, c.Name)
 		}
 		ids[c.ID], names[c.Name] = c.Name, true
+	}
+	return nil
+}
+
+func checkUpstreams(path string, us []MCPUpstream) error {
+	names := map[string]bool{}
+	for i, u := range us {
+		at := fmt.Sprintf("%s: mcp_upstreams[%d]", path, i)
+		if !upstreamNamePattern.MatchString(u.Name) {
+			return fmt.Errorf("%s: name %q must be lowercase letters, digits or '-', at most 32", at, u.Name)
+		}
+		if names[u.Name] {
+			return fmt.Errorf("%s: name %q is already used", at, u.Name)
+		}
+		names[u.Name] = true
+		if pu, err := url.Parse(u.URL); err != nil || (pu.Scheme != "https" && pu.Scheme != "http") || pu.Host == "" {
+			return fmt.Errorf("%s: url must be an http or https URL", at)
+		}
+		if u.CredentialEnv != "" && !envNamePattern.MatchString(u.CredentialEnv) {
+			return fmt.Errorf("%s: credential_env must name an environment variable", at)
+		}
+		if len(u.Tools) == 0 {
+			return fmt.Errorf("%s: tools must name at least one of the server's tools", at)
+		}
+		for tool, t := range u.Tools {
+			if !toolNamePattern.MatchString(tool) || len(ToolName(u.Name, tool)) > MaxToolName {
+				return fmt.Errorf("%s: tool %q must be letters, digits, '_' or '-', and %q at most %d long", at, tool, ToolName(u.Name, tool), MaxToolName)
+			}
+			if t.Risk != "" && !t.Risk.Valid() {
+				return fmt.Errorf("%s: tool %q: unknown risk %q", at, tool, t.Risk)
+			}
+			for _, tag := range t.Tags {
+				if tag == "" || strings.ContainsAny(tag, " \t\n") {
+					return fmt.Errorf("%s: tool %q has an empty tag or one with spaces", at, tool)
+				}
+			}
+		}
 	}
 	return nil
 }
@@ -256,6 +332,9 @@ func load(path string, withMesh bool) (*Config, error) {
 		o.MeshKey = filepath.Join(filepath.Dir(path), o.MeshKey)
 	}
 	if err := checkChannels(path, o.Channels); err != nil {
+		return nil, err
+	}
+	if err := checkUpstreams(path, o.MCPUpstreams); err != nil {
 		return nil, err
 	}
 	var meshDoc *mesh.Document
