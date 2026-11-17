@@ -7,6 +7,7 @@ package adapter
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -55,8 +56,18 @@ type Adapter interface {
 // Factory builds an adapter for a spec.
 type Factory func(spec Spec, h Handler) (Adapter, error)
 
-// Table maps an adapter kind to its factory.
-type Table map[string]Factory
+// Kind is one adapter compiled into the build.
+type Kind struct {
+	// New builds the adapter.
+	New Factory
+	// Check validates a channel's options without a credential and without the
+	// network, so a configuration can be checked before the node runs. New applies
+	// the same validation.
+	Check func(options map[string]any) error
+}
+
+// Table maps an adapter kind to the adapter.
+type Table map[string]Kind
 
 // Kinds lists the kinds in the table, sorted.
 func (t Table) Kinds() []string {
@@ -68,20 +79,44 @@ func (t Table) Kinds() []string {
 	return out
 }
 
+// Check validates each spec's kind and options and reports every channel that
+// fails, not only the first. It does not look at credentials.
+func (t Table) Check(specs []Spec) error {
+	var errs []error
+	for _, s := range specs {
+		k, ok := t[s.Kind]
+		switch {
+		case !ok:
+			errs = append(errs, t.notCompiled(s))
+		case k.Check == nil:
+			errs = append(errs, fmt.Errorf("channel %q: kind %q has no option check", s.Name, s.Kind))
+		default:
+			if err := k.Check(s.Options); err != nil {
+				errs = append(errs, fmt.Errorf("channel %q: %w", s.Name, err))
+			}
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func (t Table) notCompiled(s Spec) error {
+	return fmt.Errorf("channel %q: kind %q is not compiled into this build (have: %s)", s.Name, s.Kind, strings.Join(t.Kinds(), ", "))
+}
+
 // Build brings up one adapter per spec. A kind that is not compiled in is an
 // error, and so is a spec with an empty credential, so a misconfigured channel
 // stops the node loudly instead of being skipped (ADR-0020 point 6).
 func (t Table) Build(specs []Spec, h Handler) ([]Adapter, error) {
 	out := make([]Adapter, 0, len(specs))
 	for _, s := range specs {
-		f, ok := t[s.Kind]
+		k, ok := t[s.Kind]
 		if !ok {
-			return nil, fmt.Errorf("channel %q: kind %q is not compiled into this build (have: %s)", s.Name, s.Kind, strings.Join(t.Kinds(), ", "))
+			return nil, t.notCompiled(s)
 		}
 		if s.Credential == "" {
 			return nil, fmt.Errorf("channel %q: its credential variable is empty or unset", s.Name)
 		}
-		a, err := f(s, h)
+		a, err := k.New(s, h)
 		if err != nil {
 			return nil, fmt.Errorf("channel %q: %w", s.Name, err)
 		}

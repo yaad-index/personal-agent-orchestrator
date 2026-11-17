@@ -47,11 +47,11 @@ func (b *botFake) Run(ctx context.Context) error {
 // node's own goroutine, so the test must not read what it made except by receiving
 // it here.
 func fakeTable(built chan<- *botFake) adapter.Table {
-	return adapter.Table{"bot": func(s adapter.Spec, h adapter.Handler) (adapter.Adapter, error) {
+	return adapter.Table{"bot": {New: func(s adapter.Spec, h adapter.Handler) (adapter.Adapter, error) {
 		b := &botFake{spec: s, h: h, started: make(chan struct{}), stopped: make(chan struct{})}
 		built <- b
 		return b, nil
-	}}
+	}}}
 }
 
 func theBot(t *testing.T, built <-chan *botFake) *botFake {

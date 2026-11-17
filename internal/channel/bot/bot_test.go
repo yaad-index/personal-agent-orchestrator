@@ -254,7 +254,9 @@ func TestNewNeedsAnEndpointWithTokenAndMethodAndKnowsItsOptions(t *testing.T) {
 		_, err := New(adapter.Spec{Name: "chat", Credential: tok, Options: c.opts}, &handler{})
 		require.Error(t, err, name)
 		assert.Contains(t, err.Error(), c.want, name)
+		assert.Equal(t, err, CheckOptions(c.opts), "the check without a credential fails the same way: %s", name)
 	}
+	assert.NoError(t, CheckOptions(good))
 	_, err := New(adapter.Spec{Name: "chat", Options: good}, &handler{})
 	require.ErrorContains(t, err, "credential", "no credential")
 	a, err := New(adapter.Spec{Name: "chat", Credential: tok, Options: map[string]any{"endpoint": good["endpoint"], "poll_timeout": 5.0, "message_limit": uint64(500)}}, &handler{})
