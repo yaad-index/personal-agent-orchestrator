@@ -64,22 +64,24 @@ func writeConfig(t *testing.T, dir string) string {
 }
 
 func TestEveryCommandLineParsesToItsCommand(t *testing.T) {
-	parser, err := kong.New(&CLI{}, kong.Name("pao"))
-	require.NoError(t, err)
-
 	for line, want := range map[string]string{
-		"identity invite alice":           "identity invite <subject>",
-		"identity invite alice --ttl 1h":  "identity invite <subject>",
-		"identity invites":                "identity invites",
-		"identity uninvite inv-1":         "identity uninvite <id>",
-		"inbound rejected":                "inbound rejected",
-		"channel default chat bee":        "channel default <channel> <agent>",
-		"channel default chat --clear":    "channel default <channel>",
-		"channel defaults":                "channel defaults",
-		"access grant agent:a --agent b":  "access grant <subject>",
-		"access revoke agent:a --tag t":   "access revoke <subject>",
-		"access grants --subject agent:a": "access grants",
+		"identity invite alice":                     "identity invite <subject>",
+		"identity invite alice --ttl 1h":            "identity invite <subject>",
+		"identity invites":                          "identity invites",
+		"identity uninvite inv-1":                   "identity uninvite <id>",
+		"inbound rejected":                          "inbound rejected",
+		"channel default chat bee":                  "channel default <channel> <agent>",
+		"channel default chat --clear":              "channel default <channel>",
+		"channel defaults":                          "channel defaults",
+		"access grant agent:a --agent b":            "access grant <subject>",
+		"access revoke agent:a --tag t":             "access revoke <subject>",
+		"access grants --subject agent:a":           "access grants",
+		"access grant operator --tool-tag research": "access grant <subject>",
 	} {
+		// A fresh parser per line: a process parses once, and a reused one keeps the
+		// flags of the line before.
+		parser, err := kong.New(&CLI{}, kong.Name("pao"))
+		require.NoError(t, err)
 		ctx, err := parser.Parse(strings.Fields(line))
 		if assert.NoError(t, err, line) {
 			assert.Equal(t, want, ctx.Command(), line)

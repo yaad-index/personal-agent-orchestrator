@@ -110,16 +110,34 @@ func TestSubjectsRoundTripAndBadOnesAreRefused(t *testing.T) {
 }
 
 func TestAGrantNamesOneResourceOrOneTag(t *testing.T) {
-	ok := Grant{Subject: Agent("a"), Kind: ResourceAgent, Name: "b"}
-	assert.NoError(t, ok.Validate())
+	for _, ok := range []Grant{
+		{Subject: Agent("a"), Kind: ResourceAgent, Name: "b"},
+		{Subject: Agent("a"), Kind: ResourceTool, Name: "search__query"},
+		{Subject: Operator, Kind: ResourceTool, Tag: "research"},
+	} {
+		assert.NoError(t, ok.Validate())
+	}
 	for name, g := range map[string]Grant{
 		"both":       {Subject: Agent("a"), Kind: ResourceAgent, Name: "b", Tag: "t"},
 		"neither":    {Subject: Agent("a"), Kind: ResourceAgent},
 		"no subject": {Kind: ResourceAgent, Name: "b"},
 		"no name":    {Subject: Agent(""), Kind: ResourceAgent, Name: "b"},
-		"tool kind":  {Subject: Agent("a"), Kind: "tool", Name: "b"},
+		"other kind": {Subject: Agent("a"), Kind: "channel", Name: "b"},
 		"space":      {Subject: Agent("a"), Kind: ResourceAgent, Tag: "a b"},
 	} {
 		assert.Error(t, g.Validate(), name)
 	}
+}
+
+func TestAToolGrantReachesToolsAndAnAgentGrantReachesAgents(t *testing.T) {
+	m := Matrix{Grants: grantList{
+		{Subject: Agent("a"), Kind: ResourceTool, Tag: "research"},
+		{Subject: Agent("a"), Kind: ResourceTool, Name: "files__read"},
+		{Subject: Agent("a"), Kind: ResourceAgent, Name: "files__read"},
+	}}
+	assert.True(t, m.Allow(Agent("a"), Route, ToolResource("search__query", []string{"research"})))
+	assert.True(t, m.Allow(Agent("a"), Route, ToolResource("files__read", nil)))
+	assert.False(t, m.Allow(Agent("a"), Route, ToolResource("files__write", nil)))
+	assert.False(t, m.Allow(Agent("a"), Route, AgentResource("x", []string{"research"})), "a tool scope is not an agent scope")
+	assert.False(t, m.Allow(Agent("b"), Route, ToolResource("files__read", nil)))
 }
