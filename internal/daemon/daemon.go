@@ -28,6 +28,7 @@ import (
 	"github.com/yaad-index/personal-agent-orchestrator/internal/config"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/control"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/defaultagent"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/gate"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/harvest"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/identity"
@@ -123,6 +124,10 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		return err
 	}
 	defer func() { _ = ids.Close() }()
+	defaults, err := defaultagent.Open(filepath.Join(cfg.Orchestrator.StateDir, defaultsFile))
+	if err != nil {
+		return err
+	}
 
 	var ctlOpts []control.Option
 	if opts.PollInterval > 0 {
@@ -148,6 +153,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	hook := &launchHook{plane: plane}
 	router := route.New(reg, hook, plane)
 	layer := comm.New(store, router)
+	layer.SetDefaults(defaults)
 	hook.layer = layer
 	hook.follow = &followers{
 		ctx:   ctx,
@@ -263,6 +269,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	}
 
 	srv, err := local.New(layer, token, append([]local.Option{local.WithDecider(decider), local.WithTemp(tempOps), local.WithStream(streamOps), local.WithWatch(streamOps), local.WithLifecycle(lifeOps), local.WithRejected(rejectedAPI{rejects}), local.WithIdentity(identityAPI{ids}),
+		local.WithDefaults(newDefaultsAPI(defaults, cfg.Orchestrator.Channels, router.Resolve)),
 		local.WithMount("/mcp", mcpHandler)}, localOpts...)...)
 	if err != nil {
 		return err

@@ -18,6 +18,7 @@ func (noHandler) ReceiveFromChannel(context.Context, comm.ChannelInbound) (comm.
 }
 func (noHandler) Recipients(string) []string             { return nil }
 func (noHandler) NativeOf(string, string) (string, bool) { return "", false }
+func (noHandler) DefaultAgent(string) (string, bool)     { return "", false }
 
 func TestTheBuildContainsTheBotAdapterAndCanBuildOne(t *testing.T) {
 	tb := Table()

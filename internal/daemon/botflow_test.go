@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/builtin"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/local"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/config"
 )
 
@@ -143,4 +145,77 @@ func TestAHumanReachesAnAgentThroughTheBotAndHearsBack(t *testing.T) {
 	assert.NotContains(t, out, "4242")
 
 	assert.Empty(t, os.Getenv("PAO_TEST_BOT_TOKEN"), "the credential is not in the environment agents inherit")
+}
+
+// lineWith waits for a line sent to the chat that contains want, and returns it.
+func lineWith(t *testing.T, svc *service, chat float64, want string) string {
+	t.Helper()
+	var out string
+	require.Eventually(t, func() bool {
+		for _, s := range svc.texts(chat) {
+			if strings.Contains(s, want) {
+				out = s
+				return true
+			}
+		}
+		return false
+	}, 10*time.Second, 20*time.Millisecond, "a line containing %q", want)
+	return out
+}
+
+func TestTheChannelsDefaultAgentIsReloadedSwitchedAtRuntimeAndSpeaksUnprefixed(t *testing.T) {
+	svc := &service{}
+	ts := httptest.NewServer(http.HandlerFunc(svc.handler))
+	t.Cleanup(ts.Close)
+	t.Setenv("PAO_TEST_BOT_TOKEN", "tok-1")
+
+	n := startNodeWith(t, map[string]string{"bee": "", "wasp": ""}, func(_, _ string, cfg *config.Config) {
+		cfg.Orchestrator.Channels = []config.Channel{{ID: 1, Name: "chat", Kind: "bot", CredentialEnv: "PAO_TEST_BOT_TOKEN",
+			Options: map[string]any{"endpoint": ts.URL + "/bot{token}/{method}", "poll_timeout": 0}}}
+		// What a node that ran before left behind.
+		require.NoError(t, os.MkdirAll(cfg.Orchestrator.StateDir, 0o700))
+		require.NoError(t, os.WriteFile(filepath.Join(cfg.Orchestrator.StateDir, defaultsFile),
+			[]byte(`{"version":3,"defaults":{"chat":"bee"}}`), 0o600))
+	}, func(o *Options) { o.Adapters = builtin.Table() })
+	ctx := context.Background()
+	const person = 4242
+
+	d, err := n.client.Defaults(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, local.DefaultsJSON{Version: 3, Defaults: []local.DefaultJSON{{Channel: "chat", Agent: "bee"}}}, d, "reloaded at start")
+
+	require.NoError(t, n.client.AddSubject(ctx, "alice"))
+	inv, err := n.client.Invite(ctx, "alice", time.Hour)
+	require.NoError(t, err)
+	svc.push(chatUpdate(1, 10, person, "/register "+inv.Secret))
+	lineWith(t, svc, person, "registered.")
+	require.NoError(t, n.client.SetOperator(ctx, "alice", true))
+
+	svc.push(chatUpdate(2, 11, person, "first unaddressed"))
+	out := lineWith(t, svc, person, "first unaddressed")
+	assert.True(t, strings.HasPrefix(out, "echo:"), "the default answers with no name before it: %q", out)
+
+	ch, err := n.client.SetDefault(ctx, "chat", "wasp")
+	require.NoError(t, err)
+	assert.Equal(t, local.DefaultChangeJSON{Channel: "chat", Agent: "wasp", Previous: "bee"}, ch)
+	svc.push(chatUpdate(3, 12, person, "second unaddressed"))
+	out = lineWith(t, svc, person, "second unaddressed")
+	assert.True(t, strings.HasPrefix(out, "echo:"), "the new default answers, unprefixed: %q", out)
+
+	svc.push(chatUpdate(4, 13, person, "@bee third addressed"))
+	out = lineWith(t, svc, person, "third addressed")
+	assert.True(t, strings.HasPrefix(out, "[bee]: "), "an agent that is not the default is named: %q", out)
+
+	_, err = n.client.SetDefault(ctx, "local", "bee")
+	assert.ErrorContains(t, err, "404: no chat channel", "the local channel takes no chat inbound")
+	_, err = n.client.SetDefault(ctx, "chat", "nobody")
+	assert.ErrorContains(t, err, `404: no agent "nobody"`)
+
+	ch, err = n.client.ClearDefault(ctx, "chat")
+	require.NoError(t, err)
+	assert.Equal(t, local.DefaultChangeJSON{Channel: "chat", Previous: "wasp"}, ch)
+	d, err = n.client.Defaults(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, uint64(5), d.Version)
+	assert.Empty(t, d.Defaults)
 }

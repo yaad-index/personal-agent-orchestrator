@@ -92,6 +92,25 @@ type ChannelResult struct {
 	Delivery *Delivery
 }
 
+// Defaults is each channel's default agent (ADR-0023 point 5).
+type Defaults interface {
+	Get(channel string) (agent string, ok bool)
+}
+
+// SetDefaults gives the layer the channels' default agents. Call it before the
+// layer starts receiving.
+func (l *Layer) SetDefaults(d Defaults) { l.defaults = d }
+
+// DefaultAgent returns the channel's default agent: the one that answers an inbound
+// naming no agent, and whose output on that channel carries no name prefix
+// (ADR-0023 point 5).
+func (l *Layer) DefaultAgent(channel string) (string, bool) {
+	if l.defaults == nil {
+		return "", false
+	}
+	return l.defaults.Get(channel)
+}
+
 // SetIdentity gives the layer the identity store and the record of rejections that
 // channel inbound needs. Call it before the layer starts receiving.
 func (l *Layer) SetIdentity(id Identity, rec Recorder) { l.identity, l.recorder = id, rec }
@@ -126,6 +145,10 @@ func (l *Layer) reject(in ChannelInbound, kind, reason, payload string) error {
 // never routed. A message from a subject flagged operator is routed as the
 // operator, attributed under the subject's own name (ADR-0022 points 3 and 4). The
 // flag is read here, per message (ADR-0022 point 5).
+//
+// The message goes to the agent the adapter's target names (an explicit address,
+// or the sender's sticky one); failing that, to the author of the message it
+// replies to; failing that, to the channel's default agent (ADR-0023 point 4).
 //
 // An error from recording is returned for the adapter to log; it is never text to
 // send the sender.
@@ -166,6 +189,11 @@ func (l *Layer) ReceiveFromChannel(ctx context.Context, in ChannelInbound) (Chan
 			if _, err := l.router.Resolve(core.Target{Kind: core.ByName, Value: m.Sender}); err == nil {
 				target = core.Target{Kind: core.ByName, Value: m.Sender}
 			}
+		}
+	}
+	if target.Kind == 0 {
+		if agent, ok := l.DefaultAgent(in.Channel); ok {
+			target = core.Target{Kind: core.ByName, Value: agent}
 		}
 	}
 	d, err := l.Receive(ctx, Inbound{
