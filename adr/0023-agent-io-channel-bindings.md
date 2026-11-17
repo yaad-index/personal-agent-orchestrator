@@ -1,6 +1,6 @@
 # ADR 0023: Agent I/O — channel bindings and the default agent
 
-**Status:** Proposed (2026-11-17)
+**Status:** Accepted (2026-11-17)
 
 Extends ADR-0003 (routing), ADR-0008 (verbosity), ADR-0009 (channels), ADR-0012 (access), ADR-0013 (cross-node output), ADR-0019 (adapters + identity).
 
