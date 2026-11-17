@@ -1,8 +1,12 @@
 package main
 
 import (
+	"go/ast"
+	goparser "go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/alecthomas/kong"
@@ -42,4 +46,70 @@ func writeConfig(t *testing.T, dir string) string {
 	path := filepath.Join(dir, "pao.yaml")
 	require.NoError(t, os.WriteFile(path, []byte("node: n1\nprofiles_dir: profiles\nstate_dir: state\ntoken_env: PAO_RUN_TEST_TOKEN\n"), 0o600))
 	return path
+}
+
+func TestEveryCommandLineParsesToItsCommand(t *testing.T) {
+	parser, err := kong.New(&CLI{}, kong.Name("pao"))
+	require.NoError(t, err)
+
+	for line, want := range map[string]string{
+		"identity invite alice":          "identity invite <subject>",
+		"identity invite alice --ttl 1h": "identity invite <subject>",
+		"identity invites":               "identity invites",
+		"identity uninvite inv-1":        "identity uninvite <id>",
+		"inbound rejected":               "inbound rejected",
+	} {
+		ctx, err := parser.Parse(strings.Fields(line))
+		if assert.NoError(t, err, line) {
+			assert.Equal(t, want, ctx.Command(), line)
+		}
+	}
+}
+
+// TestEveryRunnableCommandIsInTheTree finds each type in this package that
+// has a Run method and requires it to be a command the parser can reach.
+func TestEveryRunnableCommandIsInTheTree(t *testing.T) {
+	parser, err := kong.New(&CLI{}, kong.Name("pao"))
+	require.NoError(t, err)
+
+	reachable := map[string]bool{}
+	var walk func(*kong.Node)
+	walk = func(n *kong.Node) {
+		if n.Target.IsValid() {
+			reachable[n.Target.Type().Name()] = true
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	walk(parser.Model.Node)
+
+	fset := token.NewFileSet()
+	files, err := filepath.Glob("*.go")
+	require.NoError(t, err)
+	var runnable []string
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		file, err := goparser.ParseFile(fset, f, nil, 0)
+		require.NoError(t, err)
+		for _, d := range file.Decls {
+			fn, ok := d.(*ast.FuncDecl)
+			if !ok || fn.Recv == nil || fn.Name.Name != "Run" {
+				continue
+			}
+			recv := fn.Recv.List[0].Type
+			if star, ok := recv.(*ast.StarExpr); ok {
+				recv = star.X
+			}
+			if id, ok := recv.(*ast.Ident); ok {
+				runnable = append(runnable, id.Name)
+			}
+		}
+	}
+	require.NotEmpty(t, runnable)
+	for _, name := range runnable {
+		assert.True(t, reachable[name], "%s has a Run method but is not in the command tree", name)
+	}
 }

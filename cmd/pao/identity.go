@@ -19,6 +19,9 @@ type IdentityCmd struct {
 	Bindings BindingsCmd      `cmd:"" help:"List the bindings, of one subject or of all."`
 	Bind     BindCmd          `cmd:"" help:"Tie a channel's sender id to a subject."`
 	Revoke   RevokeCmd        `cmd:"" help:"Remove a binding; the sender id is unbound again."`
+	Invite   InviteCmd        `cmd:"" help:"Issue an invitation that registers its holder as the given subject."`
+	Invites  InvitesCmd       `cmd:"" help:"List the invitations."`
+	Uninvite UninviteCmd      `cmd:"" help:"Revoke an invitation before it is used."`
 }
 
 // SubjectsCmd lists subjects.
