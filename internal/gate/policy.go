@@ -105,6 +105,8 @@ type Policy struct {
 	mu    sync.RWMutex
 	path  string
 	rules []Rule
+	// builtin is how many rules at the end of rules are builtin: never stored.
+	builtin int
 }
 
 // Builtin returns the rules every policy starts with: tools that only read.
@@ -118,8 +120,9 @@ func Builtin() []Rule {
 
 // LoadPolicy reads the policy file at path (a missing file is an empty
 // policy) and puts the builtin rules after whatever it holds, so a stored
-// deny can precede a builtin allow.
-func LoadPolicy(path string) (*Policy, error) {
+// deny can precede a builtin allow. extra are further builtin rules, the node's
+// own: they come after Builtin's and are never stored.
+func LoadPolicy(path string, extra ...Rule) (*Policy, error) {
 	p := &Policy{path: path}
 	b, err := os.ReadFile(path)
 	switch {
@@ -133,7 +136,12 @@ func LoadPolicy(path string) (*Policy, error) {
 	default:
 		return nil, err
 	}
-	p.rules = append(p.rules, Builtin()...)
+	tail := append(Builtin(), extra...)
+	for i := range tail {
+		tail[i].Source = "builtin"
+	}
+	p.rules = append(p.rules, tail...)
+	p.builtin = len(tail)
 	for i := range p.rules {
 		if err := p.rules[i].compile(); err != nil {
 			return nil, fmt.Errorf("%s: %w", path, err)
@@ -171,7 +179,7 @@ func (p *Policy) Remember(tool, canonicalInput string) error {
 		return err
 	}
 	// Insert ahead of the builtin tail.
-	n := len(p.rules) - len(Builtin())
+	n := len(p.rules) - p.builtin
 	p.rules = append(p.rules[:n:n], append([]Rule{r}, p.rules[n:]...)...)
 	return nil
 }
@@ -179,7 +187,7 @@ func (p *Policy) Remember(tool, canonicalInput string) error {
 // storedLocked returns the rules that belong in the file: everything but the
 // builtin tail.
 func (p *Policy) storedLocked() []Rule {
-	n := len(p.rules) - len(Builtin())
+	n := len(p.rules) - p.builtin
 	out := make([]Rule, n)
 	copy(out, p.rules[:n])
 	return out

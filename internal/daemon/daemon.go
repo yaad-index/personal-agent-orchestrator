@@ -189,7 +189,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		},
 	}
 
-	policy, err := gate.LoadPolicy(filepath.Join(cfg.Orchestrator.StateDir, "policy.json"))
+	policy, err := gate.LoadPolicy(filepath.Join(cfg.Orchestrator.StateDir, "policy.json"), mcpsrv.GateRules(mcpsrv.DefaultServerName)...)
 	if err != nil {
 		return err
 	}
@@ -225,7 +225,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	watch.auth = auth
 	streamOps := &streamAPI{auth: auth, streams: streams, watcher: watch}
 	lifeOps := &lifecycleAPI{auth: auth, life: life}
-	ops := &mcpOps{reg: reg, thresholds: mgr.Thresholds, recipes: mgr.Recipes, mgr: mgr, store: harvests, layer: layer, auth: auth}
+	ops := &mcpOps{reg: reg, thresholds: mgr.Thresholds, recipes: mgr.Recipes, mgr: mgr, store: harvests, layer: layer, auth: auth, resolve: router.Resolve}
 	resolver := mcpsrv.Chain{
 		mcpsrv.NewOperatorResolver(token),
 		mcpsrv.AgentResolver{Tokens: tokens, Alive: func(agent string) bool {
@@ -234,7 +234,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 			return plane.Alive(ctx, agent)
 		}},
 	}
-	mcpHandler := mcpsrv.New(ops, resolver, mcpsrv.WithAuthorizer(auth)).Handler()
+	mcpHandler := mcpsrv.New(ops, resolver, mcpsrv.WithAuthorizer(auth), mcpsrv.WithGate(gt)).Handler()
 
 	var meshNode *transport.Node
 	var dir *directory.Directory

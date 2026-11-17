@@ -53,6 +53,8 @@ func (r routeTo) Allow(s access.Subject, a access.Action, res access.Resource) b
 	return false
 }
 
+func approved() error { return nil }
+
 func sendOps(t *testing.T, auth access.Authorizer) (mcpOps, *sink) {
 	t.Helper()
 	reg := registry.New()
@@ -63,13 +65,14 @@ func sendOps(t *testing.T, auth access.Authorizer) (mcpOps, *sink) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 	sk := &sink{}
-	layer := comm.New(store, route.New(reg, sk, sk))
-	return mcpOps{layer: layer, auth: auth}, sk
+	router := route.New(reg, sk, sk)
+	layer := comm.New(store, router)
+	return mcpOps{layer: layer, auth: auth, resolve: router.Resolve}, sk
 }
 
 func TestAnOperatorMessageReachesEveryAddressedAgentAsFromTheOperator(t *testing.T) {
 	ops, sk := sendOps(t, nil)
-	got, err := ops.Send(context.Background(), access.Operator, true, "team", "hello")
+	got, err := ops.Send(context.Background(), access.Operator, true, "team", "hello", approved)
 	require.NoError(t, err)
 	assert.Equal(t, []mcpsrv.Delivered{{Agent: "a", Launched: true}, {Agent: "b", Launched: true}}, got)
 	assert.Equal(t, []string{"[operator]: hello"}, sk.got["a"])
@@ -79,12 +82,12 @@ func TestAnOperatorMessageReachesEveryAddressedAgentAsFromTheOperator(t *testing
 
 func TestAnAgentsMessageCarriesItsOwnNameAndOnlyReachesWhatItMayAddress(t *testing.T) {
 	ops, sk := sendOps(t, routeTo{agent: "a", tag: "team"})
-	got, err := ops.Send(context.Background(), access.Agent("a"), true, "team", "psst")
+	got, err := ops.Send(context.Background(), access.Agent("a"), true, "team", "psst", approved)
 	require.NoError(t, err)
 	assert.Len(t, got, 2)
 	assert.Equal(t, []string{"[a]: psst"}, sk.got["b"], "from the agent that sent it, by its own name")
 
-	_, err = ops.Send(context.Background(), access.Agent("a"), false, "c", "nope")
+	_, err = ops.Send(context.Background(), access.Agent("a"), false, "c", "nope", approved)
 	require.ErrorIs(t, err, core.ErrNoMatch)
 	assert.Empty(t, sk.got["c"])
 }
@@ -92,14 +95,14 @@ func TestAnAgentsMessageCarriesItsOwnNameAndOnlyReachesWhatItMayAddress(t *testi
 func TestAnAgentCannotTellAnAgentItMayNotAddressFromOneThatDoesNotExist(t *testing.T) {
 	ops, sk := sendOps(t, routeTo{agent: "a", tag: "team"})
 	ctx := context.Background()
-	_, denied := ops.Send(ctx, access.Agent("a"), false, "c", "x")
-	_, missing := ops.Send(ctx, access.Agent("a"), false, "c-does-not-exist", "x")
+	_, denied := ops.Send(ctx, access.Agent("a"), false, "c", "x", approved)
+	_, missing := ops.Send(ctx, access.Agent("a"), false, "c-does-not-exist", "x", approved)
 	require.Error(t, denied)
 	assert.Equal(t, "no match: agent \"c\"", normalize(denied.Error()), "the words are the router's own")
 	assert.Equal(t, "no match: agent \"c-does-not-exist\"", normalize(missing.Error()))
 
-	_, deniedTag := ops.Send(ctx, access.Agent("a"), true, "other", "x")
-	_, missingTag := ops.Send(ctx, access.Agent("a"), true, "no-such-tag", "x")
+	_, deniedTag := ops.Send(ctx, access.Agent("a"), true, "other", "x", approved)
+	_, missingTag := ops.Send(ctx, access.Agent("a"), true, "no-such-tag", "x", approved)
 	assert.Equal(t, "no match: tag \"other\"", normalize(deniedTag.Error()))
 	assert.Equal(t, "no match: tag \"no-such-tag\"", normalize(missingTag.Error()))
 	assert.Empty(t, sk.got)
@@ -118,7 +121,7 @@ func TestANarrowedFanOutDeliversOnlyToWhatIsAllowed(t *testing.T) {
 	// b is in team and secret; the agent may address team, so both a and b: a tag
 	// scope grants the whole group. An agent allowed only a different tag gets none.
 	ops, sk := sendOps(t, routeTo{agent: "a", tag: "secret"})
-	got, err := ops.Send(context.Background(), access.Agent("a"), true, "team", "x")
+	got, err := ops.Send(context.Background(), access.Agent("a"), true, "team", "x", approved)
 	require.NoError(t, err)
 	require.Len(t, got, 1, "of the two agents the tag names, only the one in the scope the agent may address")
 	assert.Equal(t, "b", got[0].Agent)
@@ -128,9 +131,9 @@ func TestANarrowedFanOutDeliversOnlyToWhatIsAllowed(t *testing.T) {
 
 func TestTheDefaultSeamLetsNoAgentAddressAnyone(t *testing.T) {
 	ops, sk := sendOps(t, nil)
-	_, err := ops.Send(context.Background(), access.Agent("a"), false, "b", "x")
+	_, err := ops.Send(context.Background(), access.Agent("a"), false, "b", "x", approved)
 	require.ErrorIs(t, err, core.ErrNoMatch)
-	_, err = ops.Send(context.Background(), access.Subject{}, false, "b", "x")
+	_, err = ops.Send(context.Background(), access.Subject{}, false, "b", "x", approved)
 	require.ErrorIs(t, err, core.ErrNoMatch, "nobody least of all")
 	assert.Empty(t, sk.got)
 }
@@ -178,7 +181,7 @@ func TestSendersAreNamedFromTheSubjectAndNobodyHasNone(t *testing.T) {
 
 func TestNobodyCannotSendEvenIfTheSeamWouldLetThemAddress(t *testing.T) {
 	ops, sk := sendOps(t, everyoneRoutes{})
-	_, err := ops.Send(context.Background(), access.Subject{}, false, "a", "x")
+	_, err := ops.Send(context.Background(), access.Subject{}, false, "a", "x", approved)
 	require.ErrorIs(t, err, core.ErrNoMatch, "the invariant holds in the sender logic itself, not only because the default seam refuses nobody")
 	assert.Empty(t, sk.got)
 }
