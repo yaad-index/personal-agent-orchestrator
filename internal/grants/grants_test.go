@@ -102,7 +102,7 @@ func TestABadFileIsRefusedNotGuessed(t *testing.T) {
 		"bad subject":  `{"version":1,"grants":[{"subject":"bee","kind":"agent","name":"b"}]}`,
 		"name and tag": `{"version":1,"grants":[{"subject":"agent:a","kind":"agent","name":"b","tag":"t"}]}`,
 		"neither":      `{"version":1,"grants":[{"subject":"agent:a","kind":"agent"}]}`,
-		"unknown kind": `{"version":1,"grants":[{"subject":"agent:a","kind":"tool","name":"b"}]}`,
+		"unknown kind": `{"version":1,"grants":[{"subject":"agent:a","kind":"channel","name":"b"}]}`,
 		"repeated":     `{"version":1,"grants":[{"subject":"agent:a","kind":"agent","name":"b"},{"subject":"agent:a","kind":"agent","name":"b"}]}`,
 	} {
 		p := path(t)

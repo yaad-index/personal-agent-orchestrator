@@ -57,11 +57,18 @@ const (
 )
 
 // ResourceKind is the kind of a resource: a column group of the matrix (ADR-0005
-// point 1: agents, tools, channels). Only agents are enforced so far.
+// point 1: agents, tools, channels). Agents and tools are enforced so far.
 type ResourceKind string
 
-// ResourceAgent is an agent, by name and tags.
-const ResourceAgent ResourceKind = "agent"
+// The kinds of resource access is enforced for.
+const (
+	// ResourceAgent is an agent, by name and tags.
+	ResourceAgent ResourceKind = "agent"
+	// ResourceTool is a tool pao offers on its own MCP surface on behalf of an
+	// upstream server (ADR-0024), by its pao-side name and the tags the operator
+	// gave it.
+	ResourceTool ResourceKind = "tool"
+)
 
 // Resource is what the action is on, by kind, name and tags (a tag is an access
 // scope, ADR-0012 point 3).
@@ -74,6 +81,11 @@ type Resource struct {
 // AgentResource is the agent of that name and tags as a resource.
 func AgentResource(name string, tags []string) Resource {
 	return Resource{Kind: ResourceAgent, Name: name, Tags: tags}
+}
+
+// ToolResource is the tool of that pao-side name and tags as a resource.
+func ToolResource(name string, tags []string) Resource {
+	return Resource{Kind: ResourceTool, Name: name, Tags: tags}
 }
 
 // Authorizer decides whether a subject may do an action on a resource.
@@ -138,8 +150,8 @@ func (g Grant) Validate() error {
 		return fmt.Errorf("a grant names a subject: %w", err)
 	}
 	switch {
-	case g.Kind != ResourceAgent:
-		return fmt.Errorf("resource kind %q is not one access is enforced for", g.Kind)
+	case g.Kind != ResourceAgent && g.Kind != ResourceTool:
+		return fmt.Errorf("resource kind %q is not %q or %q", g.Kind, ResourceAgent, ResourceTool)
 	case (g.Name == "") == (g.Tag == ""):
 		return fmt.Errorf("a grant names one resource or one tag, not both or neither")
 	case strings.ContainsAny(g.Name+g.Tag, " \t\n"):

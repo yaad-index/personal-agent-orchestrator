@@ -11,21 +11,35 @@ import (
 // AccessCmd groups the access-matrix commands (ADR-0005, ADR-0012).
 type AccessCmd struct {
 	Grants AccessGrantsCmd `cmd:"" help:"List the grants, of one subject or of all."`
-	Grant  AccessGrantCmd  `cmd:"" help:"Let a subject reach an agent, or every agent carrying a tag."`
+	Grant  AccessGrantCmd  `cmd:"" help:"Let a subject reach an agent or a tool, one by name or all carrying a tag."`
 	Revoke AccessRevokeCmd `cmd:"" help:"Take a grant away."`
 }
 
-// grantTarget is the resource half of a grant on the command line.
+// grantTarget is the resource half of a grant on the command line: exactly one
+// agent, agent tag, tool or tool tag.
 type grantTarget struct {
-	Agent string `help:"One agent, by name." xor:"target"`
-	Tag   string `help:"Every agent carrying this tag." xor:"target"`
+	Agent   string `help:"One agent, by name." xor:"target"`
+	Tag     string `help:"Every agent carrying this tag." xor:"target"`
+	Tool    string `help:"One tool on pao's MCP surface, by its pao-side name." xor:"target"`
+	ToolTag string `name:"tool-tag" help:"Every such tool carrying this tag." xor:"target"`
 }
 
 func (t grantTarget) grant(subject string) (local.GrantJSON, error) {
-	if (t.Agent == "") == (t.Tag == "") {
-		return local.GrantJSON{}, fmt.Errorf("give --agent for one agent or --tag for a tag, not both")
+	set := 0
+	for _, v := range []string{t.Agent, t.Tag, t.Tool, t.ToolTag} {
+		if v != "" {
+			set++
+		}
 	}
-	return local.GrantJSON{Subject: subject, Kind: "agent", Name: t.Agent, Tag: t.Tag}, nil
+	if set != 1 {
+		return local.GrantJSON{}, fmt.Errorf("give exactly one of --agent, --tag, --tool and --tool-tag")
+	}
+	switch {
+	case t.Tool != "" || t.ToolTag != "":
+		return local.GrantJSON{Subject: subject, Kind: "tool", Name: t.Tool, Tag: t.ToolTag}, nil
+	default:
+		return local.GrantJSON{Subject: subject, Kind: "agent", Name: t.Agent, Tag: t.Tag}, nil
+	}
 }
 
 func describeGrant(g local.GrantJSON) string {

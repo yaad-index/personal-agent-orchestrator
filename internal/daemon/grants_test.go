@@ -73,8 +73,11 @@ func TestAGrantMadeAtRuntimeBoundsWhatAnAgentReachesAndARevocationTakesItBack(t 
 
 	_, err = n.client.AddGrant(ctx, local.GrantJSON{Subject: "tmp-a", Kind: "agent", Name: "tmp-b"})
 	assert.ErrorContains(t, err, "400")
-	_, err = n.client.AddGrant(ctx, local.GrantJSON{Subject: "agent:tmp-a", Kind: "tool", Name: "x"})
-	assert.ErrorContains(t, err, "400", "only agents are enforced so far")
+	_, err = n.client.AddGrant(ctx, local.GrantJSON{Subject: "agent:tmp-a", Kind: "channel", Name: "x"})
+	assert.ErrorContains(t, err, "400", "only agents and tools are enforced so far")
+	ch, err = n.client.AddGrant(ctx, local.GrantJSON{Subject: "agent:tmp-a", Kind: "tool", Name: "search__query"})
+	require.NoError(t, err)
+	assert.True(t, ch.Changed, "a tool can be granted before anything offers it")
 }
 
 func TestGrantsAreReloadedAtStart(t *testing.T) {

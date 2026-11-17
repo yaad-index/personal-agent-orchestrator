@@ -50,7 +50,27 @@ func TestAccessGrantsListsOneRowEach(t *testing.T) {
 }
 
 func TestAGrantNeedsExactlyOneTarget(t *testing.T) {
-	f := NodeFlags{}
+	s := newStubNode(t, func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, 200, local.GrantChangeJSON{Changed: true})
+	})
+	f := s.flags(t)
+	defer func() { assert.Empty(t, s.path, "nothing was sent") }()
 	assert.Error(t, AccessGrantCmd{NodeFlags: f, Subject: "agent:a"}.run(&bytes.Buffer{}))
 	assert.Error(t, AccessRevokeCmd{NodeFlags: f, Subject: "agent:a", grantTarget: grantTarget{Agent: "b", Tag: "t"}}.run(&bytes.Buffer{}))
+	assert.Error(t, AccessGrantCmd{NodeFlags: f, Subject: "agent:a", grantTarget: grantTarget{Tool: "x__y", Agent: "b"}}.run(&bytes.Buffer{}))
+}
+
+func TestAToolGrantIsOfKindTool(t *testing.T) {
+	s := newStubNode(t, func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, 200, local.GrantChangeJSON{Changed: true})
+	})
+	var out bytes.Buffer
+	require.NoError(t, AccessGrantCmd{NodeFlags: s.flags(t), Subject: "agent:a", grantTarget: grantTarget{ToolTag: "research"}}.run(&out))
+	assert.JSONEq(t, `{"subject":"agent:a","kind":"tool","tag":"research"}`, s.body)
+	assert.Equal(t, "agent:a may reach tools tagged research\n", out.String())
+
+	out.Reset()
+	require.NoError(t, AccessRevokeCmd{NodeFlags: s.flags(t), Subject: "operator", grantTarget: grantTarget{Tool: "search__query"}}.run(&out))
+	assert.Equal(t, "DELETE /v1/access/grants?kind=tool&name=search__query&subject=operator", s.path)
+	assert.Equal(t, "operator no longer reaches tool search__query\n", out.String())
 }
