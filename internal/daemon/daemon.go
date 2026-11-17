@@ -108,6 +108,8 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	if err := os.MkdirAll(cfg.Orchestrator.StateDir, 0o700); err != nil {
 		return err
 	}
+	// A node that kept messages has run before; it is what an upgrade starts from.
+	ranBefore := exists(filepath.Join(cfg.Orchestrator.StateDir, "messages.db"))
 	store, err := msgstore.Open(filepath.Join(cfg.Orchestrator.StateDir, "messages.db"), cfg.Orchestrator.MessageWindow)
 	if err != nil {
 		return err
@@ -130,6 +132,9 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	}
 	grantStore, err := grants.Open(filepath.Join(cfg.Orchestrator.StateDir, grantsFile))
 	if err != nil {
+		return err
+	}
+	if err := seedOperator(grantStore, ranBefore, cfg.Profiles, cfg.Orchestrator.RecipesDir); err != nil {
 		return err
 	}
 	auth := opts.Authorizer
@@ -162,6 +167,9 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	router := route.New(reg, hook, plane)
 	layer := comm.New(store, router)
 	layer.SetDefaults(defaults)
+	layer.SetOperatorAccess(func(p core.Profile) bool {
+		return access.Allowed(auth, access.Operator, access.Route, access.AgentResource(p.Name, p.Tags))
+	})
 	hook.layer = layer
 	hook.follow = &followers{
 		ctx:   ctx,
@@ -212,11 +220,11 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		Thresholds: registry.Thresholds{UnusedAfter: cfg.Orchestrator.Temp.UnusedAfter, IdleAfter: cfg.Orchestrator.Temp.IdleAfter},
 	}
 
-	tempOps := &tempAPI{mgr: mgr, store: harvests}
+	tempOps := &tempAPI{auth: auth, reg: reg, mgr: mgr, store: harvests}
 	watch := newWatcher(reg, opts.MirrorPoll)
 	watch.auth = auth
-	streamOps := &streamAPI{streams: streams, watcher: watch}
-	lifeOps := &lifecycleAPI{life: life}
+	streamOps := &streamAPI{auth: auth, streams: streams, watcher: watch}
+	lifeOps := &lifecycleAPI{auth: auth, life: life}
 	ops := &mcpOps{reg: reg, thresholds: mgr.Thresholds, recipes: mgr.Recipes, mgr: mgr, store: harvests, layer: layer, auth: auth}
 	resolver := mcpsrv.Chain{
 		mcpsrv.NewOperatorResolver(token),

@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var allActions = []Action{List, ListRecipes, Route, Spawn, Kill, ReadHarvest, Watch}
+var allActions = []Action{List, ListRecipes, Route, Spawn, Kill, ReadHarvest, Watch, Lifecycle}
 
 func TestOperatorOnlyAllowsTheOperatorAndNoOneElse(t *testing.T) {
 	var a Authorizer = OperatorOnly{}
@@ -75,12 +75,25 @@ func TestACellNeedsANamedResourceAndAKindMatches(t *testing.T) {
 	assert.False(t, m.Allow(Agent("a"), Route, Resource{Kind: "tool", Name: "b"}), "an agent cell is not a tool cell")
 }
 
-func TestWithoutGrantsAnAgentIsDeniedAndTheOperatorIsNot(t *testing.T) {
+func TestWithoutGrantsNobodyIsAllowedTheOperatorIncluded(t *testing.T) {
 	for _, m := range []Matrix{{}, {Grants: grantList{}}} {
 		for _, act := range allActions {
 			assert.False(t, m.Allow(Agent("a"), act, AgentResource("b", []string{"t"})))
-			assert.True(t, m.Allow(Operator, act, AgentResource("b", []string{"t"})), "the operator is not behind grants yet")
+			assert.False(t, m.Allow(Operator, act, AgentResource("b", []string{"t"})), "no blanket access, the operator included (ADR-0012 point 2)")
 		}
+	}
+}
+
+func TestTheOperatorReachesWhatItsGrantsCover(t *testing.T) {
+	m := Matrix{Grants: grantList{
+		{Subject: Operator, Kind: ResourceAgent, Tag: "home"},
+		{Subject: Operator, Kind: ResourceAgent, Name: "solo"},
+		{Subject: Agent("a"), Kind: ResourceAgent, Name: "private"},
+	}}
+	for _, act := range allActions {
+		assert.True(t, m.Allow(Operator, act, AgentResource("x", []string{"home"})), "tag scope, %s", act)
+		assert.True(t, m.Allow(Operator, act, AgentResource("solo", nil)), "cell, %s", act)
+		assert.False(t, m.Allow(Operator, act, AgentResource("private", nil)), "an agent's grant is not the operator's, %s", act)
 	}
 }
 

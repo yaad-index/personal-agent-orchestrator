@@ -48,7 +48,8 @@ func (e Entry) Grant() (access.Grant, error) {
 
 // Store is safe for concurrent use. It implements access.Grants.
 type Store struct {
-	path string
+	path  string
+	found bool // the document existed when the store was opened
 
 	mu      sync.RWMutex
 	version uint64
@@ -82,7 +83,34 @@ func Open(path string) (*Store, error) {
 		s.grants = append(s.grants, g)
 	}
 	s.version = d.Version
+	s.found = true
 	return s, nil
+}
+
+// Found reports whether a document existed when the store was opened.
+func (s *Store) Found() bool { return s.found }
+
+// Seed stores gs as the first document, in one write. It refuses a store that was
+// opened from a document or has changed since, so a seed is written at most once
+// and never over grants the operator made.
+func (s *Store) Seed(gs []access.Grant) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.found || s.version != 0 {
+		return errors.New("grants exist already: a seed is only written into an empty store")
+	}
+	next := make([]access.Grant, 0, len(gs))
+	seen := map[access.Grant]bool{}
+	for _, g := range gs {
+		if err := g.Validate(); err != nil {
+			return err
+		}
+		if !seen[g] {
+			seen[g] = true
+			next = append(next, g)
+		}
+	}
+	return s.commitLocked(next)
 }
 
 // Of returns the subject's grants.

@@ -82,6 +82,9 @@ type Layer struct {
 	recorder Recorder
 	defaults Defaults
 
+	// operatorAllow bounds the operator's routing; nil narrows nothing.
+	operatorAllow func(core.Profile) bool
+
 	// channelIDs and composites are the composite message id (ADR-0021).
 	channelIDs map[string]int
 	composites *compositeMap

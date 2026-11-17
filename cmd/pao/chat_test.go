@@ -23,7 +23,7 @@ type recordingLayer struct {
 	inbound []comm.Inbound
 }
 
-func (l *recordingLayer) Receive(_ context.Context, in comm.Inbound) (comm.Delivery, error) {
+func (l *recordingLayer) ReceiveAsOperator(_ context.Context, in comm.Inbound) (comm.Delivery, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.inbound = append(l.inbound, in)

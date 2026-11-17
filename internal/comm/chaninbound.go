@@ -111,6 +111,20 @@ func (l *Layer) DefaultAgent(channel string) (string, bool) {
 	return l.defaults.Get(channel)
 }
 
+// SetOperatorAccess bounds what the operator's own messages may reach: an agent
+// allow returns false for is left out of the operator's routing as if it did not
+// exist (ADR-0012 points 2 and 4). Unset, the operator's routing is not narrowed.
+// Call it before the layer starts receiving.
+func (l *Layer) SetOperatorAccess(allow func(core.Profile) bool) { l.operatorAllow = allow }
+
+// ReceiveAsOperator is Receive for a message from the operator, at the local
+// channel or from an operator-flagged subject on a chat channel, bounded by what
+// the operator may reach.
+func (l *Layer) ReceiveAsOperator(ctx context.Context, in Inbound) (Delivery, error) {
+	in.Allow = l.operatorAllow
+	return l.Receive(ctx, in)
+}
+
 // SetIdentity gives the layer the identity store and the record of rejections that
 // channel inbound needs. Call it before the layer starts receiving.
 func (l *Layer) SetIdentity(id Identity, rec Recorder) { l.identity, l.recorder = id, rec }
@@ -196,7 +210,7 @@ func (l *Layer) ReceiveFromChannel(ctx context.Context, in ChannelInbound) (Chan
 			target = core.Target{Kind: core.ByName, Value: agent}
 		}
 	}
-	d, err := l.Receive(ctx, Inbound{
+	d, err := l.ReceiveAsOperator(ctx, Inbound{
 		Source:     in.Channel,
 		Sender:     subject,
 		Text:       in.Text,

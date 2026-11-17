@@ -263,9 +263,9 @@ func (s *Server) listRecipes(_ context.Context, req *mcp.CallToolRequest, _ noIn
 	out := listRecipesOutput{Recipes: []RecipeInfo{}}
 	rs, err := s.ops.Recipes()
 	if err != nil {
-		// Only a caller that reaches every recipe, tagged or not, is told the
-		// recipes could not be read; to anyone else there are none.
-		if access.Allowed(s.auth, who, access.ListRecipes, access.Resource{Kind: access.ResourceAgent}) {
+		// The recipes are the operator's configuration, so only the operator is
+		// told they could not be read; to anyone else there are none.
+		if who.Kind == access.KindOperator {
 			return nil, out, err
 		}
 		return nil, out, nil

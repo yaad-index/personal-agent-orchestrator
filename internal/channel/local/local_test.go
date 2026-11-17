@@ -31,7 +31,7 @@ type fakeLayer struct {
 	err       error
 }
 
-func (f *fakeLayer) Receive(_ context.Context, in comm.Inbound) (comm.Delivery, error) {
+func (f *fakeLayer) ReceiveAsOperator(_ context.Context, in comm.Inbound) (comm.Delivery, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.err != nil {

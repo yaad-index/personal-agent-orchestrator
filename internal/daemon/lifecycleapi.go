@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 
+	"github.com/yaad-index/personal-agent-orchestrator/internal/access"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/mesh/directory"
 )
 
@@ -10,13 +11,14 @@ import (
 // (local.LifecycleAPI): an agent of this node is handled here, an agent of another
 // node by a command to that node, found by name in the master's directory.
 type lifecycleAPI struct {
+	auth access.Authorizer
 	life lifecycle
 	cmds *meshCommands
 	dir  *directory.Directory
 }
 
 func (a lifecycleAPI) run(ctx context.Context, name, action string, local func(context.Context, string) error) error {
-	e, remote, err := locateAgent(a.life.reg, a.dir, name)
+	e, remote, err := locateForOperator(a.auth, access.Lifecycle, a.life.reg, a.dir, name)
 	if err != nil {
 		return err
 	}

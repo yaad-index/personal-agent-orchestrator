@@ -49,8 +49,11 @@ const (
 	Kill Action = "kill"
 	// ReadHarvest reads a harvested slice (ADR-0006 point 4).
 	ReadHarvest Action = "read_harvest"
-	// Watch reads an agent's rendered output on demand (ADR-0018 point 6).
+	// Watch reads an agent's rendered output on demand (ADR-0018 point 6), or
+	// changes how it is shown.
 	Watch Action = "watch"
+	// Lifecycle starts, stops or restarts a configured agent (ADR-0007).
+	Lifecycle Action = "lifecycle"
 )
 
 // ResourceKind is the kind of a resource: a column group of the matrix (ADR-0005
@@ -162,26 +165,24 @@ type Grants interface {
 }
 
 // Matrix allows a subject an action on a resource when one of the subject's
-// grants covers the resource; anything else is denied (ADR-0005 point 1,
-// ADR-0012 point 2). The operator is allowed every action for now: putting the
-// operator behind grants is its own step.
+// grants covers the resource; anything else is denied (ADR-0005 point 1). This
+// holds for the operator too: the operator administers the grants, and is not
+// itself granted anything it was not given (ADR-0012 point 2).
 type Matrix struct {
 	Grants Grants
 }
 
 // Allow implements Authorizer.
 func (m Matrix) Allow(s Subject, _ Action, r Resource) bool {
-	switch s.Kind {
-	case KindOperator:
-		return true
-	case KindAgent:
-		if s.Name == "" || m.Grants == nil {
-			return false
-		}
-		for _, g := range m.Grants.Of(s) {
-			if g.covers(r) {
-				return true
-			}
+	if m.Grants == nil {
+		return false
+	}
+	if _, err := ParseSubject(s.String()); err != nil {
+		return false
+	}
+	for _, g := range m.Grants.Of(s) {
+		if g.covers(r) {
+			return true
 		}
 	}
 	return false

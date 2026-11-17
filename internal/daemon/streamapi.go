@@ -15,6 +15,7 @@ import (
 // this node is handled here, an agent of another node by a command to that node,
 // found by name in the master's directory.
 type streamAPI struct {
+	auth    access.Authorizer
 	streams *streamControl
 	cmds    *meshCommands
 	dir     *directory.Directory
@@ -33,15 +34,39 @@ func locateAgent(reg *registry.Registry, dir *directory.Directory, name string) 
 			return e, true, nil
 		}
 	}
+	return directory.Entry{}, false, noAgent(dir, name)
+}
+
+func noAgent(dir *directory.Directory, name string) error {
 	where := ""
 	if dir != nil {
 		where = " in the mesh"
 	}
-	return directory.Entry{}, false, translated{local.ErrNotFound, fmt.Errorf("no agent %q%s", name, where)}
+	return translated{local.ErrNotFound, fmt.Errorf("no agent %q%s", name, where)}
+}
+
+// locateForOperator is locateAgent for an operator request: an agent the operator
+// may not reach is answered exactly as one nobody holds (ADR-0012 point 4).
+func locateForOperator(auth access.Authorizer, act access.Action, reg *registry.Registry, dir *directory.Directory, name string) (directory.Entry, bool, error) {
+	e, remote, err := locateAgent(reg, dir, name)
+	if err != nil {
+		return e, remote, err
+	}
+	var tags []string
+	if remote {
+		tags = e.Agent.GetTags()
+	} else {
+		p, _, _ := reg.Lookup(name)
+		tags = p.Tags
+	}
+	if !access.Allowed(auth, access.Operator, act, access.AgentResource(name, tags)) {
+		return directory.Entry{}, false, noAgent(dir, name)
+	}
+	return e, remote, nil
 }
 
 func (a streamAPI) remote(name string) (directory.Entry, bool, error) {
-	return locateAgent(a.streams.reg, a.dir, name)
+	return locateForOperator(a.auth, access.Watch, a.streams.reg, a.dir, name)
 }
 
 func (a streamAPI) SetStream(ctx context.Context, agent, channel string, level int) error {
