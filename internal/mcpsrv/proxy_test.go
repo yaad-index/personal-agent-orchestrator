@@ -5,11 +5,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/auth"
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -205,6 +210,7 @@ func TestAGrantChangeIsSeenByTheNextRequest(t *testing.T) {
 	failed, _ := toolText(t, cs, "search__delete", map[string]any{"q": "x"})
 	assert.False(t, failed)
 	grants.set()
+	assert.NotContains(t, listed(t, cs), "search__delete", "revoked: no longer offered")
 	_, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "search__delete", Arguments: map[string]any{"q": "x"}})
 	assert.Error(t, err, "revoked: gone at once")
 }
@@ -268,4 +274,82 @@ func TestTheGateRulesReadAProxiedCallAtItsConfiguredRiskAndLetTheHookThrough(t *
 		}
 	}
 	assert.Zero(t, n, "a tool with no risk brings no risk rule")
+}
+
+func TestAGrantAddedIsAnnouncedToASessionAlreadyOpen(t *testing.T) {
+	grants := &liveGrants{}
+	grants.set(bossResearch)
+	srv := New(sampleOps, staticResolver{"a": access.Agent("boss"), "b": access.Agent("other")},
+		WithAuthorizer(access.Matrix{Grants: grants}), WithProxy(&fakeProxy{tools: searchTools()}), WithGate(&lockedGate{allow: true}))
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	// A client that keeps the stream a server's notifications arrive on and
+	// reports each tool-list change, at a protocol version where the server sends
+	// every change unasked, as to the coding agents pao runs today.
+	open := func(token string) (*mcp.ClientSession, <-chan struct{}) {
+		changed := make(chan struct{}, 8)
+		c := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "0"}, &mcp.ClientOptions{
+			ToolListChangedHandler: func(context.Context, *mcp.ToolListChangedRequest) { changed <- struct{}{} },
+		})
+		cs, err := c.Connect(context.Background(), &mcp.StreamableClientTransport{
+			Endpoint: ts.URL, HTTPClient: &http.Client{Transport: bearer{token}}, MaxRetries: -1,
+		}, &mcp.ClientSessionOptions{ProtocolVersion: "2025-06-18"})
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = cs.Close() })
+		return cs, changed
+	}
+	boss, bossChanged := open("a")
+	_, otherChanged := open("b")
+	before := listed(t, boss)
+	require.Contains(t, before, "search__query")
+	assert.NotContains(t, before, "search__delete")
+
+	// heard reports whether a notification arrives within the wait.
+	heard := func(ch <-chan struct{}, wait time.Duration) bool {
+		select {
+		case <-ch:
+			return true
+		case <-time.After(wait):
+			return false
+		}
+	}
+	// Let anything already on its way arrive, so what follows is about the
+	// refresh alone.
+	for heard(bossChanged, 500*time.Millisecond) || heard(otherChanged, 0) {
+	}
+
+	// Nothing changed: nobody is told anything.
+	srv.Refresh(context.Background())
+	assert.False(t, heard(bossChanged, time.Second), "a refresh that changes nothing announces nothing")
+
+	// The grant is added, and the session hears of it with no request of its own.
+	grants.set(bossResearch, bossDelete)
+	srv.Refresh(context.Background())
+	select {
+	case <-bossChanged:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the open session was not told its tools changed")
+	}
+	assert.False(t, heard(otherChanged, 500*time.Millisecond), "a subject whose tools did not change is not told")
+	assert.Contains(t, listed(t, boss), "search__delete")
+}
+
+func TestACallToAToolRevokedSinceItWasOfferedIsAnsweredAsUnknown(t *testing.T) {
+	p := &fakeProxy{tools: searchTools()}
+	g := &lockedGate{allow: true}
+	srv := New(sampleOps, staticResolver{}, WithAuthorizer(access.Matrix{Grants: grantList{}}), WithProxy(p), WithGate(g))
+	// The tool was offered to boss, and boss's grant went before the call ran.
+	req := &mcp.CallToolRequest{
+		Params: &mcp.CallToolParamsRaw{Name: "search__delete", Arguments: json.RawMessage(`{"q":"x"}`)},
+		Extra:  &mcp.RequestExtra{TokenInfo: &auth.TokenInfo{Extra: map[string]any{subjectKey: access.Agent("boss")}}},
+	}
+	res, err := srv.proxied(searchTools()[1])(context.Background(), req)
+	assert.Nil(t, res)
+	var werr *jsonrpc.Error
+	require.ErrorAs(t, err, &werr)
+	assert.Equal(t, int64(jsonrpc.CodeInvalidParams), werr.Code)
+	assert.Equal(t, `unknown tool "search__delete"`, werr.Message, "the server's own words for a tool that does not exist")
+	assert.Empty(t, p.made(), "nothing was forwarded")
+	assert.Empty(t, g.questions(), "and nothing was asked")
 }

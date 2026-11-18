@@ -259,7 +259,8 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 			return plane.Alive(ctx, agent)
 		}},
 	}
-	mcpHandler := mcpsrv.New(ops, resolver, mcpsrv.WithAuthorizer(auth), mcpsrv.WithGate(gt), mcpsrv.WithProxy(proxy)).Handler()
+	mcpServer := mcpsrv.New(ops, resolver, mcpsrv.WithAuthorizer(auth), mcpsrv.WithGate(gt), mcpsrv.WithProxy(proxy))
+	mcpHandler := mcpServer.Handler()
 
 	var meshNode *transport.Node
 	var dir *directory.Directory
@@ -311,7 +312,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	}
 
 	srv, err := local.New(layer, token, append([]local.Option{local.WithDecider(decider), local.WithTemp(tempOps), local.WithStream(streamOps), local.WithWatch(streamOps), local.WithLifecycle(lifeOps), local.WithRejected(rejectedAPI{rejects}), local.WithIdentity(identityAPI{ids}),
-		local.WithDefaults(newDefaultsAPI(defaults, cfg.Orchestrator.Channels, router.Resolve)), local.WithGrants(grantsAPI{grantStore}),
+		local.WithDefaults(newDefaultsAPI(defaults, cfg.Orchestrator.Channels, router.Resolve)), local.WithGrants(grantsAPI{store: grantStore, changed: mcpServer.Refresh}),
 		local.WithMount("/mcp", mcpHandler)}, localOpts...)...)
 	if err != nil {
 		return err

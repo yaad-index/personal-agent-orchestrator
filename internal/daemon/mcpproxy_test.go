@@ -7,6 +7,7 @@ import (
 	"os"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
@@ -96,4 +97,41 @@ func TestAnAgentReachesAnUpstreamToolOnlyThroughAGrantAndPaoCallsItWithItsOwnCre
 
 	// The operator is behind grants too: this one reaches agents, not the tool.
 	assert.NotContains(t, toolNames(t, mcpSession(t, n, token)), "search__query")
+}
+
+func TestAnAgentWhoseSessionIsOpenIsToldOfAGrantAddedToIt(t *testing.T) {
+	url, _ := searchUpstream(t, "upstream-secret")
+	t.Setenv(upstreamCredEnv, "upstream-secret")
+	n := startNodeWith(t, map[string]string{"boss": ""}, func(_, _ string, cfg *config.Config) {
+		cfg.Orchestrator.MCPUpstreams = []config.MCPUpstream{{
+			Name: "search", URL: url, CredentialEnv: upstreamCredEnv,
+			Tools: map[string]config.UpstreamTool{"query": {Tags: []string{"research"}, Risk: gate.RiskRead}},
+		}}
+	})
+	ctx := context.Background()
+	_, err := n.client.Post(ctx, "human", "wake up", "name", "boss")
+	require.NoError(t, err)
+	_ = n.next(t)
+
+	// The agent keeps its session open, with the stream notifications arrive on,
+	// as a coding agent does, and lists its tools once.
+	changed := make(chan struct{}, 8)
+	boss, err := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "0"}, &mcp.ClientOptions{
+		ToolListChangedHandler: func(context.Context, *mcp.ToolListChangedRequest) { changed <- struct{}{} },
+	}).Connect(ctx, &mcp.StreamableClientTransport{
+		Endpoint: n.url + "/mcp", HTTPClient: &http.Client{Transport: bearerRT{sessionEnv(t, n, "boss", "PAO_AGENT_TOKEN")}}, MaxRetries: -1,
+	}, &mcp.ClientSessionOptions{ProtocolVersion: "2025-06-18"})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = boss.Close() })
+	assert.NotContains(t, toolNames(t, boss), "search__query")
+
+	// The operator grants the tool; the agent is told, without asking.
+	_, err = n.client.AddGrant(ctx, local.GrantJSON{Subject: "agent:boss", Kind: "tool", Tag: "research"})
+	require.NoError(t, err)
+	select {
+	case <-changed:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the agent was not told its tools changed")
+	}
+	assert.Contains(t, toolNames(t, boss), "search__query")
 }

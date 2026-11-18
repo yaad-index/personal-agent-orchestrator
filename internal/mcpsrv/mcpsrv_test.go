@@ -322,18 +322,36 @@ func TestACallWithNoResolvedSubjectIsNobody(t *testing.T) {
 	assert.False(t, access.Allowed(nil, subject(&mcp.CallToolRequest{}), access.List, access.Resource{}), "and nobody is denied, so a missing identity never opens anything")
 }
 
-func TestTheServerKeepsNoSession(t *testing.T) {
-	url := serve(t, sampleOps, NewOperatorResolver("tok"))
-	req, err := http.NewRequest("POST", url, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"0"}}}`))
-	require.NoError(t, err)
-	req.Header.Set("Authorization", "Bearer tok")
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json, text/event-stream")
-	resp, err := http.DefaultClient.Do(req)
-	require.NoError(t, err)
-	_ = resp.Body.Close()
+func TestASessionIsRefusedToAnyoneButTheSubjectThatOpenedIt(t *testing.T) {
+	agents := AgentResolver{Tokens: fakeTokens{"tok-a": "a", "tok-b": "b"}, Alive: func(string) bool { return true }}
+	url := serve(t, sampleOps, Chain{NewOperatorResolver("tok"), agents})
+	post := func(token, session, body string) *http.Response {
+		t.Helper()
+		req, err := http.NewRequest("POST", url, strings.NewReader(body))
+		require.NoError(t, err)
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		if session != "" {
+			req.Header.Set("Mcp-Session-Id", session)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json, text/event-stream")
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		_ = resp.Body.Close()
+		return resp
+	}
+	resp := post("tok-a", "", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"0"}}}`)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Empty(t, resp.Header.Get("Mcp-Session-Id"), "every request carries its own token; there is no session whose identity could be borrowed")
+	session := resp.Header.Get("Mcp-Session-Id")
+	require.NotEmpty(t, session)
+
+	list := `{"jsonrpc":"2.0","id":2,"method":"tools/list"}`
+	assert.Equal(t, http.StatusForbidden, post("tok-b", session, list).StatusCode, "another agent cannot use it")
+	assert.Equal(t, http.StatusForbidden, post("tok", session, list).StatusCode, "nor can the operator")
+	assert.Equal(t, http.StatusUnauthorized, post("", session, list).StatusCode, "a session id is no credential")
+	assert.Equal(t, http.StatusOK, post("tok-a", session, list).StatusCode, "its own subject can")
 }
 
 // toolText calls a tool and returns whether it failed, and its text.

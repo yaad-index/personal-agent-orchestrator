@@ -6,9 +6,10 @@
 // it does for the other surfaces. A tool call is a tool call, not a channel
 // (ADR-0001 point 3).
 //
-// The server is stateless over streamable HTTP: every request carries its own
-// bearer token and is resolved to a subject on its own, so there is no session
-// whose identity could be borrowed.
+// Every request over streamable HTTP carries its own bearer token and is
+// resolved to a subject on its own. A client keeps a session, so pao can tell it
+// when the tools on offer change. A session belongs to the subject that opened it
+// and is refused to any other, so its identity cannot be borrowed.
 package mcpsrv
 
 import (
@@ -17,10 +18,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
+	"reflect"
+	"slices"
+	"sync"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/auth"
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/access"
@@ -98,6 +104,18 @@ type Server struct {
 	gate     Gate
 	ops      Operations
 	proxy    Proxy
+
+	mu       sync.Mutex
+	subjects map[access.Subject]*offer
+}
+
+// offer is the server one subject's sessions share, with the proxied tools on it
+// now.
+type offer struct {
+	srv *mcp.Server
+
+	mu      sync.Mutex
+	proxied map[string]upstream.Tool
 }
 
 // Proxy is the upstream servers' tools pao offers as its own (ADR-0024).
@@ -159,37 +177,91 @@ func (s *Server) approve(ctx context.Context, who access.Subject, action string,
 
 // New returns a Server over the given operations.
 func New(ops Operations, r Resolver, opts ...Option) *Server {
-	s := &Server{resolver: r, ops: ops}
+	s := &Server{resolver: r, ops: ops, subjects: map[access.Subject]*offer{}}
 	for _, o := range opts {
 		o(s)
 	}
 	return s
 }
 
-// serverFor builds the server one request sees: pao's own tools, and the proxied
-// tools the subject's access reaches. A tool out of reach is not on it at all,
-// so asking for one is answered exactly as asking for a tool that does not exist
-// (ADR-0024 point 4). The server is built for each request, from the access as
-// it stands then.
-func (s *Server) serverFor(ctx context.Context, who access.Subject) *mcp.Server {
-	srv := mcp.NewServer(&mcp.Implementation{Name: "pao", Version: "0"}, nil)
-	s.addTools(srv)
+// offerFor returns the server of who's sessions, made the first time who
+// connects, with pao's own tools on it.
+func (s *Server) offerFor(who access.Subject) *offer {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	o, ok := s.subjects[who]
+	if !ok {
+		srv := mcp.NewServer(&mcp.Implementation{Name: "pao", Version: "0"}, nil)
+		s.addTools(srv)
+		o = &offer{srv: srv, proxied: map[string]upstream.Tool{}}
+		s.subjects[who] = o
+	}
+	return o
+}
+
+// sync brings the proxied tools on who's server in line with the access as it
+// stands: a tool out of reach is not on it at all, so asking for one is answered
+// exactly as asking for a tool that does not exist (ADR-0024 point 4). A change
+// tells who's open sessions that the list changed.
+func (s *Server) sync(ctx context.Context, who access.Subject, o *offer) {
+	want := map[string]upstream.Tool{}
 	if s.proxy != nil {
 		for _, t := range s.proxy.Tools(ctx) {
 			if access.Allowed(s.auth, who, access.CallTool, access.ToolResource(t.Name, t.Tags)) {
-				srv.AddTool(&mcp.Tool{Name: t.Name, Description: t.Description, InputSchema: t.InputSchema}, s.proxied(t.Name))
+				want[t.Name] = t
 			}
 		}
 	}
-	return srv
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	var gone []string
+	for name := range o.proxied {
+		if _, ok := want[name]; !ok {
+			gone = append(gone, name)
+		}
+	}
+	if len(gone) > 0 {
+		o.srv.RemoveTools(gone...)
+		for _, name := range gone {
+			delete(o.proxied, name)
+		}
+	}
+	for _, name := range slices.Sorted(maps.Keys(want)) {
+		t := want[name]
+		if have, ok := o.proxied[name]; ok && reflect.DeepEqual(have, t) {
+			continue
+		}
+		o.srv.AddTool(&mcp.Tool{Name: t.Name, Description: t.Description, InputSchema: t.InputSchema}, s.proxied(t))
+		o.proxied[name] = t
+	}
 }
 
-// proxied calls an upstream tool for the caller: the caller reached it, since it
-// is on the caller's server; the gate judges pao's call; then pao makes it.
-func (s *Server) proxied(name string) mcp.ToolHandler {
+// Refresh brings every connected subject's tools in line with the access as it
+// stands, so a session open now hears of a tool it was given since it listed
+// them. It is called when grants change; a revoked tool needs no Refresh to be
+// refused, since every request and every call checks again.
+func (s *Server) Refresh(ctx context.Context) {
+	s.mu.Lock()
+	subjects := maps.Clone(s.subjects)
+	s.mu.Unlock()
+	for who, o := range subjects {
+		s.sync(ctx, who, o)
+	}
+}
+
+// proxied calls an upstream tool for the caller: the caller's access reaches it,
+// checked again at the call; the gate judges pao's call; then pao makes it.
+func (s *Server) proxied(t upstream.Tool) mcp.ToolHandler {
+	name := t.Name
 	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		who := subject(req)
+		// A grant revoked since the tool was offered is refused now, as a tool
+		// that does not exist, in the server's own words.
+		if !access.Allowed(s.auth, who, access.CallTool, access.ToolResource(t.Name, t.Tags)) {
+			return nil, &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: fmt.Sprintf("unknown tool %q", name)}
+		}
 		args := req.Params.Arguments
-		if err := s.approve(ctx, subject(req), ProxiedAction(name), args); err != nil {
+		if err := s.approve(ctx, who, ProxiedAction(name), args); err != nil {
 			return toolError(err), nil
 		}
 		res, err := s.proxy.Call(ctx, name, args)
@@ -210,9 +282,17 @@ func toolError(err error) *mcp.CallToolResult {
 // request without a token that resolves to a subject before the protocol sees
 // it.
 func (s *Server) Handler() http.Handler {
-	h := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server { return s.serverFor(r.Context(), requester(r)) },
-		&mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true})
-	return auth.RequireBearerToken(s.verify, &auth.RequireBearerTokenOptions{AllowMissingExpiration: true})(h)
+	h := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server { return s.offerFor(requester(r)).srv },
+		&mcp.StreamableHTTPOptions{JSONResponse: true})
+	// Before the protocol sees a request, the subject's tools are brought in
+	// line with its access as it stands, so what a request lists or calls is
+	// never older than the request.
+	synced := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		who := requester(r)
+		s.sync(r.Context(), who, s.offerFor(who))
+		h.ServeHTTP(w, r)
+	})
+	return auth.RequireBearerToken(s.verify, &auth.RequireBearerTokenOptions{AllowMissingExpiration: true})(synced)
 }
 
 // subjectKey is the TokenInfo.Extra key that carries the resolved subject.
