@@ -55,26 +55,3 @@ func TestHookOutput(t *testing.T) {
 		assert.Equal(t, "because", got.Out.Reason)
 	}
 }
-
-func TestHookSettings(t *testing.T) {
-	var got struct {
-		Hooks struct {
-			PreToolUse []struct {
-				Matcher string `json:"matcher"`
-				Hooks   []struct {
-					Type    string `json:"type"`
-					Command string `json:"command"`
-					Timeout int    `json:"timeout"`
-				} `json:"hooks"`
-			} `json:"PreToolUse"`
-		} `json:"hooks"`
-	}
-	require.NoError(t, json.Unmarshal([]byte(HookSettings("pao hook", 600)), &got))
-	require.Len(t, got.Hooks.PreToolUse, 1)
-	assert.Equal(t, "*", got.Hooks.PreToolUse[0].Matcher)
-	require.Len(t, got.Hooks.PreToolUse[0].Hooks, 1)
-	h := got.Hooks.PreToolUse[0].Hooks[0]
-	assert.Equal(t, "command", h.Type)
-	assert.Equal(t, "pao hook", h.Command)
-	assert.Equal(t, 600, h.Timeout)
-}

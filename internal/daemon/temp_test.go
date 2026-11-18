@@ -25,7 +25,7 @@ func tempRecipe(script, name, ready, format string) string {
 	return fmt.Sprintf(`name: %s
 description: a fake agent
 profile:
-  backend: fake
+  backend: claude-code
   tags: [temp]
   startup:
     command: "env TRANSCRIPT={workdir}/t.jsonl sh %s"

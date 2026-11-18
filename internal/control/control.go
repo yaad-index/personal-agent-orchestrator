@@ -46,6 +46,9 @@ type Plane struct {
 	term Terminal
 	poll time.Duration
 	env  func(agent string) []string
+	// command builds the shell command that starts an agent; nil runs the
+	// profile's own.
+	command func(core.Profile) (string, error)
 	// onStop is called when an agent's session is known to be over.
 	onStop func(agent string)
 }
@@ -60,6 +63,13 @@ func WithPollInterval(d time.Duration) Option { return func(p *Plane) { p.poll =
 // f is called with the agent's name. It is how an agent learns who it is and
 // where its node's gate is.
 func WithEnv(f func(agent string) []string) Option { return func(p *Plane) { p.env = f } }
+
+// WithCommand sets the function that builds the shell command an agent is
+// started with from its profile. It is how a backend adapter adds what it owns
+// (ADR-0025 point 2). An error starts nothing.
+func WithCommand(f func(core.Profile) (string, error)) Option {
+	return func(p *Plane) { p.command = f }
+}
 
 // WithOnStop sets a function called with an agent's name once its session is
 // ended by Kill, whether Kill ended it or found it already gone. It is how what
@@ -97,11 +107,17 @@ func (p *Plane) Launch(ctx context.Context, prof core.Profile) error {
 		return err
 	}
 	if !exists {
+		command := prof.Startup.Command
+		if p.command != nil {
+			if command, err = p.command(prof); err != nil {
+				return fmt.Errorf("agent %q: %w", prof.Name, err)
+			}
+		}
 		var env []string
 		if p.env != nil {
 			env = p.env(prof.Name)
 		}
-		if err := p.term.NewSession(ctx, prof.Name, prof.Workdir, prof.Startup.Command, env); err != nil {
+		if err := p.term.NewSession(ctx, prof.Name, prof.Workdir, command, env); err != nil {
 			return err
 		}
 	}

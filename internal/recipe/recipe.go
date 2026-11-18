@@ -100,6 +100,7 @@ func (r Recipe) Instantiate(name, workdir string, locate Locator) (core.Profile,
 	// reference may point back into it.
 	p.Tags = slices.Clone(r.Profile.Tags)
 	p.Levels = maps.Clone(r.Profile.Levels)
+	p.Inherit = slices.Clone(r.Profile.Inherit)
 	p.Name = name
 	p.Workdir = workdir
 

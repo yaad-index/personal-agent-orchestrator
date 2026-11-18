@@ -161,7 +161,7 @@ func TestTheOperatorOverMCPReachesATemporaryAgentWithTheOperatorsName(t *testing
 
 func TestReservedNamesAreNotAgentNames(t *testing.T) {
 	for _, name := range core.ReservedNames {
-		err := config.ValidateProfile(core.Profile{Name: name, Backend: "b", Startup: core.Startup{Command: "c", ReadyPattern: "r", ReadyTimeout: 1}, Transcript: core.Transcript{Format: "f", Path: "p"}})
+		err := config.ValidateProfile(core.Profile{Name: name, Backend: "claude-code", Startup: core.Startup{Command: "c", ReadyPattern: "r", ReadyTimeout: 1}, Transcript: core.Transcript{Format: "f", Path: "p"}})
 		require.Error(t, err, name)
 	}
 }

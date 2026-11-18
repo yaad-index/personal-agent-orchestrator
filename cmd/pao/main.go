@@ -16,27 +16,25 @@ import (
 
 // CLI is the root command tree.
 type CLI struct {
-	Version      VersionCmd      `cmd:"" help:"Print the build version."`
-	Config       ConfigCmd       `cmd:"" help:"Inspect pao configuration."`
-	Run          RunCmd          `cmd:"" help:"Run the node daemon."`
-	Chat         ChatCmd         `cmd:"" help:"Talk to agents through the node's local channel."`
-	Mesh         MeshCmd         `cmd:"" help:"This node's place in a mesh: its key and the nodes it trusts."`
-	Recipes      RecipesCmd      `cmd:"" help:"Recipes that temporary agents are spawned from."`
-	Spawn        SpawnCmd        `cmd:"" help:"Start a temporary agent from a recipe."`
-	Kill         KillCmd         `cmd:"" help:"Tear a temporary agent down, harvesting its outputs first."`
-	Agents       AgentsCmd       `cmd:"" help:"List the temporary agents and their status flags."`
-	Stream       StreamCmd       `cmd:"" help:"Bind an agent's output to a channel, or clear the binding."`
-	Watch        WatchCmd        `cmd:"" help:"Follow an agent's output on demand, here or on another node."`
-	View         ViewCmd         `cmd:"" help:"Pause, resume or backtrack the view of an agent's output."`
-	Agent        AgentCmd        `cmd:"" help:"Start, stop or restart a configured agent."`
-	Access       AccessCmd       `cmd:"" help:"The access matrix: which agents each subject may reach."`
-	Identity     IdentityCmd     `cmd:"" help:"Human subjects and the sender ids bound to them."`
-	Channel      ChannelCmd      `cmd:"" help:"The node's chat channels and their default agents."`
-	Inbound      InboundCmd      `cmd:"" help:"Inbounds the node received but did not act on."`
-	Harvests     HarvestsCmd     `cmd:"" help:"Outputs harvested from killed temporary agents."`
-	Hook         HookCmd         `cmd:"" help:"The backend's pre-tool-call hook: ask the node's gate about an action."`
-	HookSettings HookSettingsCmd `cmd:"" name:"hook-settings" help:"Print the backend settings JSON that installs the hook."`
-	McpConfig    McpConfigCmd    `cmd:"" name:"mcp-config" help:"Print the backend MCP configuration that points an agent at its node."`
+	Version  VersionCmd  `cmd:"" help:"Print the build version."`
+	Config   ConfigCmd   `cmd:"" help:"Inspect pao configuration."`
+	Run      RunCmd      `cmd:"" help:"Run the node daemon."`
+	Chat     ChatCmd     `cmd:"" help:"Talk to agents through the node's local channel."`
+	Mesh     MeshCmd     `cmd:"" help:"This node's place in a mesh: its key and the nodes it trusts."`
+	Recipes  RecipesCmd  `cmd:"" help:"Recipes that temporary agents are spawned from."`
+	Spawn    SpawnCmd    `cmd:"" help:"Start a temporary agent from a recipe."`
+	Kill     KillCmd     `cmd:"" help:"Tear a temporary agent down, harvesting its outputs first."`
+	Agents   AgentsCmd   `cmd:"" help:"List the temporary agents and their status flags."`
+	Stream   StreamCmd   `cmd:"" help:"Bind an agent's output to a channel, or clear the binding."`
+	Watch    WatchCmd    `cmd:"" help:"Follow an agent's output on demand, here or on another node."`
+	View     ViewCmd     `cmd:"" help:"Pause, resume or backtrack the view of an agent's output."`
+	Agent    AgentCmd    `cmd:"" help:"Start, stop or restart a configured agent."`
+	Access   AccessCmd   `cmd:"" help:"The access matrix: which agents each subject may reach."`
+	Identity IdentityCmd `cmd:"" help:"Human subjects and the sender ids bound to them."`
+	Channel  ChannelCmd  `cmd:"" help:"The node's chat channels and their default agents."`
+	Inbound  InboundCmd  `cmd:"" help:"Inbounds the node received but did not act on."`
+	Harvests HarvestsCmd `cmd:"" help:"Outputs harvested from killed temporary agents."`
+	Hook     HookCmd     `cmd:"" help:"The backend's pre-tool-call hook: ask the node's gate about an action."`
 }
 
 // ConfigCmd groups the configuration commands.

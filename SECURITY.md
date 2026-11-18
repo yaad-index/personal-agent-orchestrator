@@ -33,6 +33,23 @@ described later: reads are not asked.
 - **Agent isolation is cooperative.** Nothing in pao stops one agent reading
   another's directory or environment if the operating system lets it.
 
+## What an agent loads
+
+A coding-agent backend loads context from the environment of the user it runs
+as: instruction files in the home directory and above its working directory,
+the user's MCP servers and account connectors, skills, settings and the
+backend's own memory. That can carry the instructions, tool endpoints and
+connected accounts of whoever runs the node into an agent that others talk to.
+So pao starts every agent without them (ADR-0025): an agent loads its profile's
+working directory, the MCP configuration pao gives it and pao's gate hook. A
+profile opens a part of the user's environment by naming it under `inherit`
+(`instructions`, `mcp`, `skills`, `settings`, `memory`). The backend options
+that do this belong to pao: a profile that sets them itself is refused, and so
+is a profile on a backend pao cannot isolate in a way the profile needs.
+
+This is about what the backend is told to load. It does not stop an agent that
+may read files from reading the same files on purpose; that is the limit above.
+
 ## What is the boundary
 
 The approval gate is the control on what an agent may do. A tool call the

@@ -54,7 +54,7 @@ const transcript = "transcript:\n  format: claude-code\n  path: /tmp/t\n"
 // it, so a case cannot pass by failing for some other reason.
 func TestLoadLevelsOverrideDefaults(t *testing.T) {
 	path := setup(t, map[string]string{
-		"a.yaml": "name: a\nbackend: b\n" + startup + "levels:\n  reasoning: 1\n",
+		"a.yaml": "name: a\nbackend: claude-code\n" + startup + "levels:\n  reasoning: 1\n",
 	})
 
 	cfg, err := Load(path)
@@ -70,35 +70,40 @@ func TestLoadRejects(t *testing.T) {
 		profiles map[string]string
 		want     string
 	}{
-		"unknown key":     {map[string]string{"a.yaml": "name: a\nbackend: b\nnope: 1\n" + startup}, "nope"},
-		"missing name":    {map[string]string{"a.yaml": "backend: b\n" + startup}, "name"},
-		"bad name":        {map[string]string{"a.yaml": "name: Bad Name\nbackend: b\n" + startup}, "name"},
+		"unknown key":     {map[string]string{"a.yaml": "name: a\nbackend: claude-code\nnope: 1\n" + startup}, "nope"},
+		"missing name":    {map[string]string{"a.yaml": "backend: claude-code\n" + startup}, "name"},
+		"bad name":        {map[string]string{"a.yaml": "name: Bad Name\nbackend: claude-code\n" + startup}, "name"},
 		"missing backend": {map[string]string{"a.yaml": "name: a\n" + startup}, "backend is required"},
-		"bad tag":         {map[string]string{"a.yaml": "name: a\nbackend: b\ntags: [\"X Y\"]\n" + startup}, "tag"},
+		"bad tag":         {map[string]string{"a.yaml": "name: a\nbackend: claude-code\ntags: [\"X Y\"]\n" + startup}, "tag"},
 		"duplicate name": {map[string]string{
-			"a.yaml": "name: a\nbackend: b\n" + startup,
-			"b.yaml": "name: a\nbackend: b\n" + startup,
+			"a.yaml": "name: a\nbackend: claude-code\n" + startup,
+			"b.yaml": "name: a\nbackend: claude-code\n" + startup,
 		}, "already defined"},
 		"no startup command": {map[string]string{
-			"a.yaml": "name: a\nbackend: b\nstartup:\n  ready_pattern: r\n  ready_timeout: 1s\n",
+			"a.yaml": "name: a\nbackend: claude-code\nstartup:\n  ready_pattern: r\n  ready_timeout: 1s\n",
 		}, "startup.command"},
 		"no ready pattern": {map[string]string{
-			"a.yaml": "name: a\nbackend: b\nstartup:\n  command: c\n  ready_timeout: 1s\n",
+			"a.yaml": "name: a\nbackend: claude-code\nstartup:\n  command: c\n  ready_timeout: 1s\n",
 		}, "startup.ready_pattern is required"},
 		"invalid ready pattern": {map[string]string{
-			"a.yaml": "name: a\nbackend: b\nstartup:\n  command: c\n  ready_pattern: \"(\"\n  ready_timeout: 1s\n",
+			"a.yaml": "name: a\nbackend: claude-code\nstartup:\n  command: c\n  ready_pattern: \"(\"\n  ready_timeout: 1s\n",
 		}, "startup.ready_pattern"},
 		"no ready timeout": {map[string]string{
-			"a.yaml": "name: a\nbackend: b\nstartup:\n  command: c\n  ready_pattern: r\n" + transcript,
+			"a.yaml": "name: a\nbackend: claude-code\nstartup:\n  command: c\n  ready_pattern: r\n" + transcript,
 		}, "startup.ready_timeout"},
 		"no transcript format": {map[string]string{
-			"a.yaml": "name: a\nbackend: b\nstartup:\n  command: c\n  ready_pattern: r\n  ready_timeout: 1s\ntranscript:\n  path: /t\n",
+			"a.yaml": "name: a\nbackend: claude-code\nstartup:\n  command: c\n  ready_pattern: r\n  ready_timeout: 1s\ntranscript:\n  path: /t\n",
 		}, "transcript.format"},
 		"no transcript path": {map[string]string{
-			"a.yaml": "name: a\nbackend: b\nstartup:\n  command: c\n  ready_pattern: r\n  ready_timeout: 1s\ntranscript:\n  format: f\n",
+			"a.yaml": "name: a\nbackend: claude-code\nstartup:\n  command: c\n  ready_pattern: r\n  ready_timeout: 1s\ntranscript:\n  format: f\n",
 		}, "transcript.path"},
-		"unknown level kind": {map[string]string{"a.yaml": "name: a\nbackend: b\n" + startup + "levels:\n  gossip: 1\n"}, "unknown kind"},
-		"level below one":    {map[string]string{"a.yaml": "name: a\nbackend: b\n" + startup + "levels:\n  message: 0\n"}, "at least 1"},
+		"unknown level kind":     {map[string]string{"a.yaml": "name: a\nbackend: claude-code\n" + startup + "levels:\n  gossip: 1\n"}, "unknown kind"},
+		"level below one":        {map[string]string{"a.yaml": "name: a\nbackend: claude-code\n" + startup + "levels:\n  message: 0\n"}, "at least 1"},
+		"inherit not a category": {map[string]string{"a.yaml": "name: a\nbackend: claude-code\ninherit: [plugins]\n" + startup}, `"plugins" is not a category`},
+		"an option the adapter owns": {map[string]string{
+			"a.yaml": "name: a\nbackend: claude-code\nstartup:\n  command: claude --strict-mcp-config\n  ready_pattern: r\n  ready_timeout: 1s\n" + transcript,
+		}, "sets --strict-mcp-config, which the \"claude-code\" backend adapter sets itself"},
+		"a backend that cannot isolate": {map[string]string{"a.yaml": "name: a\nbackend: other\ninherit: [mcp]\n" + startup}, "cannot shut out instructions, skills, settings, memory"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -110,7 +115,7 @@ func TestLoadRejects(t *testing.T) {
 }
 
 func TestOrchestratorDefaultsAndResolution(t *testing.T) {
-	path := setup(t, map[string]string{"a.yaml": "name: a\nbackend: b\n" + startup})
+	path := setup(t, map[string]string{"a.yaml": "name: a\nbackend: claude-code\n" + startup})
 
 	cfg, err := Load(path)
 	require.NoError(t, err)
@@ -189,7 +194,7 @@ func TestLoadOrchestratorErrors(t *testing.T) {
 }
 
 func TestRecipesDirDefaultsAndResolution(t *testing.T) {
-	path := setup(t, map[string]string{"a.yaml": "name: a\nbackend: b\n" + startup})
+	path := setup(t, map[string]string{"a.yaml": "name: a\nbackend: claude-code\n" + startup})
 	cfg, err := Load(path)
 	require.NoError(t, err)
 	assert.Equal(t, filepath.Join(filepath.Dir(path), "state", "recipes"), cfg.Orchestrator.RecipesDir, "by default under the state dir")
@@ -209,7 +214,7 @@ func TestRecipesDirDefaultsAndResolution(t *testing.T) {
 func TestValidateProfileAndDecodeFileAreTheSameRulesAsLoad(t *testing.T) {
 	var p core.Profile
 	path := filepath.Join(t.TempDir(), "p.yaml")
-	write(t, path, "name: a\nbackend: b\n"+startup)
+	write(t, path, "name: a\nbackend: claude-code\n"+startup)
 	require.NoError(t, DecodeFile(path, &p))
 	assert.NoError(t, ValidateProfile(p))
 	p.Backend = ""
@@ -220,7 +225,7 @@ func TestValidateProfileAndDecodeFileAreTheSameRulesAsLoad(t *testing.T) {
 }
 
 func TestTempThresholdsDefaultAndValidate(t *testing.T) {
-	path := setup(t, map[string]string{"a.yaml": "name: a\nbackend: b\n" + startup})
+	path := setup(t, map[string]string{"a.yaml": "name: a\nbackend: claude-code\n" + startup})
 	cfg, err := Load(path)
 	require.NoError(t, err)
 	assert.Equal(t, DefaultUnusedAfter, cfg.Orchestrator.Temp.UnusedAfter)
@@ -240,7 +245,7 @@ func TestTempThresholdsDefaultAndValidate(t *testing.T) {
 
 func TestAProfileMayNotBeNamedLikePao(t *testing.T) {
 	for _, name := range core.ReservedNames {
-		_, err := Load(setup(t, map[string]string{"a.yaml": "name: " + name + "\nbackend: b\n" + startup}))
+		_, err := Load(setup(t, map[string]string{"a.yaml": "name: " + name + "\nbackend: claude-code\n" + startup}))
 		require.Error(t, err, name)
 		assert.ErrorContains(t, err, "reserved")
 	}
@@ -251,7 +256,7 @@ const meshFp2 = "sha256:22222222222222222222222222222222222222222222222222222222
 
 func meshSetup(t *testing.T, node, orch, doc string) string {
 	t.Helper()
-	path := setup(t, map[string]string{"a.yaml": "name: a\nbackend: b\n" + startup})
+	path := setup(t, map[string]string{"a.yaml": "name: a\nbackend: claude-code\n" + startup})
 	dir := filepath.Dir(path)
 	write(t, path, "node: "+node+"\nprofiles_dir: profiles\nstate_dir: state\ntoken_env: PAO_TOKEN\n"+orch)
 	if doc != "" {

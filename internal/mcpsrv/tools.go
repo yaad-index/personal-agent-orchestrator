@@ -75,8 +75,9 @@ const (
 	ActionKill         = "pao.kill"
 )
 
-// DefaultServerName is the name a backend gives pao's MCP server unless told
-// otherwise (pao mcp-config --name).
+// DefaultServerName is the name a backend gives pao's MCP server: the backend
+// adapter configures it under this name, and the gate's rules for pao's tools
+// are written against it.
 const DefaultServerName = "pao"
 
 // ToolNames are the names of pao's own tools.

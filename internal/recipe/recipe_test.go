@@ -14,7 +14,7 @@ import (
 const validRecipe = `name: researcher
 description: reads and reports
 profile:
-  backend: harness
+  backend: claude-code
   tags: [research]
   startup:
     command: "run-agent --name {name} --tools {tools} --dir {workdir}"
@@ -81,6 +81,16 @@ func TestInstantiateDoesNotShareTagsWithTheRecipe(t *testing.T) {
 	require.NoError(t, err)
 	p.Tags[0] = "mutated"
 	assert.Equal(t, []string{"research"}, r.Profile.Tags)
+}
+
+func TestInstantiateCarriesTheInheritListWithoutSharingIt(t *testing.T) {
+	r, err := parse(t, strings.Replace(validRecipe, "  tags: [research]\n", "  tags: [research]\n  inherit: [mcp, memory]\n", 1))
+	require.NoError(t, err)
+	p, err := r.Instantiate("a", "/w", locate)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"mcp", "memory"}, p.Inherit)
+	p.Inherit[0] = "mutated"
+	assert.Equal(t, []string{"mcp", "memory"}, r.Profile.Inherit)
 }
 
 func sh(t *testing.T, command string) string {
@@ -162,12 +172,12 @@ func TestRecipeValidationAtLoad(t *testing.T) {
 	cases := map[string]string{
 		"bad name":            strings.Replace(validRecipe, "name: researcher", "name: Researcher", 1),
 		"name vs file":        strings.Replace(validRecipe, "name: researcher", "name: other", 1),
-		"profile name set":    strings.Replace(validRecipe, "  backend: harness", "  name: fixed\n  backend: harness", 1),
-		"profile workdir":     strings.Replace(validRecipe, "  backend: harness", "  workdir: /tmp/x\n  backend: harness", 1),
+		"profile name set":    strings.Replace(validRecipe, "  backend: claude-code", "  name: fixed\n  backend: claude-code", 1),
+		"profile workdir":     strings.Replace(validRecipe, "  backend: claude-code", "  workdir: /tmp/x\n  backend: claude-code", 1),
 		"unknown key":         validRecipe + "extra: 1\n",
 		"unknown field":       strings.Replace(validRecipe, "description:", "descr1ption:", 1),
 		"unknown placeholder": strings.Replace(validRecipe, "{workdir}", "{workdri}", 1),
-		"no backend":          strings.Replace(validRecipe, "  backend: harness\n", "", 1),
+		"no backend":          strings.Replace(validRecipe, "  backend: claude-code\n", "", 1),
 		"no source":           strings.Replace(validRecipe, "workdir:\n  files:\n    README.md: hello\n", "", 1),
 		"two sources":         strings.Replace(validRecipe, "workdir:\n", "workdir:\n  git:\n    url: https://example.com/x.git\n", 1),
 		"bad file path":       strings.Replace(validRecipe, "README.md: hello", "../escape: hello", 1),

@@ -35,6 +35,9 @@ type Profile struct {
 	// Levels overrides DefaultLevels per kind (ADR-0008 point 2). Kinds it
 	// leaves out keep their default level.
 	Levels Levels `yaml:"levels"`
+	// Inherit names the categories of the node user's own environment the agent
+	// loads (ADR-0025 point 3). With none, it loads only its profile's and pao's.
+	Inherit []string `yaml:"inherit"`
 }
 
 // Transcript locates and names the format of a backend's transcript.

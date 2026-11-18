@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -39,7 +40,8 @@ const oldSession = "old-session"
 // fakeAgent is a stand-in backend: a shell loop that, for every line pasted into
 // its terminal, writes a human-side record and an assistant record to its
 // transcript file, the way a real backend would.
-const fakeAgent = `echo 'READY>'
+const fakeAgent = `printf '%s\n' "$@" > "$TRANSCRIPT.args"
+echo 'READY>'
 [ -n "$REPORT_ENV" ] && printf '{"type":"assistant","uuid":"env","message":{"role":"assistant","content":[{"type":"text","text":"agent=%s gate=%s"}]}}\n' "$PAO_AGENT" "$PAO_GATE_SOCKET" >> "$TRANSCRIPT"
 [ -n "$REPORT_TOKEN" ] && printf '{"type":"assistant","uuid":"tok","message":{"role":"assistant","content":[{"type":"text","text":"token=[%s]"}]}}\n' "$PAO_TEST_NODE_TOKEN" >> "$TRANSCRIPT"
 n=0
@@ -112,7 +114,7 @@ func startNodeWith(t *testing.T, agents map[string]string, adjust func(dir, scri
 			cmd = fmt.Sprintf("env REPORT_ENV=1 TRANSCRIPT=%s sh %s", file, scriptPath)
 		}
 		cfg.Profiles = append(cfg.Profiles, core.Profile{
-			Name: name, Tags: []string{"team"}, Backend: "fake", Workdir: dir,
+			Name: name, Tags: []string{"team"}, Backend: "claude-code", Workdir: dir,
 			Startup:    core.Startup{Command: cmd, ReadyPattern: `READY>`, ReadyTimeout: 700 * time.Millisecond},
 			Transcript: core.Transcript{Format: "claude-code", Path: tpath},
 		})
@@ -300,6 +302,55 @@ func TestTheAgentIsStartedKnowingWhoItIsAndWhereTheGateIs(t *testing.T) {
 	// The fake agent reports its environment first, then echoes.
 	got := n.next(t)
 	assert.Equal(t, "agent=a gate="+n.gateSock, got.Text)
+}
+
+func TestTheBackendAdapterStartsTheAgentWithOnlyPaosContext(t *testing.T) {
+	var transcripts string
+	n := startNodeWith(t, map[string]string{"a": ""}, func(dir, _ string, _ *config.Config) {
+		transcripts = filepath.Join(dir, "transcripts")
+	})
+	_, err := n.client.Post(context.Background(), "human", "hi", "name", "a")
+	require.NoError(t, err)
+	n.next(t)
+
+	b, err := os.ReadFile(filepath.Join(transcripts, "a.jsonl.args"))
+	require.NoError(t, err)
+	args := strings.Split(strings.TrimSuffix(string(b), "\n"), "\n")
+	for _, opt := range []string{"--strict-mcp-config", "--disable-slash-commands"} {
+		assert.Contains(t, args, opt)
+	}
+	value := func(opt string) string {
+		i := slices.Index(args, opt)
+		require.GreaterOrEqual(t, i, 0, "no %s", opt)
+		require.Less(t, i+1, len(args), "%s has no value", opt)
+		return args[i+1]
+	}
+	assert.Equal(t, "project,local", value("--setting-sources"))
+	assert.Contains(t, value("--mcp-config"), `"pao":`, "pao's MCP server, under the name the gate's rules use")
+
+	var settings struct {
+		Hooks struct {
+			PreToolUse []struct {
+				Hooks []struct {
+					Command string `json:"command"`
+					Timeout int    `json:"timeout"`
+				} `json:"hooks"`
+			} `json:"PreToolUse"`
+		} `json:"hooks"`
+		Excludes   []string `json:"claudeMdExcludes"`
+		AutoMemory *bool    `json:"autoMemoryEnabled"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(value("--settings")), &settings))
+	require.Len(t, settings.Hooks.PreToolUse, 1)
+	require.Len(t, settings.Hooks.PreToolUse[0].Hooks, 1)
+	h := settings.Hooks.PreToolUse[0].Hooks[0]
+	exe, err := os.Executable()
+	require.NoError(t, err)
+	assert.Equal(t, "'"+exe+"' hook", h.Command, "this program is the gate hook")
+	assert.Equal(t, 65, h.Timeout, "the gate's ask timeout (5s) and the margin")
+	assert.NotEmpty(t, settings.Excludes)
+	require.NotNil(t, settings.AutoMemory)
+	assert.False(t, *settings.AutoMemory)
 }
 
 // askGate is what the backend's hook does: ask the gate about an action and
