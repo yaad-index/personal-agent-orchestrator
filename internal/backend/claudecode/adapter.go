@@ -28,6 +28,14 @@ const Name = "claude-code"
 //     account;
 //   - memory: autoMemoryEnabled false.
 //
+// Claude Code reads the user's own MCP servers (in the user's configuration
+// file) and the user's own skills through the same setting source as the
+// user's settings. So inheriting mcp alone opens the account's connectors, and
+// inheriting skills alone the skills synced from the account; the user's own
+// MCP servers and skills open only when settings is inherited too. Isolating
+// settings shuts them out with it: more is shut out than the profile asked,
+// never less.
+//
 // It always gives pao's MCP configuration and pao's gate hook. The hook is
 // given through --settings, which Claude Code applies whatever the setting
 // sources, so shutting out the user's settings never removes the gate.

@@ -30,47 +30,53 @@ type started struct {
 	MCPServers []struct {
 		Name string `json:"name"`
 	} `json:"mcp_servers"`
-	Skills  []string `json:"skills"`
-	Plugins []struct {
-		Path string `json:"path"`
-	} `json:"plugins"`
-	MemoryPaths map[string]string `json:"memory_paths"`
-	answer      string
+	Skills         []string          `json:"skills"`
+	PermissionMode string            `json:"permissionMode"`
+	MemoryPaths    map[string]string `json:"memory_paths"`
+	answer         string
 }
 
-// reached is which categories a run reached.
-func (s started) reached(canary string) map[backend.Category]bool {
-	var mcp, plugins bool
-	for _, srv := range s.MCPServers {
-		if srv.Name != "pao" {
-			mcp = true
-		}
-	}
-	// A plugin built into Claude Code is the backend's own, not the user's.
-	for _, p := range s.Plugins {
-		if p.Path != "builtin" {
-			plugins = true
-		}
-	}
+// planted is what the test puts in each category of a user environment it
+// makes for the run, so every category holds something to reach.
+type planted struct {
+	canary string // the word in the instruction files
+	mcp    string // a user-scope MCP server
+	skill  string // a user skill
+	mode   string // the permission mode the user's settings set
+}
+
+// reached is which categories a run reached of what was planted.
+func (s started) reached(p planted) map[backend.Category]bool {
 	return map[backend.Category]bool{
-		backend.Instructions: strings.Contains(s.answer, canary),
-		backend.MCP:          mcp,
-		backend.Skills:       len(s.Skills) > 0,
-		backend.Settings:     plugins,
+		backend.Instructions: strings.Contains(s.answer, p.canary),
+		backend.MCP:          slices.ContainsFunc(s.MCPServers, func(m struct{ Name string `json:"name"` }) bool { return m.Name == p.mcp }),
+		backend.Skills:       slices.Contains(s.Skills, p.skill),
+		backend.Settings:     s.PermissionMode == p.mode,
 		backend.Memory:       s.MemoryPaths["auto"] != "",
 	}
 }
 
+// credentialVars are the variables the CLI takes a credential from. A hermetic
+// user environment has no login of its own, so the model is asked only when one
+// of them is set.
+var credentialVars = []string{"CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"}
+
 // TestContractIsolation starts the real Claude Code CLI with the adapter's
-// command (ADR-0025 point 5). The node user's own environment is the one under
-// test: an instruction file is planted in a directory above the working
-// directory, and the user's own MCP servers, skills, settings (seen by the
-// plugins they enable, other than Claude Code's built-in ones) and memory are whatever the user has. A run that
-// inherits everything is the control: a category it does not reach is one this
-// environment holds nothing in, and is reported and not judged. Then an agent
-// that inherits nothing must reach none of them, and one that inherits one
-// category must reach exactly that one. It spends a short model call per run,
-// so it is opt-in:
+// command and environment (ADR-0025 point 5), in a user environment the test
+// makes: a home directory of its own that holds something in every category.
+// It holds an instruction file at user level and one above the working
+// directory, a user-scope MCP server, a user skill, a user setting (a
+// permission mode) and the backend's own memory. The operator's own
+// environment and login play no part, so the result does not depend on them.
+//
+// A run that inherits everything must reach every category. A run that
+// inherits nothing must reach none, and one that inherits some must reach
+// exactly what want says: Claude Code reads the user's own MCP servers and
+// skills along with the user's settings, so those open only with settings
+// inherited too (see Adapter). Instructions are judged by the model's answer, so
+// only when a credential is given in CLAUDE_CODE_OAUTH_TOKEN or
+// ANTHROPIC_API_KEY. The other categories are read from the CLI's first event,
+// which it writes before it needs a login. It is opt-in:
 //
 //	go test -tags contract -run TestContractIsolation ./internal/backend/claudecode
 func TestContractIsolation(t *testing.T) {
@@ -78,42 +84,73 @@ func TestContractIsolation(t *testing.T) {
 	if err != nil {
 		t.Skip("claude CLI not installed")
 	}
-	home, err := os.UserHomeDir()
-	require.NoError(t, err)
+	var credential []string
+	for _, v := range credentialVars {
+		if val := os.Getenv(v); val != "" {
+			credential = append(credential, v+"="+val)
+		}
+	}
+	judged := backend.Categories
+	if len(credential) == 0 {
+		judged = slices.DeleteFunc(slices.Clone(judged), func(c backend.Category) bool { return c == backend.Instructions })
+		t.Logf("no credential in %s: instructions are not judged", strings.Join(credentialVars, " or "))
+	}
 
-	// Claude Code reads the instruction files above a working directory only
-	// within the user's home, so the planted one is there.
-	root, err := os.MkdirTemp(home, ".pao-contract-")
+	home, err := os.MkdirTemp("", "pao-contract-")
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = os.RemoveAll(root) })
-	wd := filepath.Join(root, "agent")
-	require.NoError(t, os.Mkdir(wd, 0o700))
-	t.Cleanup(func() { _ = os.RemoveAll(TranscriptDir(home, wd)) })
+	t.Cleanup(func() { _ = os.RemoveAll(home) })
 	b := make([]byte, 6)
 	_, err = rand.Read(b)
 	require.NoError(t, err)
-	canary := "canary" + hex.EncodeToString(b)
-	require.NoError(t, os.WriteFile(filepath.Join(root, "CLAUDE.md"),
-		[]byte("The canary word is "+canary+". When asked for the canary word, answer with it.\n"), 0o600))
+	word := hex.EncodeToString(b)
+	p := planted{canary: "canary" + word, mcp: "canarymcp" + word, skill: "canaryskill" + word, mode: "acceptEdits"}
+
+	write := func(path, content string) {
+		t.Helper()
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+		require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+	}
+	instruction := "The canary word is " + p.canary + ". When asked for the canary word, answer with it.\n"
+	write(filepath.Join(home, ".claude", "CLAUDE.md"), instruction)
+	root := filepath.Join(home, "agents")
+	write(filepath.Join(root, "CLAUDE.md"), instruction)
+	write(filepath.Join(home, ".claude.json"), `{"mcpServers":{"`+p.mcp+`":{"type":"stdio","command":"true"}}}`)
+	write(filepath.Join(home, ".claude", "skills", p.skill, "SKILL.md"), "---\nname: "+p.skill+"\ndescription: A test skill.\n---\nSay hello.\n")
+	write(filepath.Join(home, ".claude", "settings.json"), `{"permissions":{"defaultMode":"`+p.mode+`"}}`)
+	wd := filepath.Join(root, "agent")
+	require.NoError(t, os.Mkdir(wd, 0o700))
+
+	// The CLI sees the made home and nothing of the caller's own CLI or account
+	// configuration, other than the credential.
+	var env []string
+	for _, kv := range os.Environ() {
+		k, _, _ := strings.Cut(kv, "=")
+		if k == "HOME" || strings.HasPrefix(k, "CLAUDE") || strings.HasPrefix(k, "ANTHROPIC") || strings.HasPrefix(k, "XDG_") {
+			continue
+		}
+		env = append(env, kv)
+	}
+	env = append(append(env, "HOME="+home), credential...)
 
 	run := func(t *testing.T, inherit ...string) started {
 		t.Helper()
-		p := core.Profile{Name: "contract", Backend: Name, Workdir: wd, Inherit: inherit, Startup: core.Startup{
+		prof := core.Profile{Name: "contract", Backend: Name, Workdir: wd, Inherit: inherit, Startup: core.Startup{
 			Command: shellQuote(bin) + " -p --no-session-persistence --output-format stream-json --verbose " +
 				shellQuote("What is the canary word? Reply with only that word, or NONE if you were not given one."),
 		}}
-		require.NoError(t, backend.Table{Name: Adapter{}}.Check(p))
-		start, err := Adapter{}.Command(p, backend.Launch{MCPServer: "pao", Hook: "true", HookTimeout: 30 * time.Second, Home: home})
+		require.NoError(t, backend.Table{Name: Adapter{}}.Check(prof))
+		start, err := Adapter{}.Command(prof, backend.Launch{MCPServer: "pao", Hook: "true", HookTimeout: 30 * time.Second, Home: home})
 		require.NoError(t, err)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 		defer cancel()
 		c := exec.CommandContext(ctx, "sh", "-c", start.Command)
-		c.Env = append(os.Environ(), start.Env...)
+		c.Env = append(slices.Clone(env), start.Env...)
 		c.Dir = wd
-		c.Stdin = nil
 		out, err := c.Output()
-		require.NoError(t, err, "claude failed: %s", out)
+		if len(credential) > 0 {
+			require.NoError(t, err, "claude failed: %s", out)
+		}
 
 		var s started
 		var sawInit bool
@@ -136,36 +173,47 @@ func TestContractIsolation(t *testing.T) {
 				s.answer = e.Result
 			}
 		}
-		require.True(t, sawInit, "no init event: the stream format changed")
+		require.True(t, sawInit, "no init event: the stream format changed (%v)", err)
 		return s
 	}
 
-	control := run(t, names(backend.Categories)...).reached(canary)
-	require.True(t, control[backend.Instructions], "the control run did not read the planted instruction file")
-	var held []backend.Category
-	for _, c := range backend.Categories {
-		if control[c] {
-			held = append(held, c)
-		} else {
-			t.Logf("this user environment holds nothing in %s; it is not judged", c)
-		}
+	control := run(t, names(backend.Categories)...).reached(p)
+	for _, c := range judged {
+		require.True(t, control[c], "inheriting everything did not reach the planted %s: the signal no longer works", c)
 	}
 
-	t.Run("inherits nothing", func(t *testing.T) {
-		got := run(t).reached(canary)
-		for _, c := range held {
-			assert.False(t, got[c], "reached %s", c)
+	cases := [][]string{{}}
+	for _, c := range judged {
+		cases = append(cases, []string{string(c)})
+	}
+	cases = append(cases, []string{"mcp", "settings"}, []string{"skills", "settings"})
+	for _, inherit := range cases {
+		name := "inherits nothing"
+		if len(inherit) > 0 {
+			name = "inherits " + strings.Join(inherit, "+")
 		}
-	})
-	for _, c := range held {
-		t.Run("inherits "+string(c), func(t *testing.T) {
-			got := run(t, string(c)).reached(canary)
-			for _, o := range held {
-				assert.Equal(t, o == c, got[o], "reached %s", o)
+		t.Run(name, func(t *testing.T) {
+			got := run(t, inherit...).reached(p)
+			w := want(inherit)
+			for _, o := range judged {
+				assert.Equal(t, w[o], got[o], "reached %s", o)
 			}
 		})
 	}
-	assert.True(t, slices.Contains(held, backend.Instructions))
+}
+
+// want is what a run that inherits these categories reaches of what was
+// planted: each category it names, except that the user's own MCP servers and
+// skills come with the user's settings.
+func want(inherit []string) map[backend.Category]bool {
+	has := func(c backend.Category) bool { return slices.Contains(inherit, string(c)) }
+	out := map[backend.Category]bool{}
+	for _, c := range backend.Categories {
+		out[c] = has(c)
+	}
+	out[backend.MCP] = has(backend.MCP) && has(backend.Settings)
+	out[backend.Skills] = has(backend.Skills) && has(backend.Settings)
+	return out
 }
 
 func names(cs []backend.Category) []string {

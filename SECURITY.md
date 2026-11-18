@@ -47,6 +47,13 @@ profile opens a part of the user's environment by naming it under `inherit`
 that do this belong to pao: a profile that sets them itself is refused, and so
 is a profile on a backend pao cannot isolate in a way the profile needs.
 
+A backend may keep two categories in one place, so that opening one needs the
+other. Claude Code reads the user's own MCP servers and skills along with the
+user's settings: with `mcp` or `skills` inherited and `settings` not, the
+account's connectors (or synced skills) open, and the user's own servers and
+skills stay shut out. Such a coupling shuts out more than a profile asked,
+never less.
+
 This is about what the backend is told to load. It does not stop an agent that
 may read files from reading the same files on purpose; that is the limit above.
 
