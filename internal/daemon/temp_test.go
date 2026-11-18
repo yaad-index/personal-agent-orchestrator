@@ -16,6 +16,7 @@ import (
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/local"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/config"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/mcpsrv"
 )
 
 // tempRecipe is a recipe whose agent is the fake backend, writing its
@@ -293,4 +294,41 @@ func TestATempAgentSpeaksOnTheChannelItWasBoundTo(t *testing.T) {
 	require.NoError(t, err)
 	got := n.next(t)
 	assert.Equal(t, "tmp-a", got.Sender, "on the channel it was bound to")
+}
+
+func TestAnOperatorSpawnCarriesExtraTagsItHoldsAndNoOthers(t *testing.T) {
+	n := startTempNode(t, map[string]string{"fake": goodRecipe("fake")}, config.Temp{})
+	ctx := context.Background()
+
+	_, err := n.client.Spawn(ctx, "fake", "tmp-n", "", "", "night")
+	assert.ErrorContains(t, err, "404", "a tag the operator does not hold is refused as not found")
+	assert.False(t, tmuxHasSession(t, n, "tmp-n"))
+
+	_, err = n.client.Spawn(ctx, "fake", "tmp-t", "", "", "team")
+	require.NoError(t, err)
+	var tags []string
+	for _, a := range mcpCall[struct{ Agents []mcpsrv.AgentInfo }](t, mcpSession(t, n, token), "list_agents", nil).Agents {
+		if a.Name == "tmp-t" {
+			tags = a.Tags
+		}
+	}
+	assert.Equal(t, []string{"temp", "team"}, tags)
+
+	// Over MCP, the same.
+	op := mcpSession(t, n, token)
+	_ = mcpCall[struct{ Name string }](t, op, "spawn_agent", map[string]any{"recipe": "fake", "name": "tmp-m", "tags": []string{"team"}})
+	var mtags []string
+	for _, a := range mcpCall[struct{ Agents []mcpsrv.AgentInfo }](t, op, "list_agents", nil).Agents {
+		if a.Name == "tmp-m" {
+			mtags = a.Tags
+		}
+	}
+	assert.Equal(t, []string{"temp", "team"}, mtags)
+
+	// The tag is real reach: without its recipe's tag, the operator still
+	// reaches the agent by the one it added.
+	_, err = n.client.RemoveGrant(ctx, opTemp)
+	require.NoError(t, err)
+	_, err = n.client.Kill(ctx, "tmp-t")
+	require.NoError(t, err)
 }

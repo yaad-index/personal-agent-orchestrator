@@ -87,8 +87,8 @@ func (o mcpOps) Recipes() ([]mcpsrv.RecipeInfo, error) {
 	return out, nil
 }
 
-func (o mcpOps) Spawn(ctx context.Context, who access.Subject, rec, name, channel string) (string, error) {
-	p, err := o.mgr.Spawn(ctx, temp.SpawnRequest{Recipe: rec, Name: name, Channel: channel, Requester: who})
+func (o mcpOps) Spawn(ctx context.Context, who access.Subject, rec, name, channel string, tags []string) (string, error) {
+	p, err := o.mgr.Spawn(ctx, temp.SpawnRequest{Recipe: rec, Name: name, Channel: channel, Tags: tags, Requester: who})
 	return p.Name, err
 }
 

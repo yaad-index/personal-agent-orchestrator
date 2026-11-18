@@ -57,6 +57,8 @@ type SpawnRequestJSON struct {
 	Channel string `json:"channel"`
 	// Node is the node to start it on; empty is this node.
 	Node string `json:"node,omitempty"`
+	// Tags are tags for the agent besides its recipe's.
+	Tags []string `json:"tags,omitempty"`
 }
 
 // SpawnJSON is the answer to a spawn.
@@ -69,7 +71,7 @@ type SpawnJSON struct {
 type TempAPI interface {
 	// Spawn returns the agent's name; on ErrNotReady it still returns the name.
 	// node is the node to start it on; empty is this node.
-	Spawn(ctx context.Context, recipe, name, channel, node string) (string, error)
+	Spawn(ctx context.Context, recipe, name, channel, node string, tags []string) (string, error)
 	Kill(ctx context.Context, name string) (KillJSON, error)
 	Agents() []AgentJSON
 	// Harvests lists those held on node; empty is this node.
@@ -121,7 +123,7 @@ func (s *Server) spawn(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "a spawn request names a recipe")
 		return
 	}
-	name, err := s.temp.Spawn(r.Context(), req.Recipe, req.Name, req.Channel, req.Node)
+	name, err := s.temp.Spawn(r.Context(), req.Recipe, req.Name, req.Channel, req.Node, req.Tags)
 	if err != nil {
 		if name != "" {
 			// Created but not ready: the caller needs the name to inspect or kill it.
@@ -229,8 +231,8 @@ func (c *Client) do(ctx context.Context, method, path string, body any, want int
 // Spawn asks the node for a temporary agent and returns its name. When the
 // agent was created but did not become ready, the name comes back with the
 // error, so it can be inspected or killed.
-func (c *Client) Spawn(ctx context.Context, recipe, name, channel, node string) (string, error) {
-	b, err := json.Marshal(SpawnRequestJSON{Recipe: recipe, Name: name, Channel: channel, Node: node})
+func (c *Client) Spawn(ctx context.Context, recipe, name, channel, node string, tags ...string) (string, error) {
+	b, err := json.Marshal(SpawnRequestJSON{Recipe: recipe, Name: name, Channel: channel, Node: node, Tags: tags})
 	if err != nil {
 		return "", err
 	}

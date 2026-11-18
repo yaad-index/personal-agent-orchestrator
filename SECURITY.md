@@ -44,7 +44,9 @@ agents: an agent reaches another agent only through a grant the operator made
 from upstream MCP servers are resources of the same matrix: a subject is offered,
 and can call, only the ones a grant reaches, one out of reach is answered as one
 that does not exist, and an agent's call is judged by the gate before pao makes
-it. The operator is behind
+it. A tag widens who reaches an agent, so a temporary agent can be given tags
+besides its recipe's at spawn only when the spawner's own tag scopes hold them.
+The operator is behind
 grants too: a new node's operator reaches no agent until it grants itself in
 (`pao access grant operator --tag <tag>`), though administering the grants, the
 subjects and the channels never needs a grant. A node that ran before the access

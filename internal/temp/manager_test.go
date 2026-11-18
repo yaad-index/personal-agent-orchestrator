@@ -760,3 +760,94 @@ func TestNoReportLeavesTheReportToTheCaller(t *testing.T) {
 	assert.NotEmpty(t, res.Harvest.ID, "the result still carries the harvest")
 	assert.Empty(t, *e.reports, "but nothing was posted to this node's operator")
 }
+
+// grantsOf is a fixed grant list for the access matrix.
+type grantsOf []access.Grant
+
+func (g grantsOf) Of(s access.Subject) []access.Grant {
+	var out []access.Grant
+	for _, x := range g {
+		if x.Subject == s {
+			out = append(out, x)
+		}
+	}
+	return out
+}
+
+func agentTag(who access.Subject, tag string) access.Grant {
+	return access.Grant{Subject: who, Kind: access.ResourceAgent, Tag: tag}
+}
+
+func TestASpawnCarriesTheRecipesTagsAndTheExtraOnesEachOnce(t *testing.T) {
+	e := newEnv(t, map[string]string{"researcher": recipeYAML})
+	e.m.Auth = access.Matrix{Grants: grantsOf{agentTag(access.Operator, "research"), agentTag(access.Operator, "night")}}
+	p, err := e.m.Spawn(context.Background(), SpawnRequest{Recipe: "researcher", Name: "a", Tags: []string{"night", "research", "night"}, Requester: access.Operator})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"research", "night"}, p.Tags)
+	v, ok := e.reg.TempOf("a")
+	require.True(t, ok)
+	assert.Equal(t, []string{"research", "night"}, v.Profile.Tags, "the tags the matrix reads the agent by")
+}
+
+func TestAnExtraTagMustBeOneTheRequesterHoldsByTag(t *testing.T) {
+	boss := access.Agent("boss")
+	for name, grants := range map[string]grantsOf{
+		"only the recipe's tag": {agentTag(boss, "research")},
+		"a name grant":          {agentTag(boss, "research"), {Subject: boss, Kind: access.ResourceAgent, Name: "a"}},
+		"another's tag":         {agentTag(boss, "research"), agentTag(access.Agent("other"), "night")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := newEnv(t, map[string]string{"researcher": recipeYAML}, func(e *env) { e.gate.allow = true })
+			e.m.Auth = access.Matrix{Grants: grants}
+			_, err := e.m.Spawn(context.Background(), SpawnRequest{Recipe: "researcher", Name: "a", Tags: []string{"night"}, Requester: boss})
+			require.ErrorIs(t, err, ErrNotFound, "refused as an agent that does not exist")
+			assert.Empty(t, e.gate.got, "and the gate is not asked")
+			assert.Empty(t, dirs(t, e.prov.Root))
+			assert.Empty(t, e.reg.Temps())
+		})
+	}
+}
+
+func TestAnExtraTagIsAskedOfTheGateWithTheSpawn(t *testing.T) {
+	boss := access.Agent("boss")
+	e := newEnv(t, map[string]string{"researcher": recipeYAML}, func(e *env) { e.gate.allow = true })
+	e.m.Auth = access.Matrix{Grants: grantsOf{agentTag(boss, "research"), agentTag(boss, "night")}}
+	p, err := e.m.Spawn(context.Background(), SpawnRequest{Recipe: "researcher", Name: "a", Tags: []string{"night", "research"}, Requester: boss})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"research", "night"}, p.Tags)
+	require.Len(t, e.gate.got, 1)
+	assert.JSONEq(t, `{"recipe":"researcher","agent":"a","tags":"night"}`, string(e.gate.got[0].Input), "the operator is told what the agent will carry")
+}
+
+func TestTheRecipesOwnTagNeedsNoMoreThanTheSpawnDoes(t *testing.T) {
+	e := newEnv(t, map[string]string{"researcher": recipeYAML})
+	e.m.Auth = access.Matrix{Grants: grantsOf{agentTag(access.Operator, "research")}}
+	p, err := e.m.Spawn(context.Background(), SpawnRequest{Recipe: "researcher", Name: "a", Tags: []string{"research"}, Requester: access.Operator})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"research"}, p.Tags)
+}
+
+func TestTheOperatorAddsOnlyTagsItHolds(t *testing.T) {
+	e := newEnv(t, map[string]string{"researcher": recipeYAML})
+	e.m.Auth = access.Matrix{Grants: grantsOf{agentTag(access.Operator, "research")}}
+	_, err := e.m.Spawn(context.Background(), SpawnRequest{Recipe: "researcher", Name: "a", Tags: []string{"night"}, Requester: access.Operator})
+	require.ErrorIs(t, err, ErrNotFound)
+	assert.Empty(t, e.reg.Temps())
+}
+
+func TestAMalformedTagIsABadRequest(t *testing.T) {
+	for _, tag := range []string{"", "two words", "tab\there", "line\n"} {
+		e := newEnv(t, map[string]string{"researcher": recipeYAML})
+		_, err := e.m.Spawn(context.Background(), SpawnRequest{Recipe: "researcher", Name: "a", Tags: []string{tag}, Requester: access.Operator})
+		require.ErrorIs(t, err, ErrBadRequest, "%q", tag)
+		assert.Empty(t, e.reg.Temps())
+	}
+}
+
+func TestAMasterAuthorizedSpawnKeepsItsTags(t *testing.T) {
+	e := newEnv(t, map[string]string{"researcher": recipeYAML})
+	e.m.Auth = access.Matrix{Grants: grantsOf{}}
+	p, err := e.m.Spawn(context.Background(), SpawnRequest{Recipe: "researcher", Name: "a", Tags: []string{"night"}, Requester: access.Operator, Authorized: true})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"research", "night"}, p.Tags)
+}

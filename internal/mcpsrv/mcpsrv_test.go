@@ -54,8 +54,12 @@ func (f fakeOps) Agents() []AgentInfo { return f.agents }
 func (f fakeOps) Recipes() ([]RecipeInfo, error) {
 	return f.recipes, f.err
 }
-func (f fakeOps) Spawn(_ context.Context, who access.Subject, recipe, name, channel string) (string, error) {
-	f.rec("spawn", who, recipe, name, channel)
+func (f fakeOps) Spawn(_ context.Context, who access.Subject, recipe, name, channel string, tags []string) (string, error) {
+	args := []string{recipe, name, channel}
+	if len(tags) > 0 {
+		args = append(args, "tags="+strings.Join(tags, ","))
+	}
+	f.rec("spawn", who, args...)
 	return f.spawnName, f.spawnErr
 }
 func (f fakeOps) Kill(_ context.Context, who access.Subject, name string) (KillInfo, error) {
@@ -710,4 +714,12 @@ func TestTheGateRulesReadPaosReadsAsLowRiskAndLetTheAgentsCallsThrough(t *testin
 		d := g.Decide(context.Background(), gate.Request{Agent: "boss", Tool: a, Input: []byte("{}")})
 		assert.False(t, d.Allow, "%s is not waved through: with no one to ask it is denied", a)
 	}
+}
+
+func TestSpawnPassesExtraTags(t *testing.T) {
+	var calls []opCall
+	ops := fakeOps{spawnName: "tmp-a", calls: &calls}
+	cs := connect(t, serve(t, ops, NewOperatorResolver("op")), "op")
+	_ = structured[spawnOutput](t, cs, "spawn_agent", map[string]any{"recipe": "r", "tags": []string{"night", "late"}})
+	assert.Equal(t, []opCall{{"spawn", access.Operator, []string{"r", "", "", "tags=night,late"}}}, calls)
 }

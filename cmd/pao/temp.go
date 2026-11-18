@@ -32,10 +32,11 @@ func opCtx() (context.Context, context.CancelFunc) {
 // SpawnCmd starts a temporary agent from a recipe.
 type SpawnCmd struct {
 	NodeFlags
-	Recipe  string `arg:"" help:"Recipe to spawn from (see 'pao recipes list')."`
-	Name    string `help:"Name for the agent. Default: generated from the recipe."`
-	Channel string `help:"Channel its stream is bound to. Default: the node's only channel."`
-	On      string `help:"Node of the mesh to start it on. Default: the node asked."`
+	Recipe  string   `arg:"" help:"Recipe to spawn from (see 'pao recipes list')."`
+	Name    string   `help:"Name for the agent. Default: generated from the recipe."`
+	Channel string   `help:"Channel its stream is bound to. Default: the node's only channel."`
+	On      string   `help:"Node of the mesh to start it on. Default: the node asked."`
+	Tag     []string `help:"A tag for the agent besides its recipe's; repeatable. Each must be a tag the operator's grants reach."`
 }
 
 // Run implements spawn.
@@ -48,7 +49,7 @@ func (c SpawnCmd) run(w io.Writer) error {
 	}
 	ctx, cancel := opCtx()
 	defer cancel()
-	name, err := cl.Spawn(ctx, c.Recipe, c.Name, c.Channel, c.On)
+	name, err := cl.Spawn(ctx, c.Recipe, c.Name, c.Channel, c.On, c.Tag...)
 	if name != "" {
 		// Even when it did not become ready the agent exists: say its name, so
 		// it can be inspected or killed.

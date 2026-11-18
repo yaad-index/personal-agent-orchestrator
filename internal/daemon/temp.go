@@ -95,19 +95,24 @@ func translate(err error) error {
 	return err
 }
 
-func (a tempAPI) Spawn(ctx context.Context, recipe, name, channel, node string) (string, error) {
+func (a tempAPI) Spawn(ctx context.Context, recipe, name, channel, node string, tags []string) (string, error) {
 	if node != "" {
 		if a.cmds == nil {
 			return "", translated{local.ErrBadRequest, errors.New("this node is not in a mesh, so it has no other node to start an agent on")}
 		}
 		switch {
 		case a.cmds.node.Knows(node):
+			if len(tags) > 0 {
+				// Grants and tags are this node's own (single machine): another
+				// node would not carry them, so they are refused, not dropped.
+				return "", translated{local.ErrBadRequest, errors.New("extra tags are not carried to another node; spawn without them, or on this node")}
+			}
 			return a.cmds.Spawn(ctx, node, recipe, name, channel)
 		case node != a.cmds.self:
 			return "", translated{local.ErrBadRequest, fmt.Errorf("no node %q in the mesh", node)}
 		}
 	}
-	p, err := a.mgr.Spawn(ctx, temp.SpawnRequest{Recipe: recipe, Name: name, Channel: channel, Requester: access.Operator})
+	p, err := a.mgr.Spawn(ctx, temp.SpawnRequest{Recipe: recipe, Name: name, Channel: channel, Tags: tags, Requester: access.Operator})
 	return p.Name, translate(err)
 }
 
