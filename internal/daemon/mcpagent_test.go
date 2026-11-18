@@ -245,3 +245,64 @@ func TestTheOperatorsTokenStillWorksAndAnAgentsIsNotTheOperators(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, mcpStatus(t, n.url, "PAO_AGENT_TOKEN"))
 	assert.Equal(t, http.StatusUnauthorized, mcpStatus(t, n.url, sessionEnv(t, n, "tmp-a", "PAO_AGENT_TOKEN")[:60]))
 }
+
+// mcpOpen starts an MCP session with token and returns its id.
+func mcpOpen(t *testing.T, url, token string) string {
+	t.Helper()
+	req, err := http.NewRequest("POST", url+"/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"0"}}}`))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	id := resp.Header.Get("Mcp-Session-Id")
+	require.NotEmpty(t, id)
+	return id
+}
+
+// mcpInSession is a tools/list request in session id, with token.
+func mcpInSession(t *testing.T, url, token, id string) int {
+	t.Helper()
+	req, err := http.NewRequest("POST", url+"/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Mcp-Session-Id", id)
+	req.Header.Set("Mcp-Protocol-Version", "2025-06-18")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	return resp.StatusCode
+}
+
+func TestAnAgentsMCPSessionsEndWithItsSession(t *testing.T) {
+	n := startNode(t, map[string]string{"a": "", "b": ""})
+	ctx := context.Background()
+	require.NoError(t, n.client.AgentAction(ctx, "a", "start"))
+	require.NoError(t, n.client.AgentAction(ctx, "b", "start"))
+
+	// Restarted through pao: the agent's earlier session is not there for its
+	// next run, which has the same name.
+	old := mcpOpen(t, n.url, sessionEnv(t, n, "a", "PAO_AGENT_TOKEN"))
+	require.NoError(t, n.client.AgentAction(ctx, "a", "restart"))
+	fresh := sessionEnv(t, n, "a", "PAO_AGENT_TOKEN")
+	assert.Equal(t, http.StatusOK, mcpInSession(t, n.url, fresh, mcpOpen(t, n.url, fresh)), "its new run opens its own")
+	assert.Equal(t, http.StatusNotFound, mcpInSession(t, n.url, fresh, old), "the earlier run's session is gone")
+
+	// Ended on its own, then restarted by the operator: the same.
+	old = mcpOpen(t, n.url, fresh)
+	require.NoError(t, osexec.Command("tmux", "-L", n.sock, "kill-session", "-t", "=pao-a").Run())
+	require.NoError(t, n.client.AgentAction(ctx, "a", "restart"))
+	fresh = sessionEnv(t, n, "a", "PAO_AGENT_TOKEN")
+	assert.Equal(t, http.StatusNotFound, mcpInSession(t, n.url, fresh, old), "a session nobody killed is let go when the agent is restarted")
+
+	// Another agent's session is untouched.
+	tokB := sessionEnv(t, n, "b", "PAO_AGENT_TOKEN")
+	other := mcpOpen(t, n.url, tokB)
+	require.NoError(t, n.client.AgentAction(ctx, "a", "restart"))
+	assert.Equal(t, http.StatusOK, mcpInSession(t, n.url, tokB, other))
+}
