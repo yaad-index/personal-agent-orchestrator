@@ -25,7 +25,7 @@ import (
 const recipeYAML = `name: researcher
 description: reads and reports
 profile:
-  backend: harness
+  backend: claude-code
   tags: [research]
   startup:
     command: "run-agent --name {name}"

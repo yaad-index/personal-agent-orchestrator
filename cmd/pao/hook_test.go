@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -91,45 +90,4 @@ func TestHookFailsClosedOnUnreadableInput(t *testing.T) {
 		o := hook(t, in, "a", sock)
 		assert.Equal(t, "deny", o.Out.Decision, "input %q", in)
 	}
-}
-
-func TestHookSettingsTimeoutOutlastsTheGatesAskTimeout(t *testing.T) {
-	dir := t.TempDir()
-	path := writeConfig(t, dir)
-	require.NoError(t, os.WriteFile(path, []byte("node: n1\nprofiles_dir: profiles\nstate_dir: state\ntoken_env: PAO_RUN_TEST_TOKEN\ngate:\n  ask_timeout: 20m\n"), 0o600))
-
-	got, err := HookSettingsCmd{Config: path, Timeout: time.Minute}.timeout()
-	require.NoError(t, err)
-	assert.Equal(t, 20*time.Minute+hookMargin, got, "longer than the gate waits, whatever --timeout says")
-
-	got, err = HookSettingsCmd{Timeout: 7 * time.Minute}.timeout()
-	require.NoError(t, err)
-	assert.Equal(t, 7*time.Minute, got, "without a config the flag is used")
-
-	require.NoError(t, os.WriteFile(path, []byte("node: n1\n"), 0o600))
-	_, err = HookSettingsCmd{Config: path}.timeout()
-	assert.Error(t, err, "an unloadable config is an error, not a silent default")
-}
-
-func TestMCPConfigPointsAtTheAgentsOwnEnvironmentAndHoldsNoSecret(t *testing.T) {
-	var out bytes.Buffer
-	require.NoError(t, McpConfigCmd{Name: "pao"}.run(&out))
-
-	var cfg struct {
-		Servers map[string]struct {
-			Type    string            `json:"type"`
-			URL     string            `json:"url"`
-			Headers map[string]string `json:"headers"`
-		} `json:"mcpServers"`
-	}
-	require.NoError(t, json.Unmarshal(out.Bytes(), &cfg))
-	s, ok := cfg.Servers["pao"]
-	require.True(t, ok)
-	assert.Equal(t, "http", s.Type)
-	assert.Equal(t, "${PAO_MCP_URL}", s.URL)
-	assert.Equal(t, "Bearer ${PAO_AGENT_TOKEN}", s.Headers["Authorization"], "a reference to the environment, never a token")
-
-	out.Reset()
-	require.NoError(t, McpConfigCmd{Name: "custom"}.run(&out))
-	assert.Contains(t, out.String(), `"custom"`)
 }

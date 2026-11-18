@@ -2,13 +2,10 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"os"
-	"time"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/backend/claudecode"
-	"github.com/yaad-index/personal-agent-orchestrator/internal/config"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/gate"
 )
 
@@ -17,8 +14,6 @@ import (
 const (
 	envAgent      = "PAO_AGENT"
 	envGateSocket = "PAO_GATE_SOCKET"
-	envMCPURL     = "PAO_MCP_URL"
-	envAgentToken = "PAO_AGENT_TOKEN"
 )
 
 // HookCmd is the backend's pre-tool-call hook. It reads the hook payload on
@@ -50,38 +45,4 @@ func runHook(ctx context.Context, stdin io.Reader, stdout io.Writer, agent, sock
 	}
 	_, err = stdout.Write(append(claudecode.HookOutput(d.Allow, reason), '\n'))
 	return err
-}
-
-// HookSettingsCmd prints the backend settings JSON that installs the hook, for
-// a profile's startup command (for example: claude --settings "$(pao
-// hook-settings)").
-type HookSettingsCmd struct {
-	Command string        `help:"Hook command the backend runs." default:"pao hook"`
-	Timeout time.Duration `help:"How long the backend waits for the hook; it must outlast the operator's time to answer. Ignored when --config is given." default:"10m"`
-	Config  string        `help:"Orchestrator config to read the gate's ask timeout from; the hook timeout is then that plus a margin, so the backend never gives up before the gate does." type:"existingfile"`
-}
-
-// hookMargin is how much longer than the gate's ask timeout the backend waits
-// for the hook, so the gate's own denial arrives before the backend's.
-const hookMargin = time.Minute
-
-// Run implements hook-settings.
-func (c HookSettingsCmd) Run() error {
-	timeout, err := c.timeout()
-	if err != nil {
-		return err
-	}
-	_, err = fmt.Fprintln(os.Stdout, claudecode.HookSettings(c.Command, int(timeout.Seconds())))
-	return err
-}
-
-func (c HookSettingsCmd) timeout() (time.Duration, error) {
-	if c.Config == "" {
-		return c.Timeout, nil
-	}
-	cfg, err := config.Load(c.Config)
-	if err != nil {
-		return 0, err
-	}
-	return cfg.Orchestrator.Gate.AskTimeout + hookMargin, nil
 }

@@ -14,7 +14,7 @@ import (
 const testRecipe = `name: researcher
 description: reads and reports
 profile:
-  backend: harness
+  backend: claude-code
   startup:
     command: "run-agent {name}"
     ready_pattern: "READY>"

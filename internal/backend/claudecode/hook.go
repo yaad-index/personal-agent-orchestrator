@@ -51,22 +51,19 @@ func HookOutput(allow bool, reason string) []byte {
 	return b
 }
 
-// HookSettings returns the settings JSON that installs command as a PreToolUse
-// hook for every tool, for the backend's --settings flag. timeoutSeconds is how
-// long the backend waits for the hook: it has to outlast the operator's time to
-// answer, or the backend gives up on the hook first.
-func HookSettings(command string, timeoutSeconds int) string {
-	b, _ := json.Marshal(map[string]any{
-		"hooks": map[string]any{
-			"PreToolUse": []any{map[string]any{
-				"matcher": "*",
-				"hooks": []any{map[string]any{
-					"type":    "command",
-					"command": command,
-					"timeout": timeoutSeconds,
-				}},
+// hooks is the "hooks" setting that installs command as a PreToolUse hook for
+// every tool. timeoutSeconds is how long the backend waits for the hook: it has
+// to outlast the operator's time to answer, or the backend gives up on the hook
+// first.
+func hooks(command string, timeoutSeconds int) map[string]any {
+	return map[string]any{
+		"PreToolUse": []any{map[string]any{
+			"matcher": "*",
+			"hooks": []any{map[string]any{
+				"type":    "command",
+				"command": command,
+				"timeout": timeoutSeconds,
 			}},
-		},
-	})
-	return string(b)
+		}},
+	}
 }

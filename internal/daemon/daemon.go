@@ -20,6 +20,8 @@ import (
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/access"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/agenttoken"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/backend"
+	backends "github.com/yaad-index/personal-agent-orchestrator/internal/backend/builtin"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/backend/claudecode"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/adapter"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/builtin"
@@ -170,14 +172,19 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	// node is listening.
 	tokens := agenttoken.New()
 	var mcpURL atomic.Pointer[string]
+	launch, err := backendLaunch(cfg.Orchestrator.Gate.AskTimeout)
+	if err != nil {
+		return err
+	}
 	ctlOpts = append(ctlOpts,
 		control.WithEnv(func(agent string) []string {
-			env := []string{"PAO_AGENT=" + agent, "PAO_GATE_SOCKET=" + gateSock, "PAO_AGENT_TOKEN=" + tokens.Mint(agent)}
+			env := []string{"PAO_AGENT=" + agent, "PAO_GATE_SOCKET=" + gateSock, backend.EnvAgentToken + "=" + tokens.Mint(agent)}
 			if u := mcpURL.Load(); u != nil {
-				env = append(env, "PAO_MCP_URL="+*u)
+				env = append(env, backend.EnvMCPURL+"="+*u)
 			}
 			return env
 		}),
+		control.WithCommand(func(p core.Profile) (string, error) { return backends.Table().Command(p, launch) }),
 		control.WithOnStop(tokens.Revoke))
 	plane := control.New(tmux.New(tmux.WithSocket(cfg.Orchestrator.TmuxSocket)), ctlOpts...)
 
@@ -523,4 +530,28 @@ func expandPath(p string) string {
 		}
 	}
 	return p
+}
+
+// hookMargin is how much longer than the gate's ask timeout a backend waits for
+// the gate hook, so the gate's own denial arrives before the backend gives up.
+const hookMargin = time.Minute
+
+// backendLaunch is what every backend adapter is given to start an agent: this
+// program as the gate hook, waited for longer than the gate asks, and pao's MCP
+// server under the name the gate's rules for it use.
+func backendLaunch(askTimeout time.Duration) (backend.Launch, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return backend.Launch{}, fmt.Errorf("finding this program for the gate hook: %w", err)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return backend.Launch{}, fmt.Errorf("finding the home directory: %w", err)
+	}
+	return backend.Launch{
+		MCPServer:   mcpsrv.DefaultServerName,
+		Hook:        "'" + strings.ReplaceAll(exe, "'", `'\''`) + "' hook",
+		HookTimeout: askTimeout + hookMargin,
+		Home:        home,
+	}, nil
 }

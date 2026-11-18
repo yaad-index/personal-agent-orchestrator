@@ -19,6 +19,7 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
+	"github.com/yaad-index/personal-agent-orchestrator/internal/backend/builtin"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/gate"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/mesh"
@@ -447,7 +448,7 @@ func validate(p core.Profile) error {
 			return fmt.Errorf("tag %q must be lowercase letters, digits, '-' or '_'", t)
 		}
 	}
-	return nil
+	return builtin.Table().Check(p)
 }
 
 // DecodeFile decodes the YAML file at path into into. Unknown keys are an
