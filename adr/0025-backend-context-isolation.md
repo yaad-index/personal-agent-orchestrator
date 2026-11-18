@@ -1,6 +1,6 @@
 # ADR 0025: An agent's context comes from its profile
 
-**Status:** Proposed
+**Status:** Accepted (2026-11-18)
 
 Extends ADR-0011 (pluggable backends), ADR-0015 (profile inheritance).
 
