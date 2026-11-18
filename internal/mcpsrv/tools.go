@@ -131,7 +131,7 @@ type Operations interface {
 	Recipes() ([]RecipeInfo, error)
 	// Spawn creates a temporary agent and returns its name. When the agent was
 	// created but did not become ready it returns the name with the error.
-	Spawn(ctx context.Context, who access.Subject, recipe, name, channel string) (string, error)
+	Spawn(ctx context.Context, who access.Subject, recipe, name, channel string, tags []string) (string, error)
 	// Kill tears a temporary agent down, harvesting first.
 	Kill(ctx context.Context, who access.Subject, name string) (KillInfo, error)
 	// Harvests lists the harvests who may read.
@@ -190,7 +190,7 @@ func (s *Server) addTools(srv *mcp.Server) {
 	destructive := true
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "spawn_agent",
-		Description: "Start a temporary agent from a recipe, in a fresh isolated working directory, with its stream bound to a channel. Returns its name. Spawning is gated: you may be asked to wait for the operator.",
+		Description: "Start a temporary agent from a recipe, in a fresh isolated working directory, with its stream bound to a channel. It carries the recipe's tags and any extra tags given, each of which must be one your own access reaches. Returns its name. Spawning is gated: you may be asked to wait for the operator.",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: &notDestructive},
 	}, s.spawnAgent)
 	mcp.AddTool(srv, &mcp.Tool{
@@ -211,9 +211,10 @@ func (s *Server) addTools(srv *mcp.Server) {
 }
 
 type spawnInput struct {
-	Recipe  string `json:"recipe" jsonschema:"the recipe to spawn from (see list_recipes)"`
-	Name    string `json:"name,omitempty" jsonschema:"a name for the agent; generated from the recipe if left out"`
-	Channel string `json:"channel,omitempty" jsonschema:"the channel its stream is bound to; the node's only channel if left out"`
+	Recipe  string   `json:"recipe" jsonschema:"the recipe to spawn from (see list_recipes)"`
+	Name    string   `json:"name,omitempty" jsonschema:"a name for the agent; generated from the recipe if left out"`
+	Channel string   `json:"channel,omitempty" jsonschema:"the channel its stream is bound to; the node's only channel if left out"`
+	Tags    []string `json:"tags,omitempty" jsonschema:"tags for the agent besides its recipe's; each must be a tag your own access reaches"`
 }
 
 type spawnOutput struct {
@@ -224,7 +225,7 @@ func (s *Server) spawnAgent(ctx context.Context, req *mcp.CallToolRequest, in sp
 	if in.Recipe == "" {
 		return nil, spawnOutput{}, errors.New("a recipe is required")
 	}
-	name, err := s.ops.Spawn(ctx, subject(req), in.Recipe, in.Name, in.Channel)
+	name, err := s.ops.Spawn(ctx, subject(req), in.Recipe, in.Name, in.Channel, in.Tags)
 	if err != nil {
 		return nil, spawnOutput{}, withName(name, err)
 	}

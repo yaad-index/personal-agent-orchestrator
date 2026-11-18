@@ -190,3 +190,10 @@ func TestMeshStatusOnANodeNotInAMeshIsAnError(t *testing.T) {
 	var out bytes.Buffer
 	require.Error(t, MeshStatusCmd{NodeFlags: s.flags(t)}.run(&out))
 }
+
+func TestSpawnSendsEachTag(t *testing.T) {
+	s := newStubNode(t, func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, 201, local.SpawnJSON{Name: "tmp-a"}) })
+	var out bytes.Buffer
+	require.NoError(t, SpawnCmd{NodeFlags: s.flags(t), Recipe: "r", Tag: []string{"night", "late"}}.run(&out))
+	assert.JSONEq(t, `{"recipe":"r","name":"","channel":"","tags":["night","late"]}`, s.body)
+}

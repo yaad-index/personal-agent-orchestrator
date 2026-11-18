@@ -61,7 +61,7 @@ func TestMCPOperationsAreMadeAsTheCallerNotAsTheOperator(t *testing.T) {
 	assert.Empty(t, plane.killed)
 	assert.DirExists(t, dir)
 
-	_, err = ops.Spawn(ctx, agent, "anything", "x", "")
+	_, err = ops.Spawn(ctx, agent, "anything", "x", "", nil)
 	require.ErrorIs(t, err, temp.ErrNotFound)
 
 	// The operator's kill makes a harvest; the agent cannot see or read it.

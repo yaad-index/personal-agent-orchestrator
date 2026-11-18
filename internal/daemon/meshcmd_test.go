@@ -231,3 +231,12 @@ func TestListingTheHarvestsOfANodeThatIsNotInTheMeshIsRefused(t *testing.T) {
 	require.Error(t, err, "a node outside a mesh has no other node")
 	assert.Contains(t, err.Error(), "400")
 }
+
+func TestExtraTagsAreRefusedForASpawnOnAnotherNode(t *testing.T) {
+	_, a, b := meshWithRecipes(t)
+	_, err := a.client.Spawn(context.Background(), "fake", "tmp-t", "", "n-b", "temp")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "400")
+	assert.Contains(t, err.Error(), "not carried to another node")
+	assert.False(t, tmuxHasSession(t, b, "tmp-t"), "nothing was started there")
+}

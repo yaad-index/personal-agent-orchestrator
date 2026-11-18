@@ -19,8 +19,10 @@ import (
 	"log/slog"
 	"regexp"
 	"slices"
+	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/access"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/control"
@@ -125,7 +127,12 @@ type SpawnRequest struct {
 	Name string
 	// Channel names the channel its stream is bound to. Empty means the only
 	// registered channel, and is an error when there are several.
-	Channel   string
+	Channel string
+	// Tags are tags for the agent besides its recipe's. The agent carries both.
+	// Each one the recipe does not carry must be in the requester's own tag
+	// scopes: a tag widens who reaches the agent, so a requester may only add one
+	// it holds.
+	Tags      []string
 	Requester access.Subject
 	// Authorized says the request was already authorized by whoever sent it, so it is
 	// not decided again here. The master sets it when it commands a node: the master
@@ -249,9 +256,23 @@ func (m *Manager) Spawn(ctx context.Context, req SpawnRequest) (core.Profile, er
 	if slices.Contains(core.ReservedNames, name) {
 		return core.Profile{}, fmt.Errorf("%w: agent name %q is reserved", ErrBadRequest, name)
 	}
+	extra, err := extraTags(rec.Profile.Tags, req.Tags)
+	if err != nil {
+		return core.Profile{}, err
+	}
 	if !req.Authorized {
-		if err := m.authorize(ctx, req.Requester, access.Spawn, access.AgentResource(name, rec.Profile.Tags),
-			map[string]string{"recipe": rec.Name, "agent": name}); err != nil {
+		for _, tag := range extra {
+			// By tag scope only: a grant of one agent's name says nothing about
+			// which tags it may be given.
+			if !access.Allowed(m.Auth, req.Requester, access.Spawn, access.Resource{Kind: access.ResourceAgent, Tags: []string{tag}}) {
+				return core.Profile{}, ErrNotFound
+			}
+		}
+		detail := map[string]string{"recipe": rec.Name, "agent": name}
+		if len(extra) > 0 {
+			detail["tags"] = strings.Join(extra, ",")
+		}
+		if err := m.authorize(ctx, req.Requester, access.Spawn, access.AgentResource(name, rec.Profile.Tags), detail); err != nil {
 			return core.Profile{}, err
 		}
 	}
@@ -276,6 +297,7 @@ func (m *Manager) Spawn(ctx context.Context, req SpawnRequest) (core.Profile, er
 		undo()
 		return core.Profile{}, err
 	}
+	prof.Tags = append(prof.Tags, extra...)
 	if m.Check != nil {
 		if err := m.Check(prof); err != nil {
 			undo()
@@ -413,4 +435,19 @@ func (m *Manager) List() []Status {
 		})
 	}
 	return out
+}
+
+// extraTags returns the tags asked for that the recipe does not already carry,
+// each once, in the order asked. An empty tag or one with white space is refused.
+func extraTags(recipe, asked []string) ([]string, error) {
+	var out []string
+	for _, tag := range asked {
+		if tag == "" || strings.IndexFunc(tag, unicode.IsSpace) >= 0 {
+			return nil, fmt.Errorf("%w: tag %q is empty or has white space", ErrBadRequest, tag)
+		}
+		if !slices.Contains(recipe, tag) && !slices.Contains(out, tag) {
+			out = append(out, tag)
+		}
+	}
+	return out, nil
 }

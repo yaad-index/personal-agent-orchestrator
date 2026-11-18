@@ -28,14 +28,16 @@ type fakeTemp struct {
 	err       error
 
 	gotSpawn [4]string
+	gotTags  []string
 	gotNode  string
 	gotKill  string
 	gotID    string
 	gotPath  string
 }
 
-func (f *fakeTemp) Spawn(_ context.Context, recipe, name, channel, node string) (string, error) {
+func (f *fakeTemp) Spawn(_ context.Context, recipe, name, channel, node string, tags []string) (string, error) {
 	f.gotSpawn = [4]string{recipe, name, channel, node}
+	f.gotTags = tags
 	return f.spawnName, f.spawnErr
 }
 func (f *fakeTemp) Kill(_ context.Context, name string) (KillJSON, error) {
@@ -215,4 +217,16 @@ func TestAMountedHandlerIsServedAndAuthenticatesItself(t *testing.T) {
 
 	resp = do(t, ts, "GET", "/elsewhere", "", "Bearer "+token)
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+}
+
+func TestSpawnPassesExtraTags(t *testing.T) {
+	f := &fakeTemp{spawnName: "tmp-a"}
+	c, _ := tempServer(t, f)
+	_, err := c.Spawn(context.Background(), "researcher", "tmp-a", "", "", "night", "late")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"night", "late"}, f.gotTags)
+
+	_, err = c.Spawn(context.Background(), "researcher", "tmp-b", "", "")
+	require.NoError(t, err)
+	assert.Empty(t, f.gotTags, "none unless given")
 }
