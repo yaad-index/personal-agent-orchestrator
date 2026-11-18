@@ -92,6 +92,12 @@ type Result = resultJSON
 // Stream calls fn for every message the server sends until ctx is done or the
 // stream ends. It returns nil when ctx ended it.
 func (c *Client) Stream(ctx context.Context, fn func(MessageJSON)) error {
+	return c.StreamOpened(ctx, nil, fn)
+}
+
+// StreamOpened is Stream that calls opened, when it is not nil, once the server
+// has accepted the stream: every message sent after that reaches fn.
+func (c *Client) StreamOpened(ctx context.Context, opened func(), fn func(MessageJSON)) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.URL+"/v1/stream", nil)
 	if err != nil {
 		return err
@@ -107,6 +113,9 @@ func (c *Client) Stream(ctx context.Context, fn func(MessageJSON)) error {
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return apiError(resp)
+	}
+	if opened != nil {
+		opened()
 	}
 
 	sc := bufio.NewScanner(resp.Body)

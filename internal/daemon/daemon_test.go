@@ -63,6 +63,11 @@ type node struct {
 	cancel     context.CancelFunc
 	done       chan error
 	events     chan local.MessageJSON
+
+	// askErrs are the errors of gate questions that could not be asked, kept so
+	// a test waiting for a question that never came can say why.
+	askMu   sync.Mutex
+	askErrs []error
 }
 
 // startNode runs a daemon over real tmux with one agent per name.
@@ -155,24 +160,32 @@ func startNodeWith(t *testing.T, agents map[string]string, adjust func(dir, scri
 		n.done <- Run(ctx, cfg, token, o)
 	}()
 
-	// Stream from the start, once the server is up.
+	// Stream from the start: the test goes on once the server has taken the
+	// stream, so nothing sent from here on is missed.
+	var wg sync.WaitGroup
+	wg.Add(1)
+	opened := make(chan struct{})
+	streamErr := make(chan error, 1)
+	go func() {
+		defer wg.Done()
+		streamErr <- n.client.StreamOpened(ctx, func() { close(opened) }, func(m local.MessageJSON) { n.events <- m })
+	}()
+	select {
+	case <-opened:
+	case err := <-streamErr:
+		t.Fatalf("the stream did not open: %v", err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("the stream did not open")
+	}
+	// The gate's socket is made a little after the server starts; a hook that
+	// asks before it exists is denied.
 	require.Eventually(t, func() bool {
-		conn, err := net.Dial("tcp", ln.Addr().String())
+		conn, err := net.Dial("unix", n.gateSock)
 		if err == nil {
 			_ = conn.Close()
 		}
 		return err == nil
-	}, 3*time.Second, 10*time.Millisecond)
-	var wg sync.WaitGroup
-	wg.Add(1)
-	ready := make(chan struct{})
-	go func() {
-		defer wg.Done()
-		close(ready)
-		_ = n.client.Stream(ctx, func(m local.MessageJSON) { n.events <- m })
-	}()
-	<-ready
-	time.Sleep(100 * time.Millisecond) // let the stream attach
+	}, 10*time.Second, 10*time.Millisecond, "the gate's socket did not open")
 
 	// One cleanup, in the order that works: stop the daemon first (which also
 	// ends the stream's context), then wait for the stream reader.
@@ -197,7 +210,9 @@ func (n *node) next(t *testing.T) local.MessageJSON {
 	case m := <-n.events:
 		return m
 	case <-time.After(10 * time.Second):
-		t.Fatal("no message on the stream")
+		n.askMu.Lock()
+		defer n.askMu.Unlock()
+		t.Fatalf("no message on the stream (gate asks that failed: %v)", n.askErrs)
 		return local.MessageJSON{}
 	}
 }
@@ -359,7 +374,12 @@ func askGate(t *testing.T, n *node, tool, input string) <-chan gate.Decision {
 	t.Helper()
 	out := make(chan gate.Decision, 1)
 	go func() {
-		d, _ := gate.Ask(context.Background(), n.gateSock, gate.Request{Agent: "a", Tool: tool, Input: json.RawMessage(input)})
+		d, err := gate.Ask(context.Background(), n.gateSock, gate.Request{Agent: "a", Tool: tool, Input: json.RawMessage(input)})
+		if err != nil {
+			n.askMu.Lock()
+			n.askErrs = append(n.askErrs, fmt.Errorf("asking the gate about %s: %w", tool, err))
+			n.askMu.Unlock()
+		}
 		out <- d
 	}()
 	return out
@@ -397,7 +417,7 @@ func TestEndToEndGateAsksTheOperatorAndAbidesByTheAnswer(t *testing.T) {
 
 	// A read needs no question.
 	d := decisionWithin(t, askGate(t, n, "Read", `{"file_path":"/x"}`))
-	assert.True(t, d.Allow)
+	assert.True(t, d.Allow, d.Reason)
 
 	// An action no rule covers is held until the operator answers: allow.
 	res := askGate(t, n, "Bash", `{"command":"ls"}`)
