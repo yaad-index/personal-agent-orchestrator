@@ -184,7 +184,10 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 			}
 			return env
 		}),
-		control.WithCommand(func(p core.Profile) (string, error) { return backends.Table().Command(p, launch) }),
+		control.WithCommand(func(p core.Profile) (string, []string, error) {
+			s, err := backends.Table().Command(p, launch)
+			return s.Command, s.Env, err
+		}),
 		control.WithOnStop(tokens.Revoke))
 	plane := control.New(tmux.New(tmux.WithSocket(cfg.Orchestrator.TmuxSocket)), ctlOpts...)
 

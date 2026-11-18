@@ -103,12 +103,13 @@ func TestContractIsolation(t *testing.T) {
 				shellQuote("What is the canary word? Reply with only that word, or NONE if you were not given one."),
 		}}
 		require.NoError(t, backend.Table{Name: Adapter{}}.Check(p))
-		cmd, err := Adapter{}.Command(p, backend.Launch{MCPServer: "pao", Hook: "true", HookTimeout: 30 * time.Second, Home: home})
+		start, err := Adapter{}.Command(p, backend.Launch{MCPServer: "pao", Hook: "true", HookTimeout: 30 * time.Second, Home: home})
 		require.NoError(t, err)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 		defer cancel()
-		c := exec.CommandContext(ctx, "sh", "-c", cmd)
+		c := exec.CommandContext(ctx, "sh", "-c", start.Command)
+		c.Env = append(os.Environ(), start.Env...)
 		c.Dir = wd
 		c.Stdin = nil
 		out, err := c.Output()

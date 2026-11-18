@@ -41,6 +41,7 @@ const oldSession = "old-session"
 // its terminal, writes a human-side record and an assistant record to its
 // transcript file, the way a real backend would.
 const fakeAgent = `printf '%s\n' "$@" > "$TRANSCRIPT.args"
+env | grep '^CLAUDE_CODE_SYNC_' | sort > "$TRANSCRIPT.env"
 echo 'READY>'
 [ -n "$REPORT_ENV" ] && printf '{"type":"assistant","uuid":"env","message":{"role":"assistant","content":[{"type":"text","text":"agent=%s gate=%s"}]}}\n' "$PAO_AGENT" "$PAO_GATE_SOCKET" >> "$TRANSCRIPT"
 [ -n "$REPORT_TOKEN" ] && printf '{"type":"assistant","uuid":"tok","message":{"role":"assistant","content":[{"type":"text","text":"token=[%s]"}]}}\n' "$PAO_TEST_NODE_TOKEN" >> "$TRANSCRIPT"
@@ -366,6 +367,10 @@ func TestTheBackendAdapterStartsTheAgentWithOnlyPaosContext(t *testing.T) {
 	assert.NotEmpty(t, settings.Excludes)
 	require.NotNil(t, settings.AutoMemory)
 	assert.False(t, *settings.AutoMemory)
+
+	env, err := os.ReadFile(filepath.Join(transcripts, "a.jsonl.env"))
+	require.NoError(t, err)
+	assert.Equal(t, "CLAUDE_CODE_SYNC_PLUGINS=0\nCLAUDE_CODE_SYNC_SKILLS=0\n", string(env), "the adapter's environment reaches the agent")
 }
 
 // askGate is what the backend's hook does: ask the gate about an action and

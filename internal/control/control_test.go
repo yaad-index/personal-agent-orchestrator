@@ -119,6 +119,16 @@ func TestLaunchGivesTheAgentItsEnvironment(t *testing.T) {
 	assert.Equal(t, [][]string{{"WHO=a"}}, ft.env)
 }
 
+func TestLaunchAddsTheEnvironmentTheCommandComesWith(t *testing.T) {
+	ft := &fakeTerm{panes: []string{"READY>"}}
+	p := New(ft, WithPollInterval(time.Millisecond),
+		WithEnv(func(agent string) []string { return []string{"WHO=" + agent} }),
+		WithCommand(func(core.Profile) (string, []string, error) { return "run", []string{"ADAPTER=1"}, nil }))
+
+	require.NoError(t, p.Launch(context.Background(), profile(time.Second)))
+	assert.Equal(t, [][]string{{"WHO=a", "ADAPTER=1"}}, ft.env)
+}
+
 func TestLaunchDoesNotRestartAnExistingSession(t *testing.T) {
 	ft := &fakeTerm{sessions: map[string]bool{"a": true}, panes: []string{"READY>"}}
 	p := New(ft, WithPollInterval(time.Millisecond))

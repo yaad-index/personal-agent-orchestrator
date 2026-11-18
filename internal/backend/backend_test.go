@@ -21,8 +21,8 @@ func (partial) Owned(command string) []string {
 	}
 	return nil
 }
-func (partial) Command(p core.Profile, _ Launch) (string, error) {
-	return p.Startup.Command + " --isolated", nil
+func (partial) Command(p core.Profile, _ Launch) (Start, error) {
+	return Start{Command: p.Startup.Command + " --isolated", Env: []string{"ISOLATED=1"}}, nil
 }
 
 func profile(backend string, inherit ...string) core.Profile {
@@ -57,9 +57,9 @@ func TestABackendWithNoAdapterRunsOnlyAProfileThatInheritsEverything(t *testing.
 	assert.Error(t, err, "it is not started either")
 
 	require.NoError(t, tb.Check(profile("other", all...)))
-	cmd, err := tb.Command(profile("other", all...), Launch{})
+	s, err := tb.Command(profile("other", all...), Launch{})
 	require.NoError(t, err)
-	assert.Equal(t, "run", cmd, "its own command, unchanged")
+	assert.Equal(t, Start{Command: "run"}, s, "its own command, unchanged, and nothing added to its environment")
 }
 
 func TestAnAdapterThatCannotShutOutACategoryRefusesAProfileThatDoesNotInheritIt(t *testing.T) {
@@ -71,9 +71,9 @@ func TestAnAdapterThatCannotShutOutACategoryRefusesAProfileThatDoesNotInheritIt(
 	assert.Error(t, err)
 
 	require.NoError(t, tb.Check(profile("p", "memory")))
-	cmd, err := tb.Command(profile("p", "memory"), Launch{})
+	s, err := tb.Command(profile("p", "memory"), Launch{})
 	require.NoError(t, err)
-	assert.Equal(t, "run --isolated", cmd, "the adapter's command")
+	assert.Equal(t, Start{Command: "run --isolated", Env: []string{"ISOLATED=1"}}, s, "the adapter's command and environment")
 }
 
 func TestAProfileThatSetsAnOptionItsAdapterOwnsIsRefused(t *testing.T) {

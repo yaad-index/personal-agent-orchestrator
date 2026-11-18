@@ -64,16 +64,24 @@ type Launch struct {
 	Home string
 }
 
+// Start is how an agent is started: the shell command, and the environment
+// entries (KEY=value) it gets besides those the node gives every agent.
+type Start struct {
+	Command string
+	Env     []string
+}
+
 // Adapter is one backend compiled into the build.
 type Adapter interface {
 	// Isolates lists the categories the adapter can shut out.
 	Isolates() []Category
 	// Owned returns the options the adapter owns that command sets itself.
 	Owned(command string) []string
-	// Command returns the profile's startup command with the adapter's options
-	// added: those that shut out every category the profile does not inherit,
-	// and those that give the agent pao's MCP configuration and gate hook.
-	Command(p core.Profile, l Launch) (string, error)
+	// Command returns how to start the profile: its startup command with the
+	// adapter's options added, and the environment the adapter sets. Together
+	// they shut out every category the profile does not inherit and give the
+	// agent pao's MCP configuration and gate hook.
+	Command(p core.Profile, l Launch) (Start, error)
 }
 
 // Table maps a profile's backend name to its adapter.
@@ -129,17 +137,17 @@ func (t Table) Check(p core.Profile) error {
 	return fmt.Errorf("%s %s, which the profile does not inherit: add %s to inherit, or use a backend that can", why, names(cannot), pronoun(len(cannot)))
 }
 
-// Command returns the command that starts p: its adapter's, or for a backend
-// with no adapter its own, which Check allows only when p inherits every
+// Command returns how to start p: as its adapter says, or for a backend with no
+// adapter with its own command, which Check allows only when p inherits every
 // category. It checks p first, so a profile that changed since it was loaded is
 // not started on a guarantee pao cannot keep.
-func (t Table) Command(p core.Profile, l Launch) (string, error) {
+func (t Table) Command(p core.Profile, l Launch) (Start, error) {
 	if err := t.Check(p); err != nil {
-		return "", err
+		return Start{}, err
 	}
 	a, ok := t[p.Backend]
 	if !ok {
-		return p.Startup.Command, nil
+		return Start{Command: p.Startup.Command}, nil
 	}
 	return a.Command(p, l)
 }
