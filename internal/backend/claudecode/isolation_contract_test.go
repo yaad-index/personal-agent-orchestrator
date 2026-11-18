@@ -27,13 +27,16 @@ import (
 // started is what one run of the real Claude Code CLI loaded, as it says in its
 // first event, and what it answered.
 type started struct {
-	MCPServers []struct {
-		Name string `json:"name"`
-	} `json:"mcp_servers"`
+	MCPServers     []mcpServer       `json:"mcp_servers"`
 	Skills         []string          `json:"skills"`
 	PermissionMode string            `json:"permissionMode"`
 	MemoryPaths    map[string]string `json:"memory_paths"`
 	answer         string
+}
+
+// mcpServer is one MCP server a run lists.
+type mcpServer struct {
+	Name string `json:"name"`
 }
 
 // planted is what the test puts in each category of a user environment it
@@ -49,7 +52,7 @@ type planted struct {
 func (s started) reached(p planted) map[backend.Category]bool {
 	return map[backend.Category]bool{
 		backend.Instructions: strings.Contains(s.answer, p.canary),
-		backend.MCP:          slices.ContainsFunc(s.MCPServers, func(m struct{ Name string `json:"name"` }) bool { return m.Name == p.mcp }),
+		backend.MCP:          slices.ContainsFunc(s.MCPServers, func(m mcpServer) bool { return m.Name == p.mcp }),
 		backend.Skills:       slices.Contains(s.Skills, p.skill),
 		backend.Settings:     s.PermissionMode == p.mode,
 		backend.Memory:       s.MemoryPaths["auto"] != "",
