@@ -20,6 +20,11 @@ described later: reads are not asked.
   environment by accident. It is not a barrier: another process of the same
   user can still read the node's own environment or any file that holds it,
   and by default an agent's read-only tools are not stopped from doing so.
+- **Upstream server credentials.** pao reads the credential of each upstream
+  MCP server it proxies once at start, unsets its variable the same way, and
+  presents it itself: an agent reaches an upstream tool only through pao and
+  never holds the credential. The same limit applies: it keeps the credential
+  out of what agents inherit, not out of reach of another process of the user.
 - **Agent tokens.** Each agent session gets a token it uses to call pao as
   itself (the MCP surface). It ties the identity to a live session and ends
   with it, so a token from a finished session is useless and a name alone is
@@ -35,7 +40,11 @@ backend's hook covers is checked against the policy: what the policy allows
 runs, anything else is asked of the operator, and an unanswered or failed
 question is a denial. The access matrix sits behind the operations pao exposes to
 agents: an agent reaches another agent only through a grant the operator made
-(`pao access grant`), and with no grants it reaches none. The operator is behind
+(`pao access grant`), and with no grants it reaches none. The tools pao offers
+from upstream MCP servers are resources of the same matrix: a subject is offered,
+and can call, only the ones a grant reaches, one out of reach is answered as one
+that does not exist, and an agent's call is judged by the gate before pao makes
+it. The operator is behind
 grants too: a new node's operator reaches no agent until it grants itself in
 (`pao access grant operator --tag <tag>`), though administering the grants, the
 subjects and the channels never needs a grant. A node that ran before the access

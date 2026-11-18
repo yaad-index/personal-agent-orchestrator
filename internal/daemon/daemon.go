@@ -45,6 +45,7 @@ import (
 	"github.com/yaad-index/personal-agent-orchestrator/internal/route"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/temp"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/tmux"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/upstream"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/workdir"
 )
 
@@ -92,6 +93,23 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	for _, c := range cfg.Orchestrator.Channels {
 		_ = os.Unsetenv(c.CredentialEnv)
 	}
+	// An upstream MCP server's credential likewise: pao presents it, no agent
+	// ever holds it (ADR-0024 point 2).
+	var upstreams []*upstream.Server
+	for _, u := range cfg.Orchestrator.MCPUpstreams {
+		var cred string
+		if u.CredentialEnv != "" {
+			cred = os.Getenv(u.CredentialEnv)
+		}
+		upstreams = append(upstreams, upstream.New(u, cred))
+	}
+	for _, u := range cfg.Orchestrator.MCPUpstreams {
+		if u.CredentialEnv != "" {
+			_ = os.Unsetenv(u.CredentialEnv)
+		}
+	}
+	proxy := upstream.NewCatalog(upstreams...)
+	defer func() { _ = proxy.Close() }()
 	for _, p := range cfg.Profiles {
 		if _, ok := readers[p.Transcript.Format]; !ok {
 			return fmt.Errorf("agent %q: unknown transcript format %q", p.Name, p.Transcript.Format)
@@ -189,7 +207,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		},
 	}
 
-	policy, err := gate.LoadPolicy(filepath.Join(cfg.Orchestrator.StateDir, "policy.json"), mcpsrv.GateRules(mcpsrv.DefaultServerName)...)
+	policy, err := gate.LoadPolicy(filepath.Join(cfg.Orchestrator.StateDir, "policy.json"), mcpsrv.GateRules(mcpsrv.DefaultServerName, upstream.Offered(cfg.Orchestrator.MCPUpstreams)...)...)
 	if err != nil {
 		return err
 	}
@@ -234,7 +252,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 			return plane.Alive(ctx, agent)
 		}},
 	}
-	mcpHandler := mcpsrv.New(ops, resolver, mcpsrv.WithAuthorizer(auth), mcpsrv.WithGate(gt)).Handler()
+	mcpHandler := mcpsrv.New(ops, resolver, mcpsrv.WithAuthorizer(auth), mcpsrv.WithGate(gt), mcpsrv.WithProxy(proxy)).Handler()
 
 	var meshNode *transport.Node
 	var dir *directory.Directory
