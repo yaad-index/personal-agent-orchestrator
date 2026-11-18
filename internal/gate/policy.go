@@ -110,9 +110,11 @@ type Policy struct {
 }
 
 // Builtin returns the rules every policy starts with: tools that only read.
+// ToolSearch is the backend loading the definitions of tools it was already
+// given, such as an MCP server's; calling one of them is gated on its own.
 func Builtin() []Rule {
 	var rs []Rule
-	for _, t := range []string{"Read", "Glob", "Grep", "LS", "TodoWrite"} {
+	for _, t := range []string{"Read", "Glob", "Grep", "LS", "TodoWrite", "ToolSearch"} {
 		rs = append(rs, Rule{Tool: t, Risk: RiskRead, Source: "builtin"})
 	}
 	return rs

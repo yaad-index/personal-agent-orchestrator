@@ -56,7 +56,8 @@ directory, read at start, so an agent the gate lets write files as the node's us
 can change them for the next start, as it could the gate's policy.
 
 **By default the gate does not guard reads.** Tools that only read (reading,
-listing and searching files) are classified as read-only, and read-only actions
+listing and searching files, and the backend loading the definitions of tools
+it was given) are classified as read-only, and read-only actions
 are allowed without a question (`gate.auto_allow` defaults to `read`). So by
 default an agent can read any file the node's user can read, including the
 node's own state and, on Linux, a process's environment under `/proc`, without

@@ -82,6 +82,21 @@ func TestReadActionsAutoAllowWithoutAsking(t *testing.T) {
 	assert.Empty(t, asker.asked())
 }
 
+func TestLoadingToolDefinitionsIsAReadAndAutoAllowed(t *testing.T) {
+	asker := &fakeAsker{}
+	g, _ := newGate(t, "", nil, asker)
+
+	d := g.Decide(context.Background(), req("ToolSearch", `{"query":"select:mcp__pao__x__y","max_results":3}`))
+	assert.True(t, d.Allow)
+	assert.Equal(t, "rule", d.Via)
+	assert.Empty(t, asker.asked())
+
+	g.AutoAllow = map[Risk]bool{}
+	d = g.Decide(context.Background(), req("ToolSearch", `{"query":"x"}`))
+	assert.False(t, d.Allow, "an operator who asks reads asks this too")
+	assert.Len(t, asker.asked(), 1)
+}
+
 func TestUncoveredActionFailsClosedWithoutAnOperator(t *testing.T) {
 	g, _ := newGate(t, "", nil, nil)
 
