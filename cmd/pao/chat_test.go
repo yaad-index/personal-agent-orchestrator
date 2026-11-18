@@ -30,6 +30,13 @@ func (l *recordingLayer) ReceiveAsOperator(_ context.Context, in comm.Inbound) (
 	return comm.Delivery{Message: core.Message{ID: "m1"}, Results: []route.Result{{Agent: in.Target.Value}}}, nil
 }
 
+func (l *recordingLayer) CommandAsOperator(_ context.Context, in comm.Inbound) (string, *comm.Delivery, bool, error) {
+	if !strings.HasPrefix(in.Text, "/pao") {
+		return "", nil, false, nil
+	}
+	return "pao answers " + in.Text, nil, true, nil
+}
+
 func (l *recordingLayer) React(string, string, string) error { return nil }
 
 func (l *recordingLayer) got() []comm.Inbound {
@@ -76,7 +83,10 @@ func TestChatSendsLinesAndPrintsWhatPaoSends(t *testing.T) {
 	pr.writeLine("hello agent")
 	pr.writeLine("   ") // blank lines are not sent
 	pr.writeLine("second")
+	pr.writeLine("/pao help")
 
+	require.Eventually(t, func() bool { return strings.Contains(out.String(), "pao answers /pao help\n") }, 3*time.Second, 10*time.Millisecond,
+		"a command's answer is printed")
 	require.Eventually(t, func() bool { return len(layer.got()) == 2 }, 3*time.Second, 10*time.Millisecond)
 	got := layer.got()
 	assert.Equal(t, "hello agent", got[0].Text)

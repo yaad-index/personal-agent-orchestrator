@@ -419,6 +419,9 @@ func validate(p core.Profile) error {
 	if slices.Contains(core.ReservedNames, p.Name) {
 		return fmt.Errorf("name %q is reserved: pao speaks as it", p.Name)
 	}
+	if slices.Contains(core.CommandWords, p.Name) {
+		return fmt.Errorf("name %q is reserved: it is a pao command word", p.Name)
+	}
 	if p.Backend == "" {
 		return errors.New("backend is required")
 	}

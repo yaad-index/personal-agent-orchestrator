@@ -221,8 +221,12 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		views: newViews(),
 	}
 	life := lifecycle{router: router, plane: plane, reg: reg, follow: hook.follow}
+	saved, err := loadSavedStreams(filepath.Join(cfg.Orchestrator.StateDir, "streams.json"))
+	if err != nil {
+		return err
+	}
 	streams := &streamControl{
-		layer: layer, reg: reg, views: hook.follow.views, level: cfg.Orchestrator.Level,
+		layer: layer, reg: reg, views: hook.follow.views, level: cfg.Orchestrator.Level, saved: saved,
 		send: func(ctx context.Context, agent string, m core.Message) error {
 			_, err := layer.Send(ctx, agent, m)
 			return err
@@ -251,7 +255,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 
 	harvests := harvest.New(filepath.Join(cfg.Orchestrator.StateDir, "harvest"), auth)
 	mgr := &temp.Manager{
-		Registry: reg, Plane: plane, Starter: router, Channels: bindings{layer, hook.follow.views},
+		Registry: reg, Plane: plane, Starter: router, Channels: bindings{layer, hook.follow.views, saved},
 		Workdirs: &workdir.Provisioner{Root: filepath.Join(cfg.Orchestrator.StateDir, "temp")},
 		Harvests: harvests, Auth: auth,
 		Recipes: func() (*recipe.Set, error) { return recipe.LoadDir(cfg.Orchestrator.RecipesDir) },
@@ -327,6 +331,8 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		localOpts = append(localOpts, local.WithMesh(meshStatusWith(meshNode, dir)))
 	}
 
+	layer.SetCommands(chatCommands{streams: streamOps, decider: decider})
+
 	srv, err := local.New(layer, token, append([]local.Option{local.WithDecider(decider), local.WithTemp(tempOps), local.WithStream(streamOps), local.WithWatch(streamOps), local.WithLifecycle(lifeOps), local.WithRejected(rejectedAPI{rejects}), local.WithIdentity(identityAPI{ids}),
 		local.WithDefaults(newDefaultsAPI(defaults, cfg.Orchestrator.Channels, router.Resolve)), local.WithGrants(grantsAPI{store: grantStore, changed: mcpServer.Refresh}),
 		local.WithMount("/mcp", mcpHandler)}, localOpts...)...)
@@ -343,6 +349,8 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	if err != nil {
 		return err
 	}
+	// Every channel is known now: the bindings kept from before can be applied.
+	streams.restore()
 	adaptersCtx, stopAdapters := context.WithCancel(ctx)
 	defer stopAdapters()
 	var adaptersWG sync.WaitGroup

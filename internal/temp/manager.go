@@ -253,7 +253,7 @@ func (m *Manager) Spawn(ctx context.Context, req SpawnRequest) (core.Profile, er
 	if !namePattern.MatchString(name) {
 		return core.Profile{}, fmt.Errorf("%w: agent name %q must be lowercase letters, digits, '-' or '_'", ErrBadRequest, name)
 	}
-	if slices.Contains(core.ReservedNames, name) {
+	if slices.Contains(core.ReservedNames, name) || slices.Contains(core.CommandWords, name) {
 		return core.Profile{}, fmt.Errorf("%w: agent name %q is reserved", ErrBadRequest, name)
 	}
 	extra, err := extraTags(rec.Profile.Tags, req.Tags)

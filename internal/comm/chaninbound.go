@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/yaad-index/personal-agent-orchestrator/internal/command"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
 )
 
@@ -85,11 +86,14 @@ type ChannelInbound struct {
 	Group bool
 }
 
-// ChannelResult is what the adapter does next. Reply is the fixed text to send
-// the sender, empty to send nothing; Delivery is set when the message was routed.
+// ChannelResult is what the adapter does next. Reply is the text to send the
+// sender, empty to send nothing; Delivery is set when the message was routed.
+// Addressed is set when the message was a command naming an agent or a tag: it is
+// the sender's explicit address, which an adapter may keep as the sticky one.
 type ChannelResult struct {
-	Reply    string
-	Delivery *Delivery
+	Reply     string
+	Delivery  *Delivery
+	Addressed *core.Target
 }
 
 // Defaults is each channel's default agent (ADR-0023 point 5).
@@ -190,6 +194,18 @@ func (l *Layer) ReceiveFromChannel(ctx context.Context, in ChannelInbound) (Chan
 		return ChannelResult{Reply: ReplyNoAccess}, l.reject(in, RecordMessage, "outside access", in.Raw)
 	}
 
+	// A /pao command is pao's, whatever the target the adapter brings (ADR-0026
+	// point 1). One that addresses an agent or a tag routes its message there.
+	var addressed *core.Target
+	if command.Is(in.Text) {
+		res := command.Run(ctx, l.commandOps(), command.Caller{Channel: in.Channel, Operator: true}, in.Text)
+		if res.Address == nil {
+			return ChannelResult{Reply: res.Reply}, nil
+		}
+		addressed = res.Address
+		in.Target, in.Text = *res.Address, res.Text
+	}
+
 	reply := in.Reply
 	if reply == "" && in.ReplyNative != "" {
 		if n, ok := l.channelIDs[in.Channel]; ok {
@@ -222,5 +238,47 @@ func (l *Layer) ReceiveFromChannel(ctx context.Context, in ChannelInbound) (Chan
 		return ChannelResult{}, err
 	}
 	l.noteComposite(in.Channel, in.Native, d.Message.ID)
-	return ChannelResult{Delivery: &d}, nil
+	return ChannelResult{Delivery: &d, Addressed: addressed}, nil
+}
+
+// SetCommands gives the layer the operations pao's chat commands run (ADR-0026
+// point 2). Unset, a steering command is answered that it is not available. Call
+// it before the layer starts receiving.
+func (l *Layer) SetCommands(ops command.Ops) { l.commands = ops }
+
+func (l *Layer) commandOps() command.Ops {
+	if l.commands == nil {
+		return noCommands{}
+	}
+	return l.commands
+}
+
+// errNoCommands is the answer to a steering command on a layer given no operations.
+var errNoCommands = errors.New("this command is not available on this node")
+
+type noCommands struct{}
+
+func (noCommands) SetStream(context.Context, string, string, int) error { return errNoCommands }
+func (noCommands) View(context.Context, string, string) error           { return errNoCommands }
+func (noCommands) Decide(context.Context, string, string, string) error { return errNoCommands }
+
+// CommandAsOperator runs a /pao command from the operator at a channel that
+// routes as the operator without an identity binding, such as the node's local
+// channel. A command that addresses an agent or a tag is routed as the operator's
+// message; any other command's answer is returned as reply, for the sender alone.
+// ok is false when in.Text is not a command.
+func (l *Layer) CommandAsOperator(ctx context.Context, in Inbound) (reply string, d *Delivery, ok bool, err error) {
+	if !command.Is(in.Text) {
+		return "", nil, false, nil
+	}
+	res := command.Run(ctx, l.commandOps(), command.Caller{Channel: in.Source, Operator: true}, in.Text)
+	if res.Address == nil {
+		return res.Reply, nil, true, nil
+	}
+	in.Target, in.Text = *res.Address, res.Text
+	got, err := l.ReceiveAsOperator(ctx, in)
+	if err != nil {
+		return "", nil, true, err
+	}
+	return "", &got, true, nil
 }

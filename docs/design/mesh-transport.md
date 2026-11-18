@@ -46,7 +46,7 @@ node; but it is not in the ADR's list. The design treats it as coordination.
 **G2. Gate questions and their answers.** The approval gate runs on the node
 that hosts the agent (it answers a hook over a local socket). A question for the
 operator is raised on that node and may be posted straight to a channel, like
-any other outbound message. The answer, `/allow q3`, arrives at the master,
+any other outbound message. The answer, `/pao allow q3`, arrives at the master,
 because the human talks only to the master, and the question id is local to the
 node. So the answer has to be routed back to the node that asked, which needs
 node-qualified question ids and one more coordination message.
@@ -459,7 +459,7 @@ window as its message store. It is node-local data, as point 4 requires.
 
 **Gate (G2).** The gate keeps running on each node. A question carries a
 node-qualified id, `s2.q3`. The node posts it to the channels directly. The
-operator's `/allow s2.q3` arrives at the master, which calls `Node.Decide` on node
+operator's `/pao allow s2.q3` arrives at the master, which calls `Node.Decide` on node
 `s2`. A node outside a mesh keeps the plain `q3`. On the master a bare
 `q3` is its own question; a secondary carries only its own answers, and an answer for
 another node's question is refused there. The node answers only a question it asked

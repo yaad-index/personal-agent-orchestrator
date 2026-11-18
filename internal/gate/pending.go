@@ -67,7 +67,7 @@ func (p *Pending) Ask(ctx context.Context, req Request, canonicalInput string) (
 		p.mu.Unlock()
 	}()
 
-	text := fmt.Sprintf("agent %q wants to run %s: %s\nanswer:  /allow %s   |   /always %s  (allow and remember)   |   /deny %s [reason]",
+	text := fmt.Sprintf("agent %q wants to run %s: %s\nanswer:  /pao allow %s   |   /pao always %s  (allow and remember)   |   /pao deny %s [reason]",
 		req.Agent, req.Tool, clip(canonicalInput, 1000), id, id, id)
 	if err := p.notify(ctx, text); err != nil {
 		return Answer{}, err

@@ -59,9 +59,9 @@ func waitSent(t *testing.T, n *notes) {
 
 func idIn(t *testing.T, text string) string {
 	t.Helper()
-	i := strings.Index(text, "/allow ")
+	i := strings.Index(text, "/pao allow ")
 	require.GreaterOrEqual(t, i, 0, text)
-	return strings.Fields(text[i+len("/allow "):])[0]
+	return strings.Fields(text[i+len("/pao allow "):])[0]
 }
 
 func TestAskAnnouncesAndWaitsForTheAnswer(t *testing.T) {
@@ -202,8 +202,8 @@ func TestAQuestionCarriesTheIdOfTheNodeThatAskedItAndIsAnsweredByThatId(t *testi
 		got <- a
 	}()
 	text := <-asked
-	assert.Contains(t, text, "/allow s2.q1 ")
-	assert.Contains(t, text, "/deny s2.q1 ")
+	assert.Contains(t, text, "/pao allow s2.q1 ")
+	assert.Contains(t, text, "/pao deny s2.q1 ")
 
 	require.ErrorIs(t, p.Answer("q1", Answer{Allow: true}), ErrNoSuchQuestion, "the id is the one that was given out")
 	require.ErrorIs(t, p.Answer("s3.q1", Answer{Allow: true}), ErrNoSuchQuestion, "another node's question is not found here")

@@ -20,6 +20,7 @@ import (
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/adapter"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/comm"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/command"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
 )
 
@@ -190,7 +191,12 @@ func (h *handler) ReceiveFromChannel(_ context.Context, in comm.ChannelInbound) 
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.got = append(h.got, in)
-	return h.res, h.err
+	res := h.res
+	// As the layer does: a command that addresses an agent or a tag says so.
+	if res.Delivery != nil && command.Is(in.Text) {
+		res.Addressed = command.Run(context.Background(), nil, command.Caller{Operator: true}, in.Text).Address
+	}
+	return res, h.err
 }
 func (h *handler) Recipients(string) []string             { return h.recipients }
 func (h *handler) NativeOf(string, string) (string, bool) { return "", false }
@@ -273,13 +279,13 @@ func TestNewNeedsAnEndpointWithTokenAndMethodAndKnowsItsOptions(t *testing.T) {
 
 func TestAPrivateMessageReachesTheLayerWithTheServicesSenderIdAndNativeIds(t *testing.T) {
 	s, h := newServer(t), &handler{}
-	s.queue(priv(1, 55, 900, "@bee hello there"))
+	s.queue(priv(1, 55, 900, "/pao bee hello there"))
 	start(t, s, h, nil)
 	waitFor(t, func() bool { return len(h.inbound()) == 1 }, "inbound")
 
 	in := h.inbound()[0]
-	assert.Equal(t, comm.ChannelInbound{Channel: "chat", Sender: "900", Native: "900:55", Text: "hello there", Raw: "@bee hello there",
-		Target: core.Target{Kind: core.ByName, Value: "bee"}}, in)
+	assert.Equal(t, comm.ChannelInbound{Channel: "chat", Sender: "900", Native: "900:55", Text: "/pao bee hello there", Raw: "/pao bee hello there"}, in,
+		"a command goes to the layer whole: the layer reads it")
 }
 
 func TestAGroupTextGoesToTheLayerMarkedAsAGroupAndNeverAsARegistration(t *testing.T) {
@@ -353,21 +359,37 @@ func TestRegisterIsTheRegistrationEntryPointAndItsSecretIsNotARoutedMessage(t *t
 
 func TestAddressingByNameTagAndStickyAndReply(t *testing.T) {
 	s, h := newServer(t), &handler{res: comm.ChannelResult{Delivery: &comm.Delivery{}}}
-	reply := priv(4, 4, 900, "yes please")
+	reply := priv(5, 5, 900, "yes please")
 	reply.Message.ReplyTo = &struct {
 		ID int64 `json:"message_id"`
 	}{ID: 88}
-	s.queue(priv(1, 1, 900, "@bee one"), priv(2, 2, 900, "two"), priv(3, 3, 900, "#team three"), reply, priv(5, 5, 901, "no one yet"))
+	s.queue(priv(1, 1, 900, "/pao agent bee one"), priv(2, 2, 900, "two"), priv(3, 3, 900, "/pao tag team three"),
+		priv(4, 4, 900, "four"), reply, priv(6, 6, 901, "no one yet"))
 	start(t, s, h, nil)
-	waitFor(t, func() bool { return len(h.inbound()) == 5 }, "five")
+	waitFor(t, func() bool { return len(h.inbound()) == 6 }, "six")
 	in := h.inbound()
-	assert.Equal(t, core.Target{Kind: core.ByName, Value: "bee"}, in[0].Target)
+	assert.Zero(t, in[0].Target, "the first message has no address yet; the layer reads the command")
 	assert.Equal(t, core.Target{Kind: core.ByName, Value: "bee"}, in[1].Target, "no address: the last one the sender used")
 	assert.Equal(t, "two", in[1].Text)
-	assert.Equal(t, core.Target{Kind: core.ByTag, Value: "team"}, in[2].Target)
-	assert.Zero(t, in[3].Target, "a reply leaves the address to the layer: the agent that wrote what it answers")
-	assert.Equal(t, "900:88", in[3].ReplyNative)
-	assert.Zero(t, in[4].Target, "stickiness is per sender")
+	assert.Equal(t, "/pao tag team three", in[2].Text)
+	assert.Equal(t, core.Target{Kind: core.ByTag, Value: "team"}, in[3].Target, "a tag address is sticky too")
+	assert.Zero(t, in[4].Target, "a reply leaves the address to the layer: the agent that wrote what it answers")
+	assert.Equal(t, "900:88", in[4].ReplyNative)
+	assert.Zero(t, in[5].Target, "stickiness is per sender")
+}
+
+// A leading @name or #tag is not an address (ADR-0026 point 9): it is text, and
+// sets no sticky address.
+func TestALeadingAtOrHashIsPlainText(t *testing.T) {
+	s, h := newServer(t), &handler{res: comm.ChannelResult{Delivery: &comm.Delivery{}}}
+	s.queue(priv(1, 1, 900, "@bee one"), priv(2, 2, 900, "#team two"), priv(3, 3, 900, "three"))
+	start(t, s, h, nil)
+	waitFor(t, func() bool { return len(h.inbound()) == 3 }, "three")
+	for i, in := range h.inbound() {
+		assert.Zero(t, in.Target, "message %d", i)
+	}
+	assert.Equal(t, "@bee one", h.inbound()[0].Text)
+	assert.Equal(t, "#team two", h.inbound()[1].Text)
 }
 
 func TestAMessageThatNamesNoOneGetsTheUsageAndAFailureIsToldToTheOperator(t *testing.T) {
@@ -375,7 +397,7 @@ func TestAMessageThatNamesNoOneGetsTheUsageAndAFailureIsToldToTheOperator(t *tes
 	s.queue(priv(1, 1, 900, "hello"))
 	start(t, s, h, nil)
 	waitFor(t, func() bool { return len(s.sentTo(900)) == 1 }, "usage")
-	assert.Contains(t, s.sentTo(900)[0], "@name")
+	assert.Contains(t, s.sentTo(900)[0], "/pao agent <name>")
 
 	s2, h2 := newServer(t), &handler{err: fmt.Errorf("%w: agent %q", core.ErrNoMatch, "ghost")}
 	s2.queue(priv(1, 1, 900, "@ghost hi"))
@@ -396,11 +418,11 @@ func TestAFailureToRecordIsLoggedAndNeverSentToTheSender(t *testing.T) {
 
 func TestASendersMessagesAreHandledOneAtATimeInOrder(t *testing.T) {
 	s, h := newServer(t), &handler{res: comm.ChannelResult{Delivery: &comm.Delivery{}}, slowFirst: 150 * time.Millisecond}
-	s.queue(priv(1, 1, 900, "@bee one"), priv(2, 2, 900, "two"), priv(3, 3, 900, "three"))
+	s.queue(priv(1, 1, 900, "/pao bee one"), priv(2, 2, 900, "two"), priv(3, 3, 900, "three"))
 	start(t, s, h, nil)
 	waitFor(t, func() bool { return len(h.inbound()) == 3 }, "three")
 	in := h.inbound()
-	assert.Equal(t, []string{"one", "two", "three"}, []string{in[0].Text, in[1].Text, in[2].Text}, "a slow message is not overtaken")
+	assert.Equal(t, []string{"/pao bee one", "two", "three"}, []string{in[0].Text, in[1].Text, in[2].Text}, "a slow message is not overtaken")
 	assert.Equal(t, "bee", in[1].Target.Value, "so the next message finds the address the slow one set")
 }
 
@@ -434,7 +456,7 @@ func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
 
 func TestAStickyAddressIsKeptOnlyWhenTheMessageWasRouted(t *testing.T) {
 	s, h := newServer(t), &handler{} // nothing delivered: the sender is a stranger
-	s.queue(priv(1, 1, 900, "@bee hi"), priv(2, 2, 900, "again"))
+	s.queue(priv(1, 1, 900, "/pao bee hi"), priv(2, 2, 900, "again"))
 	start(t, s, h, nil)
 	waitFor(t, func() bool { return len(h.inbound()) == 2 }, "two")
 	assert.Zero(t, h.inbound()[1].Target, "a stranger's address is not remembered")
@@ -587,22 +609,6 @@ func TestTheTokenIsScrubbedFromWhatTheServiceSays(t *testing.T) {
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), tok)
 	assert.Equal(t, "bad request: your token *** is bad", err.Error())
-}
-
-func TestAnAddressNeedsAMarkerAndAName(t *testing.T) {
-	for _, text := range []string{"@", "#", "x", "@ bee", "plain words"} {
-		_, rest, explicit := parseAddress(text)
-		assert.False(t, explicit, text)
-		assert.Equal(t, text, rest, text)
-	}
-	tg, rest, explicit := parseAddress("  @bee   hello world ")
-	assert.True(t, explicit)
-	assert.Equal(t, core.Target{Kind: core.ByName, Value: "bee"}, tg)
-	assert.Equal(t, "hello world", rest)
-	tg, rest, explicit = parseAddress("@bee")
-	assert.True(t, explicit)
-	assert.Equal(t, "bee", tg.Value)
-	assert.Empty(t, rest)
 }
 
 func TestTheRawPayloadKeptForTheRecordIsBounded(t *testing.T) {

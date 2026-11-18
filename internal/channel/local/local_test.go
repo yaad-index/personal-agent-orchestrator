@@ -47,6 +47,18 @@ func (f *fakeLayer) ReceiveAsOperator(_ context.Context, in comm.Inbound) (comm.
 	}, nil
 }
 
+func (f *fakeLayer) CommandAsOperator(ctx context.Context, in comm.Inbound) (string, *comm.Delivery, bool, error) {
+	if !strings.HasPrefix(in.Text, "/pao") {
+		return "", nil, false, nil
+	}
+	if rest, ok := strings.CutPrefix(in.Text, "/pao agent b "); ok {
+		in.Target, in.Text = core.Target{Kind: core.ByName, Value: "b"}, rest
+		d, err := f.ReceiveAsOperator(ctx, in)
+		return "", &d, true, err
+	}
+	return "answer to " + in.Text, nil, true, nil
+}
+
 func (f *fakeLayer) React(id, by, emoji string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -118,6 +130,30 @@ func TestPostMessage(t *testing.T) {
 	assert.Equal(t, "hello", in.Text)
 	assert.Equal(t, core.Target{Kind: core.ByTag, Value: "team"}, in.Target)
 	assert.Equal(t, "earlier", in.ReplyQuote)
+}
+
+// A /pao command posted here is pao's (ADR-0026 point 1): its answer comes back
+// to the poster, and a command that addresses an agent routes its message there.
+func TestPostMessageRunsACommand(t *testing.T) {
+	fl := &fakeLayer{}
+	_, ts := newServer(t, fl)
+
+	resp := do(t, ts, "POST", "/v1/messages", `{"text":"/pao help","target":{"kind":"name","value":"a"}}`, bearer())
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var got deliveryJSON
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
+	assert.Equal(t, deliveryJSON{Results: []resultJSON{}, Reply: "answer to /pao help"}, got)
+	assert.Empty(t, fl.inbound, "nothing routed")
+
+	resp = do(t, ts, "POST", "/v1/messages", `{"text":"/pao agent b hi","target":{"kind":"name","value":"a"}}`, bearer())
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	got = deliveryJSON{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
+	assert.Equal(t, "m1", got.ID)
+	assert.Empty(t, got.Reply)
+	require.Len(t, fl.inbound, 1)
+	assert.Equal(t, core.Target{Kind: core.ByName, Value: "b"}, fl.inbound[0].Target)
+	assert.Equal(t, "hi", fl.inbound[0].Text)
 }
 
 func TestPostMessageDefaultsTheSender(t *testing.T) {

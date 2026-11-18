@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 
@@ -93,15 +94,20 @@ func (v *views) drop(name string) {
 }
 
 // bindings is the layer's channel binding with the view dropped when a binding is
-// let go, so a name spawned again does not inherit a level or a pause.
+// let go, so a name spawned again does not inherit a level, a pause or a kept
+// binding.
 type bindings struct {
 	*comm.Layer
 	views *views
+	saved *savedStreams
 }
 
 func (b bindings) Unbind(agent string) {
 	b.Layer.Unbind(agent)
 	b.views.drop(agent)
+	if err := b.saved.forget(agent); err != nil {
+		slog.Warn("stream binding could not be dropped", "agent", agent, "error", err)
+	}
 }
 
 // streamControl is what binds an agent's output to a channel, sets how it is
@@ -115,6 +121,8 @@ type streamControl struct {
 	send func(ctx context.Context, agent string, m core.Message) error
 	// level is the node's default level.
 	level int
+	// saved keeps the bindings across a restart; nil keeps none.
+	saved *savedStreams
 }
 
 func (c *streamControl) profile(name string) (core.Profile, error) {
@@ -137,20 +145,34 @@ func (c *streamControl) SetStream(agent, channel string, level int, viewer strin
 		return fmt.Errorf("%w: level %d is below 0", temp.ErrBadRequest, level)
 	}
 	if channel == "" {
+		if err := c.saved.forget(agent); err != nil {
+			return err
+		}
 		c.layer.Unbind(agent)
 		c.views.mu.Lock()
 		delete(c.views.m, agent)
 		c.views.mu.Unlock()
 		return nil
 	}
-	if err := c.layer.Bind(agent, channel); err != nil {
-		return fmt.Errorf("%w: %v", temp.ErrBadRequest, err)
+	if !c.layer.HasChannel(channel) {
+		return fmt.Errorf("%w: no channel %q", temp.ErrBadRequest, channel)
 	}
+	b := savedStream{Channel: channel, Level: level, Viewer: viewer}
+	if err := c.saved.set(agent, b); err != nil {
+		return err
+	}
+	c.apply(agent, b)
+	return nil
+}
+
+// apply binds the agent's output as b says. A new binding is a new view: nothing
+// paused carries over to it.
+func (c *streamControl) apply(agent string, b savedStream) {
+	// The channel is known to exist: Bind cannot fail.
+	_ = c.layer.Bind(agent, b.Channel)
 	c.views.mu.Lock()
 	defer c.views.mu.Unlock()
-	// A new binding is a new view: nothing paused carries over to it.
-	c.views.m[agent] = &view{level: level, viewer: viewer}
-	return nil
+	c.views.m[agent] = &view{level: b.Level, viewer: b.Viewer}
 }
 
 func (c *streamControl) check(agent, viewer string) (*view, error) {

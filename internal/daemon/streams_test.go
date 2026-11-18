@@ -46,6 +46,7 @@ func (c *recChannel) texts() []string {
 
 type streamRig struct {
 	sc         *streamControl
+	dir        string
 	layer      *comm.Layer
 	reg        *registry.Registry
 	local      *recChannel
@@ -67,7 +68,10 @@ func newStreamRig(t *testing.T) *streamRig {
 	r.layer.AddChannel(r.local)
 	r.layer.AddChannel(r.other)
 	v := newViews()
-	r.sc = &streamControl{layer: r.layer, reg: r.reg, views: v, level: 1,
+	r.dir = dir
+	saved, err := loadSavedStreams(filepath.Join(dir, "streams.json"))
+	require.NoError(t, err)
+	r.sc = &streamControl{layer: r.layer, reg: r.reg, views: v, level: 1, saved: saved,
 		send: func(ctx context.Context, agent string, m core.Message) error {
 			_, err := r.layer.Send(ctx, agent, m)
 			return err
@@ -256,7 +260,7 @@ func TestLettingABindingGoDropsItsView(t *testing.T) {
 	r := newStreamRig(t)
 	require.NoError(t, r.sc.SetStream("bee", "chat", 3, "alice"))
 	require.NoError(t, r.sc.Pause("bee", "alice"))
-	bindings{r.layer, r.sc.views}.Unbind("bee")
+	bindings{r.layer, r.sc.views, r.sc.saved}.Unbind("bee")
 	level, viewer := r.sc.views.info("bee")
 	assert.Zero(t, level)
 	assert.Empty(t, viewer)

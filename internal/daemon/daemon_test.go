@@ -399,9 +399,9 @@ func nextQuestion(t *testing.T, n *node) string {
 		if m.Kind != "system_event" || m.Sender != "pao" {
 			continue
 		}
-		require.Contains(t, m.Text, "/allow ")
-		i := strings.Index(m.Text, "/allow ")
-		return strings.Fields(m.Text[i+len("/allow "):])[0]
+		require.Contains(t, m.Text, "/pao allow ")
+		i := strings.Index(m.Text, "/pao allow ")
+		return strings.Fields(m.Text[i+len("/pao allow "):])[0]
 	}
 }
 

@@ -390,3 +390,22 @@ func TestExtraBuiltinRulesApplyButAreNeverStored(t *testing.T) {
 	_, ok = again.Lookup("node.pass", "{}")
 	assert.False(t, ok, "and an extra rule only while it is given")
 }
+
+func TestParseAnswer(t *testing.T) {
+	for decision, want := range map[string]Answer{
+		"allow":  {Allow: true},
+		"always": {Allow: true, Remember: true},
+		"deny":   {Reason: "why"},
+	} {
+		got, ok := ParseAnswer(decision, "why")
+		require.True(t, ok, decision)
+		if decision != "deny" {
+			want.Reason = ""
+		}
+		assert.Equal(t, want, got, decision)
+	}
+	for _, d := range []string{"", "Allow", "yes", "allow "} {
+		_, ok := ParseAnswer(d, "")
+		assert.False(t, ok, "%q", d)
+	}
+}
