@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/yaad-index/personal-agent-orchestrator/internal/command"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/msgstore"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/route"
@@ -81,6 +82,7 @@ type Layer struct {
 	identity Identity
 	recorder Recorder
 	defaults Defaults
+	commands command.Ops
 
 	// operatorAllow bounds the operator's routing; nil narrows nothing.
 	operatorAllow func(core.Profile) bool

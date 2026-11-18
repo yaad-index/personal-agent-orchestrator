@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -244,7 +245,7 @@ func TestTempThresholdsDefaultAndValidate(t *testing.T) {
 }
 
 func TestAProfileMayNotBeNamedLikePao(t *testing.T) {
-	for _, name := range core.ReservedNames {
+	for _, name := range append(slices.Clone(core.ReservedNames), core.CommandWords...) {
 		_, err := Load(setup(t, map[string]string{"a.yaml": "name: " + name + "\nbackend: claude-code\n" + startup}))
 		require.Error(t, err, name)
 		assert.ErrorContains(t, err, "reserved")

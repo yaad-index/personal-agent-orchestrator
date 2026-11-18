@@ -105,7 +105,7 @@ func TestAHumanReachesAnAgentThroughTheBotAndHearsBack(t *testing.T) {
 	ctx := context.Background()
 	const person = 4242
 
-	svc.push(chatUpdate(1, 10, person, "@bee hello"))
+	svc.push(chatUpdate(1, 10, person, "/pao bee hello"))
 	require.Eventually(t, func() bool {
 		rej, err := n.client.Rejected(ctx)
 		return err == nil && len(rej) == 1
@@ -119,12 +119,12 @@ func TestAHumanReachesAnAgentThroughTheBotAndHearsBack(t *testing.T) {
 	require.Eventually(t, func() bool { return len(svc.texts(person)) == 1 }, 5*time.Second, 20*time.Millisecond)
 	assert.Equal(t, "registered.", svc.texts(person)[0])
 
-	svc.push(chatUpdate(3, 12, person, "@bee hello"))
+	svc.push(chatUpdate(3, 12, person, "/pao bee hello"))
 	require.Eventually(t, func() bool { return len(svc.texts(person)) == 2 }, 5*time.Second, 20*time.Millisecond)
 	assert.Equal(t, "no access.", svc.texts(person)[1], "registered is not the same as allowed")
 
 	require.NoError(t, n.client.SetOperator(ctx, "alice", true))
-	svc.push(chatUpdate(4, 13, person, "@bee hello again"))
+	svc.push(chatUpdate(4, 13, person, "/pao agent bee hello again"))
 	require.Eventually(t, func() bool {
 		for _, s := range svc.texts(person) {
 			if strings.Contains(s, "echo:") {
@@ -202,9 +202,27 @@ func TestTheChannelsDefaultAgentIsReloadedSwitchedAtRuntimeAndSpeaksUnprefixed(t
 	out = lineWith(t, svc, person, "second unaddressed")
 	assert.True(t, strings.HasPrefix(out, "echo:"), "the new default answers, unprefixed: %q", out)
 
-	svc.push(chatUpdate(4, 13, person, "@bee third addressed"))
+	svc.push(chatUpdate(4, 13, person, "/pao bee third addressed"))
 	out = lineWith(t, svc, person, "third addressed")
 	assert.True(t, strings.HasPrefix(out, "[bee]: "), "an agent that is not the default is named: %q", out)
+
+	// A leading @name is no address any more (ADR-0026 point 9): the message goes
+	// where the sender last addressed, as the text it was sent as.
+	svc.push(chatUpdate(5, 14, person, "@wasp fourth"))
+	out = lineWith(t, svc, person, "@wasp fourth")
+	assert.Equal(t, "[bee]: echo: [alice]: @wasp fourth", out)
+
+	// A command is answered to the sender and reaches no agent (ADR-0026 points 1 and 5).
+	svc.push(chatUpdate(6, 15, person, "/pao help"))
+	out = lineWith(t, svc, person, "pao commands:")
+	assert.Contains(t, out, "/pao stream <agent>")
+	svc.push(chatUpdate(7, 16, person, "/pao stream bee"))
+	lineWith(t, svc, person, "bee's output goes to chat only")
+	svc.push(chatUpdate(8, 17, person, "/pao stream nobody"))
+	lineWith(t, svc, person, `no agent "nobody"`)
+	for _, s := range svc.texts(person) {
+		assert.NotContains(t, s, "echo: [alice]: /pao", "no command reached an agent")
+	}
 
 	_, err = n.client.SetDefault(ctx, "local", "bee")
 	assert.ErrorContains(t, err, "404: no chat channel", "the local channel takes no chat inbound")

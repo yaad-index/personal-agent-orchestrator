@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -710,9 +711,9 @@ func TestAnUnknownRecipeLooksLikeADeniedOneToAnyoneButTheOperator(t *testing.T) 
 	assert.ErrorIs(t, err, ErrNoRecipe, "the operator is told which")
 }
 
-func TestSpawnRefusesTheNamesPaoSpeaksAs(t *testing.T) {
+func TestSpawnRefusesTheNamesPaoSpeaksAsAndItsCommandWords(t *testing.T) {
 	e := newEnv(t, map[string]string{"researcher": recipeYAML})
-	for _, name := range core.ReservedNames {
+	for _, name := range append(slices.Clone(core.ReservedNames), core.CommandWords...) {
 		_, err := e.m.Spawn(context.Background(), SpawnRequest{Recipe: "researcher", Name: name, Requester: access.Operator})
 		require.ErrorIs(t, err, ErrBadRequest, name)
 	}

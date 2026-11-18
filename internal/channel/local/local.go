@@ -38,6 +38,9 @@ type Layer interface {
 	// ReceiveAsOperator routes a message from the operator, bounded by what the
 	// operator may reach.
 	ReceiveAsOperator(ctx context.Context, in comm.Inbound) (comm.Delivery, error)
+	// CommandAsOperator runs a /pao command (ADR-0026); ok is false for text that
+	// is not one.
+	CommandAsOperator(ctx context.Context, in comm.Inbound) (reply string, d *comm.Delivery, ok bool, err error)
 	React(id, by, emoji string) error
 }
 
@@ -185,8 +188,10 @@ type resultJSON struct {
 }
 
 type deliveryJSON struct {
-	ID      string       `json:"id"`
+	ID      string       `json:"id,omitempty"`
 	Results []resultJSON `json:"results"`
+	// Reply is the answer to a /pao command that routed nothing, for the sender.
+	Reply string `json:"reply,omitempty"`
 }
 
 // qualify names a message id by its node when the layer is part of a mesh, so the id
@@ -218,7 +223,7 @@ func (s *Server) postMessage(w http.ResponseWriter, r *http.Request) {
 		sender = defaultSender
 	}
 
-	d, err := s.layer.ReceiveAsOperator(r.Context(), comm.Inbound{
+	in := comm.Inbound{
 		Source:     Source,
 		Sender:     sender,
 		Text:       req.Text,
@@ -226,8 +231,21 @@ func (s *Server) postMessage(w http.ResponseWriter, r *http.Request) {
 		Reply:      req.Reply,
 		ReplyQuote: req.ReplyQuote,
 		Target:     core.Target{Kind: kind, Value: req.Target.Value},
-	})
+	}
+	// A /pao command is pao's, whatever the target (ADR-0026 point 1).
+	reply, cd, isCommand, err := s.layer.CommandAsOperator(r.Context(), in)
 	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	if isCommand && cd == nil {
+		writeJSON(w, http.StatusOK, deliveryJSON{Results: []resultJSON{}, Reply: reply})
+		return
+	}
+	var d comm.Delivery
+	if isCommand {
+		d = *cd
+	} else if d, err = s.layer.ReceiveAsOperator(r.Context(), in); err != nil {
 		s.fail(w, err)
 		return
 	}
@@ -285,15 +303,8 @@ func (s *Server) postDecision(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "no gate is configured on this node")
 		return
 	}
-	var ans gate.Answer
-	switch req.Decision {
-	case "allow":
-		ans = gate.Answer{Allow: true}
-	case "always":
-		ans = gate.Answer{Allow: true, Remember: true}
-	case "deny":
-		ans = gate.Answer{Reason: req.Reason}
-	default:
+	ans, ok := gate.ParseAnswer(req.Decision, req.Reason)
+	if !ok {
 		writeError(w, http.StatusBadRequest, `decision must be "allow", "always" or "deny"`)
 		return
 	}

@@ -279,7 +279,7 @@ func (b *Bot) Run(ctx context.Context) error {
 	return nil
 }
 
-const usage = "address an agent: @name or #tag, then the message."
+const usage = "address an agent: /pao agent <name> <message>, or see /pao help."
 
 // handle acts on one update. A text from a person is considered. One from a group
 // goes to the layer marked as such, which records and denies it (ADR-0019 point 6);
@@ -309,12 +309,13 @@ func (b *Bot) handle(ctx context.Context, u *models.Update) {
 		in.ReplyNative = native(m.Chat.ID, m.ReplyToMessage.ID)
 	}
 
-	explicit := false
 	if rest, ok := cutCommand(m.Text, "/register"); ok {
 		in.Registration, in.Text = true, strings.TrimSpace(rest)
 	} else {
-		in.Target, in.Text, explicit = parseAddress(m.Text)
-		if !explicit && m.ReplyToMessage == nil {
+		// A /pao command names its own target, or none; the layer reads it. Any other
+		// text goes where the sender last addressed, unless it answers a message.
+		in.Text = m.Text
+		if m.ReplyToMessage == nil {
 			b.mu.Lock()
 			in.Target = b.last[sender]
 			b.mu.Unlock()
@@ -330,9 +331,9 @@ func (b *Bot) handle(ctx context.Context, u *models.Update) {
 	case err != nil:
 		b.reply(ctx, m.Chat.ID, truncate(err.Error(), 400))
 	default:
-		if explicit && res.Delivery != nil {
+		if res.Addressed != nil && res.Delivery != nil {
 			b.mu.Lock()
-			b.last[sender] = in.Target
+			b.last[sender] = *res.Addressed
 			b.mu.Unlock()
 		}
 		if res.Reply != "" {
@@ -350,23 +351,6 @@ func cutCommand(text, cmd string) (string, bool) {
 		return tail, true
 	}
 	return "", false
-}
-
-// parseAddress reads a leading "@name" or "#tag" off a message. explicit is false,
-// and text unchanged, when there is none.
-func parseAddress(text string) (t core.Target, rest string, explicit bool) {
-	text = strings.TrimSpace(text)
-	head, tail, _ := strings.Cut(text, " ")
-	if len(head) < 2 {
-		return core.Target{}, text, false
-	}
-	switch head[0] {
-	case '@':
-		return core.Target{Kind: core.ByName, Value: head[1:]}, strings.TrimSpace(tail), true
-	case '#':
-		return core.Target{Kind: core.ByTag, Value: head[1:]}, strings.TrimSpace(tail), true
-	}
-	return core.Target{}, text, false
 }
 
 func (b *Bot) reply(ctx context.Context, chat int64, text string) {

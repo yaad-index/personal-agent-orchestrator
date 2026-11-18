@@ -152,7 +152,7 @@ func TestAnAgentsKillOfAPeerWaitsForTheOperatorsAnswer(t *testing.T) {
 	q := n.next(t)
 	require.Equal(t, "pao", q.Sender)
 	require.Contains(t, q.Text, `agent "tmp-a" wants to run pao.kill`)
-	id := regexp.MustCompile(`/allow (q\d+)`).FindStringSubmatch(q.Text)
+	id := regexp.MustCompile(`/pao allow (q\d+)`).FindStringSubmatch(q.Text)
 	require.Len(t, id, 2, q.Text)
 	select {
 	case r := <-done:
@@ -186,7 +186,7 @@ func TestADeniedAgentKillKillsNothing(t *testing.T) {
 		done <- res
 	}()
 	q := n.next(t)
-	id := regexp.MustCompile(`/allow (q\d+)`).FindStringSubmatch(q.Text)
+	id := regexp.MustCompile(`/pao allow (q\d+)`).FindStringSubmatch(q.Text)
 	require.Len(t, id, 2)
 	require.NoError(t, n.client.Decide(context.Background(), id[1], "deny", "not this one"))
 

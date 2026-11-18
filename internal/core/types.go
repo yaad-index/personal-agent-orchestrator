@@ -11,6 +11,12 @@ import (
 // pao or the operator could pass its words off as theirs.
 var ReservedNames = []string{"pao", "operator"}
 
+// CommandWords are the words of pao's chat commands (ADR-0026 point 9). An agent
+// must not carry one as its name: "/pao <name> <message>" addresses an agent, so an
+// agent named like a command could never be reached that way. The command table
+// is checked against this list.
+var CommandWords = []string{"agent", "allow", "always", "deny", "help", "stream", "tag", "view"}
+
 // Profile is the agent-intrinsic configuration of one agent (ADR-0001 point 4).
 // Only the fields the built milestones consume are present; later milestones
 // add the per-backend specifics ADR-0011 lists (transcript, hooks, startup).

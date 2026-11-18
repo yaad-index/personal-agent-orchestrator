@@ -117,6 +117,9 @@ func (c ChatCmd) run(ctx context.Context, in io.Reader, out, errw io.Writer) err
 				_, _ = fmt.Fprintf(errw, "send failed: %v\n", err)
 				continue
 			}
+			if rep.Reply != "" {
+				_, _ = fmt.Fprintln(out, rep.Reply)
+			}
 			for _, r := range rep.Results {
 				if r.Error != "" {
 					_, _ = fmt.Fprintf(errw, "%s: %s\n", r.Agent, r.Error)

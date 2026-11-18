@@ -47,6 +47,21 @@ type Answer struct {
 	Reason   string
 }
 
+// ParseAnswer reads the operator's decision on a question: "allow", "always"
+// (allow, and remember it) or "deny", with the reason a denial gives. ok is false
+// for any other decision.
+func ParseAnswer(decision, reason string) (ans Answer, ok bool) {
+	switch decision {
+	case "allow":
+		return Answer{Allow: true}, true
+	case "always":
+		return Answer{Allow: true, Remember: true}, true
+	case "deny":
+		return Answer{Reason: reason}, true
+	}
+	return Answer{}, false
+}
+
 // Asker puts a question to the operator and waits for the answer.
 type Asker interface {
 	Ask(ctx context.Context, req Request, canonicalInput string) (Answer, error)
