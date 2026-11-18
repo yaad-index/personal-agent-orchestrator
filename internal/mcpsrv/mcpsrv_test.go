@@ -741,3 +741,30 @@ func TestSpawnPassesExtraTags(t *testing.T) {
 	_ = structured[spawnOutput](t, cs, "spawn_agent", map[string]any{"recipe": "r", "tags": []string{"night", "late"}})
 	assert.Equal(t, []opCall{{"spawn", access.Operator, []string{"r", "", "", "tags=night,late"}}}, calls)
 }
+
+func TestForgettingASubjectClosesItsSessionsAndLeavesOthersAlone(t *testing.T) {
+	agents := AgentResolver{Tokens: fakeTokens{"tok-a": "a", "tok-b": "b"}, Alive: func(string) bool { return true }}
+	srv := New(sampleOps, agents)
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+	a := connect(t, ts.URL, "tok-a")
+	b := connect(t, ts.URL, "tok-b")
+	_, err := a.ListTools(context.Background(), nil)
+	require.NoError(t, err)
+
+	srv.Forget(access.Agent("a"))
+	srv.mu.Lock()
+	_, kept := srv.subjects[access.Agent("a")]
+	_, keptB := srv.subjects[access.Agent("b")]
+	srv.mu.Unlock()
+	assert.False(t, kept, "nothing is kept for a")
+	assert.True(t, keptB)
+	_, err = a.ListTools(context.Background(), nil)
+	assert.Error(t, err, "a's session is gone")
+	_, err = b.ListTools(context.Background(), nil)
+	assert.NoError(t, err, "b's is not")
+	_, err = connect(t, ts.URL, "tok-a").ListTools(context.Background(), nil)
+	assert.NoError(t, err, "a connects again on a new server")
+
+	srv.Forget(access.Agent("nobody"))
+}

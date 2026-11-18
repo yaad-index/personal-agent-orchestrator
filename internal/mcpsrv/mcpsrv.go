@@ -236,6 +236,23 @@ func (s *Server) sync(ctx context.Context, who access.Subject, o *offer) {
 	}
 }
 
+// Forget drops who's server and closes its open sessions, so a subject that has
+// gone leaves nothing behind. It is called when an agent's session with its
+// backend ends. A request who makes later is given a new server, built from its
+// access as it stands then.
+func (s *Server) Forget(who access.Subject) {
+	s.mu.Lock()
+	o, ok := s.subjects[who]
+	delete(s.subjects, who)
+	s.mu.Unlock()
+	if !ok {
+		return
+	}
+	for ss := range o.srv.Sessions() {
+		_ = ss.Close()
+	}
+}
+
 // Refresh brings every connected subject's tools in line with the access as it
 // stands, so a session open now hears of a tool it was given since it listed
 // them. It is called when grants change; a revoked tool needs no Refresh to be

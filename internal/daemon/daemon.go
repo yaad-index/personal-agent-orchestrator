@@ -176,6 +176,15 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	if err != nil {
 		return err
 	}
+	// The MCP server is made after the control plane, which it asks whether an
+	// agent is alive. What it keeps for an agent is let go when the agent's
+	// session ends.
+	var mcpServers atomic.Pointer[mcpsrv.Server]
+	forgetMCP := func(agent string) {
+		if s := mcpServers.Load(); s != nil {
+			s.Forget(access.Agent(agent))
+		}
+	}
 	ctlOpts = append(ctlOpts,
 		control.WithEnv(func(agent string) []string {
 			env := []string{"PAO_AGENT=" + agent, "PAO_GATE_SOCKET=" + gateSock, backend.EnvAgentToken + "=" + tokens.Mint(agent)}
@@ -188,7 +197,10 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 			s, err := backends.Table().Command(p, launch)
 			return s.Command, s.Env, err
 		}),
-		control.WithOnStop(tokens.Revoke))
+		control.WithOnStop(func(agent string) {
+			tokens.Revoke(agent)
+			forgetMCP(agent)
+		}))
 	plane := control.New(tmux.New(tmux.WithSocket(cfg.Orchestrator.TmuxSocket)), ctlOpts...)
 
 	hook := &launchHook{plane: plane}
@@ -263,6 +275,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		}},
 	}
 	mcpServer := mcpsrv.New(ops, resolver, mcpsrv.WithAuthorizer(auth), mcpsrv.WithGate(gt), mcpsrv.WithProxy(proxy))
+	mcpServers.Store(mcpServer)
 	mcpHandler := mcpServer.Handler()
 
 	var meshNode *transport.Node
