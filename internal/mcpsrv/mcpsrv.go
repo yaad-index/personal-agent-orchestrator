@@ -25,6 +25,7 @@ import (
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/access"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/gate"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/upstream"
 )
 
 // Resolver says which subject a bearer token identifies. A token it does not
@@ -92,12 +93,24 @@ func (c Chain) Resolve(token string) (access.Subject, bool) {
 
 // Server is pao's MCP server.
 type Server struct {
-	srv      *mcp.Server
 	resolver Resolver
 	auth     access.Authorizer
 	gate     Gate
 	ops      Operations
+	proxy    Proxy
 }
+
+// Proxy is the upstream servers' tools pao offers as its own (ADR-0024).
+type Proxy interface {
+	// Tools lists the upstream tools on offer now.
+	Tools(ctx context.Context) []upstream.Tool
+	// Call calls the upstream tool of that pao-side name with args, once.
+	Call(ctx context.Context, name string, args json.RawMessage) (*mcp.CallToolResult, error)
+}
+
+// WithProxy offers the proxy's tools, each to the subjects whose access reaches
+// it. Without one, pao offers only its own tools.
+func WithProxy(p Proxy) Option { return func(s *Server) { s.proxy = p } }
 
 // Option tunes a Server.
 type Option func(*Server)
@@ -150,16 +163,54 @@ func New(ops Operations, r Resolver, opts ...Option) *Server {
 	for _, o := range opts {
 		o(s)
 	}
-	s.srv = mcp.NewServer(&mcp.Implementation{Name: "pao", Version: "0"}, nil)
-	s.addTools()
 	return s
+}
+
+// serverFor builds the server one request sees: pao's own tools, and the proxied
+// tools the subject's access reaches. A tool out of reach is not on it at all,
+// so asking for one is answered exactly as asking for a tool that does not exist
+// (ADR-0024 point 4). The server is built for each request, from the access as
+// it stands then.
+func (s *Server) serverFor(ctx context.Context, who access.Subject) *mcp.Server {
+	srv := mcp.NewServer(&mcp.Implementation{Name: "pao", Version: "0"}, nil)
+	s.addTools(srv)
+	if s.proxy != nil {
+		for _, t := range s.proxy.Tools(ctx) {
+			if access.Allowed(s.auth, who, access.CallTool, access.ToolResource(t.Name, t.Tags)) {
+				srv.AddTool(&mcp.Tool{Name: t.Name, Description: t.Description, InputSchema: t.InputSchema}, s.proxied(t.Name))
+			}
+		}
+	}
+	return srv
+}
+
+// proxied calls an upstream tool for the caller: the caller reached it, since it
+// is on the caller's server; the gate judges pao's call; then pao makes it.
+func (s *Server) proxied(name string) mcp.ToolHandler {
+	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := req.Params.Arguments
+		if err := s.approve(ctx, subject(req), ProxiedAction(name), args); err != nil {
+			return toolError(err), nil
+		}
+		res, err := s.proxy.Call(ctx, name, args)
+		if err != nil {
+			return toolError(err), nil
+		}
+		return res, nil
+	}
+}
+
+func toolError(err error) *mcp.CallToolResult {
+	res := &mcp.CallToolResult{}
+	res.SetError(err)
+	return res
 }
 
 // Handler returns the HTTP handler to mount at the MCP endpoint. It refuses a
 // request without a token that resolves to a subject before the protocol sees
 // it.
 func (s *Server) Handler() http.Handler {
-	h := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return s.srv },
+	h := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server { return s.serverFor(r.Context(), requester(r)) },
 		&mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true})
 	return auth.RequireBearerToken(s.verify, &auth.RequireBearerTokenOptions{AllowMissingExpiration: true})(h)
 }
@@ -184,6 +235,17 @@ func subjectName(s access.Subject) string {
 		return "operator"
 	}
 	return "agent:" + s.Name
+}
+
+// requester returns who an HTTP request is made as: the subject its token
+// resolved to, or nobody.
+func requester(r *http.Request) access.Subject {
+	info := auth.TokenInfoFromContext(r.Context())
+	if info == nil {
+		return access.Subject{}
+	}
+	sub, _ := info.Extra[subjectKey].(access.Subject)
+	return sub
 }
 
 // subject returns who a tool call is made as. A call that carries no resolved

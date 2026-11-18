@@ -86,7 +86,8 @@ func New(cfg config.MCPUpstream, token string) *Server {
 func (s *Server) Name() string { return s.cfg.Name }
 
 // Tools lists the configured tools the server has, in pao-side name order. A
-// configured tool the server does not have is left out and named in missing.
+// configured tool the server does not have, or offers with an input schema that
+// is not a JSON object schema, is left out and named in missing.
 func (s *Server) Tools(ctx context.Context) (tools []Tool, missing []string, err error) {
 	ctx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
@@ -101,7 +102,7 @@ func (s *Server) Tools(ctx context.Context) (tools []Tool, missing []string, err
 			return nil, nil, s.fail("list its tools", err)
 		}
 		conf, ok := s.cfg.Tools[t.Name]
-		if !ok || seen[t.Name] {
+		if !ok || seen[t.Name] || !objectSchema(t.InputSchema) {
 			continue
 		}
 		seen[t.Name] = true
@@ -190,6 +191,33 @@ func (s *Server) fail(what string, err error) error {
 		msg = msg[:300] + "…"
 	}
 	return fmt.Errorf("upstream %q could not %s: %s", s.cfg.Name, what, msg)
+}
+
+// objectSchema reports whether an input schema describes a JSON object, the only
+// kind of input an MCP tool takes.
+func objectSchema(schema any) bool {
+	b, err := json.Marshal(schema)
+	if err != nil {
+		return false
+	}
+	var m map[string]any
+	if json.Unmarshal(b, &m) != nil {
+		return false
+	}
+	return m["type"] == "object"
+}
+
+// Offered is every tool the configuration offers, as the configuration alone
+// says: names, tags and risk, without anything only a server can say.
+func Offered(cfg []config.MCPUpstream) []Tool {
+	var tools []Tool
+	for _, u := range cfg {
+		for remote, t := range u.Tools {
+			tools = append(tools, Tool{Name: config.ToolName(u.Name, remote), Upstream: u.Name, Remote: remote, Tags: t.Tags, Risk: t.Risk})
+		}
+	}
+	sort.Slice(tools, func(i, j int) bool { return tools[i].Name < tools[j].Name })
+	return tools
 }
 
 func (s *Server) describe(d string) string {

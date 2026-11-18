@@ -11,6 +11,7 @@ import (
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/access"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/gate"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/upstream"
 )
 
 // AgentInfo is one agent as a tool reports it.
@@ -81,6 +82,11 @@ const DefaultServerName = "pao"
 // ToolNames are the names of pao's own tools.
 var ToolNames = []string{"list_agents", "list_recipes", "send_message", "spawn_agent", "kill_agent", "list_harvests", "read_harvest"}
 
+// ProxiedAction is the name the gate judges pao's call of a proxied tool by:
+// "pao." and the tool's pao-side name. A backend's own tool names never begin
+// with "pao.", so no rule for one can match pao's call, nor the other way round.
+func ProxiedAction(name string) string { return "pao." + name }
+
 // GateRules are the builtin gate rules pao's MCP surface brings: what each of
 // pao's actions is read as (reading is low risk; the rest is unclassified, so
 // asked unless a stored rule says otherwise), and, at the calling agent's own
@@ -88,14 +94,27 @@ var ToolNames = []string{"list_agents", "list_recipes", "send_message", "spawn_a
 // gives the tool (mcp__<server>__<tool>). That call is not the agent acting: pao
 // is, and pao's action is judged here. A backend that names the server
 // otherwise is not matched, so its hook asks too: twice, never not at all.
-func GateRules(server string) []gate.Rule {
+//
+// proxied are the upstream tools pao offers. Each brings the same allow at the
+// hook, and pao's call of it is read at the risk the configuration gives it; a
+// tool with no risk is unclassified, so asked.
+func GateRules(server string, proxied ...upstream.Tool) []gate.Rule {
 	rules := []gate.Rule{
 		{Tool: ActionList, Risk: gate.RiskRead},
 		{Tool: ActionListRecipes, Risk: gate.RiskRead},
 		{Tool: ActionListHarvests, Risk: gate.RiskRead},
 		{Tool: ActionReadHarvest, Risk: gate.RiskRead},
 	}
-	for _, t := range ToolNames {
+	for _, t := range proxied {
+		if t.Risk != "" {
+			rules = append(rules, gate.Rule{Tool: ProxiedAction(t.Name), Risk: t.Risk})
+		}
+	}
+	names := append([]string{}, ToolNames...)
+	for _, t := range proxied {
+		names = append(names, t.Name)
+	}
+	for _, t := range names {
 		rules = append(rules, gate.Rule{Tool: "mcp__" + server + "__" + t, Effect: gate.EffectAllow})
 	}
 	return rules
@@ -149,42 +168,42 @@ type listRecipesOutput struct {
 	Recipes []RecipeInfo `json:"recipes"`
 }
 
-func (s *Server) addTools() {
-	mcp.AddTool(s.srv, &mcp.Tool{
+func (s *Server) addTools(srv *mcp.Server) {
+	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "list_agents",
 		Description: "List the agents pao runs: configured and temporary, with name, tags, state and, for a temporary agent, its recipe, channel and status flag. Only agents you may see are listed.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 	}, s.listAgents)
-	mcp.AddTool(s.srv, &mcp.Tool{
+	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "list_recipes",
 		Description: "List the recipes a temporary agent can be spawned from.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 	}, s.listRecipes)
 
 	notDestructive := false
-	mcp.AddTool(s.srv, &mcp.Tool{
+	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "send_message",
 		Description: "Send a message to an agent by name, or to every agent carrying a tag. The recipients read it as `[you]: text` with your own name; you cannot choose another. You can only address agents you are allowed to; one you may not address is reported as not found.",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: &notDestructive},
 	}, s.sendMessage)
 
 	destructive := true
-	mcp.AddTool(s.srv, &mcp.Tool{
+	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "spawn_agent",
 		Description: "Start a temporary agent from a recipe, in a fresh isolated working directory, with its stream bound to a channel. Returns its name. Spawning is gated: you may be asked to wait for the operator.",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: &notDestructive},
 	}, s.spawnAgent)
-	mcp.AddTool(s.srv, &mcp.Tool{
+	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "kill_agent",
 		Description: "Tear a temporary agent down. Its outputs are harvested first and the harvest id is returned; nothing the agent made is lost. Killing is gated: you may be asked to wait for the operator.",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: &destructive},
 	}, s.killAgent)
-	mcp.AddTool(s.srv, &mcp.Tool{
+	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "list_harvests",
 		Description: "List the harvests of killed temporary agents that you may read, newest first.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 	}, s.listHarvests)
-	mcp.AddTool(s.srv, &mcp.Tool{
+	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "read_harvest",
 		Description: "Read a harvest. With only an id it lists the harvest's files; with a path it returns that file's content (text as is, anything else base64).",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},

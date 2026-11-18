@@ -54,6 +54,9 @@ const (
 	Watch Action = "watch"
 	// Lifecycle starts, stops or restarts a configured agent (ADR-0007).
 	Lifecycle Action = "lifecycle"
+	// CallTool calls a tool pao offers on behalf of an upstream server (ADR-0024
+	// point 5).
+	CallTool Action = "call_tool"
 )
 
 // ResourceKind is the kind of a resource: a column group of the matrix (ADR-0005
