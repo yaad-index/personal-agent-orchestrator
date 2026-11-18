@@ -28,10 +28,11 @@ An operator who is away from the node therefore cannot change what reaches them,
 
 8. **A command's effect lasts as long as the same change made at the operator surface.** A change made from chat is kept, or lost on restart, exactly as the same change made at the operator surface is. Whether a stream binding survives a node restart is a property of the binding, not of where it was set.
 
+9. **Addressing uses only pao's own syntax.** An agent is addressed as `/pao agent <name> <message>`, and a tag as `/pao tag <tag> <message>`. `/pao <name> <message>` is the short form for an agent. For that reason pao's command words are reserved, and no agent may take one as its name. No form reuses a platform's own syntax. A leading `@name` or `#tag` is not an address: it is ordinary text, routed like any message that names no target (ADR-0023 point 4). This replaces the `@name` and `#tag` prefixes of the first build. It also decides the tag form and the short form that ADR-0023 point 6 deferred.
+
 ## What this ADR deliberately does NOT decide
 
-- The exact command words and argument forms beyond `/pao agent <name> <message>`. These include the tag-addressing form that ADR-0023 point 6 deferred and a shorthand for it.
-- Whether the existing `@name` and `#tag` prefixes stay as shorthands.
+- The exact command words and argument forms beyond the addressing forms of point 9.
 - Which operations are in the first build.
 - Whether stream bindings and levels persist across a restart.
 - The button layout per platform, and how a platform's own command menu lists `/pao`.
@@ -39,4 +40,4 @@ An operator who is away from the node therefore cannot change what reaches them,
 
 ## Consequences
 
-An operator can steer agents and answer the gate from chat, where they already read the output. The node's command line becomes one front of several, not the only one. Text that starts with `/pao` can no longer reach an agent by accident. Because chat commands reuse the operator surface's operations and checks, chat adds a way in but no new authority: what a chat subject can do is what its subject can do at the operator surface, minus administration. Answers go only to the sender, so a command's output does not spread to channels other people read. Help and buttons come from the command table, so what is shown follows what exists. Each operation that is exposed in chat becomes part of what a stolen chat account can do as the operator. That is the reason administration stays off chat, and the reason the steering set is a deliberate list rather than everything the command line offers.
+An operator can steer agents and answer the gate from chat, where they already read the output. The node's command line becomes one front of several, not the only one. Text that starts with `/pao` can no longer reach an agent by accident. Addressing an agent by `@name` or a tag by `#tag` stops working. Such a message then goes to the channel's default agent as text, so anyone who uses them today has to move to the `/pao` forms. Because chat commands reuse the operator surface's operations and checks, chat adds a way in but no new authority: what a chat subject can do is what its subject can do at the operator surface, minus administration. Answers go only to the sender, so a command's output does not spread to channels other people read. Help and buttons come from the command table, so what is shown follows what exists. Each operation that is exposed in chat becomes part of what a stolen chat account can do as the operator. That is the reason administration stays off chat, and the reason the steering set is a deliberate list rather than everything the command line offers.
