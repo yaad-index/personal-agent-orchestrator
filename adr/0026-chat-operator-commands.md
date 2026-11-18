@@ -1,6 +1,6 @@
 # ADR 0026: Operator commands from chat
 
-**Status:** Proposed (2026-11-18)
+**Status:** Accepted (2026-11-18)
 
 Extends ADR-0005 (access and management surface), ADR-0009 (channels), ADR-0010 (message model), ADR-0022 (operator subjects), ADR-0023 (agent I/O and channel bindings).
 
@@ -16,7 +16,7 @@ An operator who is away from the node therefore cannot change what reaches them,
 
 2. **A chat command is the operator's existing operation, not a new one.** Each command maps to an operation the node already exposes to its operator surface, such as the stream binding, the view controls, a channel's default agent, an agent's start, stop and restart, and the gate's answer. It runs through the same checks as when it is called from the command line. A command can do nothing from chat that the sender could not do at the operator surface. Answers and failures read the same either way.
 
-3. **Who may run a command is decided per command, from the sender's subject.** The sender is attributed by the channel's identity binding (ADR-0019 point 3). Steering commands, which change a binding, a view, a default or an agent's state, and answering an approval question, are for a subject routed as the operator (ADR-0022). They are limited to the agents that subject reaches under the access matrix (ADR-0012). A subject that is not the operator may use `/pao help` and address the agents it may reach. Any other command from such a subject is refused as unknown. It is not refused as forbidden, so the refusal does not reveal what exists (ADR-0012 point 1).
+3. **Who may run a command is decided per command, from the sender's subject.** The sender is attributed by the channel's identity binding (ADR-0019 point 3). Steering commands, which change a binding, a view, a default or an agent's state, and answering an approval question, are for a subject routed as the operator (ADR-0022). They are limited to the agents that subject reaches under the access matrix (ADR-0012). A subject that is not the operator may use `/pao help` and address the agents it may reach. Any other command from such a subject is refused as unknown. It is not refused as forbidden, so the refusal does not reveal what exists (ADR-0012 point 4).
 
 4. **Administration stays at the operator surface.** Commands that change who may do what are not offered in chat. These cover grants, subjects and identity bindings, invitations, the operator flag (ADR-0022 point 2), channels and the node's configuration. They stay where ADR-0005 point 3 puts them, so a chat account that is taken over cannot widen its own access.
 
