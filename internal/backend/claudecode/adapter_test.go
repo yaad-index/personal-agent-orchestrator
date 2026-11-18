@@ -19,16 +19,17 @@ import (
 
 var launch = backend.Launch{MCPServer: "pao", Hook: "'/opt/pao it''s' hook", HookTimeout: 11 * time.Minute, Home: "/home/u"}
 
-// argv runs the command a profile is started with through a shell, with
-// printf as the program, and returns the arguments the program was given.
-func argv(t *testing.T, p core.Profile) []string {
+// launched runs the command a profile is started with through a shell, with
+// printf as the program, and returns the arguments the program was given and
+// the environment entries the adapter adds.
+func launched(t *testing.T, p core.Profile) ([]string, []string) {
 	t.Helper()
 	p.Startup.Command = `printf '%s\0'`
-	cmd, err := Adapter{}.Command(p, launch)
+	s, err := Adapter{}.Command(p, launch)
 	require.NoError(t, err)
-	out, err := exec.Command("sh", "-c", cmd).Output()
-	require.NoError(t, err, "the command does not run: %s", cmd)
-	return strings.Split(strings.TrimSuffix(string(out), "\x00"), "\x00")
+	out, err := exec.Command("sh", "-c", s.Command).Output()
+	require.NoError(t, err, "the command does not run: %s", s.Command)
+	return strings.Split(strings.TrimSuffix(string(out), "\x00"), "\x00"), s.Env
 }
 
 func value(t *testing.T, args []string, opt string) string {
@@ -63,11 +64,14 @@ func settingsOf(t *testing.T, args []string) settings {
 
 func TestByDefaultTheAgentLoadsOnlyItsProfileAndPao(t *testing.T) {
 	p := core.Profile{Name: "a", Backend: Name, Workdir: "/srv/agents/a"}
-	args := argv(t, p)
+	args, env := launched(t, p)
 
 	assert.Contains(t, args, "--strict-mcp-config", "mcp")
 	assert.Contains(t, args, "--disable-slash-commands", "skills")
+	assert.Contains(t, env, "CLAUDE_CODE_SYNC_SKILLS=0", "skills synced from the account")
 	assert.Equal(t, "project,local", value(t, args, "--setting-sources"), "settings")
+	assert.Contains(t, env, "CLAUDE_CODE_SYNC_PLUGINS=0", "plugins synced from the account")
+	assert.Len(t, env, 2, "and nothing else")
 
 	s := settingsOf(t, args)
 	require.NotNil(t, s.AutoMemory, "memory")
@@ -100,22 +104,26 @@ func TestByDefaultTheAgentLoadsOnlyItsProfileAndPao(t *testing.T) {
 
 func TestEachInheritedCategoryDropsExactlyItsOwnOption(t *testing.T) {
 	base := core.Profile{Name: "a", Backend: Name, Workdir: "/srv/agents/a"}
-	isolated := func(args []string) map[backend.Category]bool {
-		s := settingsOf(t, args)
-		return map[backend.Category]bool{
-			backend.Instructions: s.Excludes != nil,
-			backend.MCP:          slices.Contains(args, "--strict-mcp-config"),
-			backend.Skills:       slices.Contains(args, "--disable-slash-commands"),
-			backend.Settings:     slices.Contains(args, "--setting-sources"),
-			backend.Memory:       s.AutoMemory != nil,
-		}
+	// Each way a category is shut out, by the category it belongs to.
+	type signal struct {
+		c  backend.Category
+		on func(args, env []string) bool
+	}
+	signals := map[string]signal{
+		"claudeMdExcludes":           {backend.Instructions, func(a, _ []string) bool { return settingsOf(t, a).Excludes != nil }},
+		"--strict-mcp-config":        {backend.MCP, func(a, _ []string) bool { return slices.Contains(a, "--strict-mcp-config") }},
+		"--disable-slash-commands":   {backend.Skills, func(a, _ []string) bool { return slices.Contains(a, "--disable-slash-commands") }},
+		"CLAUDE_CODE_SYNC_SKILLS=0":  {backend.Skills, func(_, e []string) bool { return slices.Contains(e, "CLAUDE_CODE_SYNC_SKILLS=0") }},
+		"--setting-sources":          {backend.Settings, func(a, _ []string) bool { return slices.Contains(a, "--setting-sources") }},
+		"CLAUDE_CODE_SYNC_PLUGINS=0": {backend.Settings, func(_, e []string) bool { return slices.Contains(e, "CLAUDE_CODE_SYNC_PLUGINS=0") }},
+		"autoMemoryEnabled":          {backend.Memory, func(a, _ []string) bool { return settingsOf(t, a).AutoMemory != nil }},
 	}
 	for _, c := range backend.Categories {
 		p := base
 		p.Inherit = []string{string(c)}
-		got := isolated(argv(t, p))
-		for _, o := range backend.Categories {
-			assert.Equal(t, o != c, got[o], "inherit %s: is %s shut out", c, o)
+		args, env := launched(t, p)
+		for name, s := range signals {
+			assert.Equal(t, s.c != c, s.on(args, env), "inherit %s: is %s set", c, name)
 		}
 	}
 
@@ -123,9 +131,9 @@ func TestEachInheritedCategoryDropsExactlyItsOwnOption(t *testing.T) {
 	for _, c := range backend.Categories {
 		p.Inherit = append(p.Inherit, string(c))
 	}
-	args := argv(t, p)
-	for c, on := range isolated(args) {
-		assert.False(t, on, "inheriting everything still shuts out %s", c)
+	args, env := launched(t, p)
+	for name, s := range signals {
+		assert.False(t, s.on(args, env), "inheriting everything still sets %s", name)
 	}
 	assert.NotEmpty(t, value(t, args, "--mcp-config"), "pao's MCP configuration is given whatever is inherited")
 	assert.Len(t, settingsOf(t, args).Hooks.PreToolUse, 1, "and pao's gate hook")
@@ -150,6 +158,9 @@ func TestTheOptionsTheAdapterOwnsAreFoundAsWords(t *testing.T) {
 	assert.Equal(t, []string{"--setting-sources"}, a.Owned("claude --setting-sources user"), "--settings is not --setting-sources")
 	assert.Equal(t, []string{"--strict-mcp-config"}, a.Owned("claude --strict-mcp-config"), "--mcp-config is not --strict-mcp-config")
 	assert.Empty(t, a.Owned("claude --settingsx --mcp-configs"))
+	assert.Equal(t, []string{"CLAUDE_CODE_SYNC_PLUGINS"}, a.Owned("CLAUDE_CODE_SYNC_PLUGINS=1 claude"), "a switch the adapter sets, set by the profile")
+	assert.Equal(t, []string{"CLAUDE_CODE_SYNC_SKILLS"}, a.Owned("env CLAUDE_CODE_SYNC_SKILLS=1 claude"))
+	assert.Empty(t, a.Owned("CLAUDE_CODE_SYNC_PLUGINS_MCP_TIMEOUT_MS=9 claude"), "a longer name is another variable")
 }
 
 func TestExcludesCoverEveryDirectoryAboveTheWorkdirAndTheUsersOwn(t *testing.T) {

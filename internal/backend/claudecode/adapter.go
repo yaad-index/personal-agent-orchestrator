@@ -21,9 +21,11 @@ const Name = "claude-code"
 //     above the working directory and in the user's own configuration;
 //   - mcp: --strict-mcp-config, so only the configuration pao gives is read;
 //   - skills: --disable-slash-commands, which turns off the profile's own skills
-//     too, since Claude Code cannot tell the two apart;
+//     too, since Claude Code cannot tell the two apart, and CLAUDE_CODE_SYNC_SKILLS
+//     off, for skills synced from the account;
 //   - settings: --setting-sources project,local, so the user's settings file is
-//     not read;
+//     not read, and CLAUDE_CODE_SYNC_PLUGINS off, for plugins synced from the
+//     account;
 //   - memory: autoMemoryEnabled false.
 //
 // It always gives pao's MCP configuration and pao's gate hook. The hook is
@@ -33,9 +35,18 @@ type Adapter struct{}
 
 var _ backend.Adapter = Adapter{}
 
-// owned are the options the adapter sets, or that change what Claude Code
-// loads (--bare and --safe-mode also drop the hook that is pao's gate).
-var owned = []string{"--strict-mcp-config", "--mcp-config", "--disable-slash-commands", "--setting-sources", "--settings", "--bare", "--safe-mode"}
+// owned are the options and environment variables the adapter sets, or that
+// change what Claude Code loads (--bare and --safe-mode also drop the hook that
+// is pao's gate).
+var owned = []string{"--strict-mcp-config", "--mcp-config", "--disable-slash-commands", "--setting-sources", "--settings", "--bare", "--safe-mode", envSyncPlugins, envSyncSkills}
+
+// Claude Code's switches for loading plugins and skills synced from the user's
+// account. Whether they keep synced ones out has not been seen: no account they
+// were tried on had any. They are set as a defensive default.
+const (
+	envSyncPlugins = "CLAUDE_CODE_SYNC_PLUGINS"
+	envSyncSkills  = "CLAUDE_CODE_SYNC_SKILLS"
+)
 
 var ownedPattern = func() []*regexp.Regexp {
 	out := make([]*regexp.Regexp, len(owned))
@@ -63,21 +74,21 @@ func (Adapter) Owned(command string) []string {
 
 // Command implements backend.Adapter. The adapter's options follow the
 // profile's command, which is the program and its own options.
-func (Adapter) Command(p core.Profile, l backend.Launch) (string, error) {
+func (Adapter) Command(p core.Profile, l backend.Launch) (backend.Start, error) {
 	inherits, err := backend.Inherits(p)
 	if err != nil {
-		return "", err
+		return backend.Start{}, err
 	}
 	if l.Hook == "" {
-		return "", backend.ErrNoHook
+		return backend.Start{}, backend.ErrNoHook
 	}
 	if l.MCPServer == "" {
-		return "", errors.New("no name for pao's MCP server")
+		return backend.Start{}, errors.New("no name for pao's MCP server")
 	}
 	settings := map[string]any{"hooks": hooks(l.Hook, int(l.HookTimeout.Seconds()))}
 	if !inherits[backend.Instructions] {
 		if l.Home == "" {
-			return "", errors.New("no home directory to shut out the user's instructions from")
+			return backend.Start{}, errors.New("no home directory to shut out the user's instructions from")
 		}
 		settings["claudeMdExcludes"] = Excludes(l.Home, p.Workdir)
 	}
@@ -86,19 +97,22 @@ func (Adapter) Command(p core.Profile, l backend.Launch) (string, error) {
 	}
 	sb, err := json.Marshal(settings)
 	if err != nil {
-		return "", err
+		return backend.Start{}, err
 	}
 
 	var args []string
+	var env []string
 	if !inherits[backend.MCP] {
 		args = append(args, "--strict-mcp-config")
 	}
 	args = append(args, "--mcp-config", MCPConfig(l.MCPServer))
 	if !inherits[backend.Skills] {
 		args = append(args, "--disable-slash-commands")
+		env = append(env, envSyncSkills+"=0")
 	}
 	if !inherits[backend.Settings] {
 		args = append(args, "--setting-sources", "project,local")
+		env = append(env, envSyncPlugins+"=0")
 	}
 	args = append(args, "--settings", string(sb))
 
@@ -108,7 +122,7 @@ func (Adapter) Command(p core.Profile, l backend.Launch) (string, error) {
 		b.WriteByte(' ')
 		b.WriteString(shellQuote(a))
 	}
-	return b.String(), nil
+	return backend.Start{Command: b.String(), Env: env}, nil
 }
 
 // MCPConfig is the MCP configuration that points an agent at its node's MCP

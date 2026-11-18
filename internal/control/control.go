@@ -46,9 +46,9 @@ type Plane struct {
 	term Terminal
 	poll time.Duration
 	env  func(agent string) []string
-	// command builds the shell command that starts an agent; nil runs the
-	// profile's own.
-	command func(core.Profile) (string, error)
+	// command builds the shell command that starts an agent and the
+	// environment entries it adds; nil runs the profile's own command.
+	command func(core.Profile) (string, []string, error)
 	// onStop is called when an agent's session is known to be over.
 	onStop func(agent string)
 }
@@ -64,10 +64,11 @@ func WithPollInterval(d time.Duration) Option { return func(p *Plane) { p.poll =
 // where its node's gate is.
 func WithEnv(f func(agent string) []string) Option { return func(p *Plane) { p.env = f } }
 
-// WithCommand sets the function that builds the shell command an agent is
-// started with from its profile. It is how a backend adapter adds what it owns
+// WithCommand sets the function that builds, from an agent's profile, the shell
+// command it is started with and the environment entries (KEY=value) it gets
+// besides those of WithEnv. It is how a backend adapter adds what it owns
 // (ADR-0025 point 2). An error starts nothing.
-func WithCommand(f func(core.Profile) (string, error)) Option {
+func WithCommand(f func(core.Profile) (string, []string, error)) Option {
 	return func(p *Plane) { p.command = f }
 }
 
@@ -108,8 +109,9 @@ func (p *Plane) Launch(ctx context.Context, prof core.Profile) error {
 	}
 	if !exists {
 		command := prof.Startup.Command
+		var extra []string
 		if p.command != nil {
-			if command, err = p.command(prof); err != nil {
+			if command, extra, err = p.command(prof); err != nil {
 				return fmt.Errorf("agent %q: %w", prof.Name, err)
 			}
 		}
@@ -117,6 +119,7 @@ func (p *Plane) Launch(ctx context.Context, prof core.Profile) error {
 		if p.env != nil {
 			env = p.env(prof.Name)
 		}
+		env = append(env, extra...)
 		if err := p.term.NewSession(ctx, prof.Name, prof.Workdir, command, env); err != nil {
 			return err
 		}
