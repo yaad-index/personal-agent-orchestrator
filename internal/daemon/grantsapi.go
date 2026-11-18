@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"time"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/access"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/local"
@@ -15,7 +16,17 @@ const grantsFile = "grants.json"
 // grantsAPI is the operator's administration of the access matrix
 // (local.GrantsAPI). A grant may name an agent that does not exist yet, such as a
 // temporary agent still to be spawned.
-type grantsAPI struct{ store *grants.Store }
+type grantsAPI struct {
+	store *grants.Store
+	// changed, when set, is told that the grants changed, so what is offered to
+	// connected subjects follows them. It runs in the background: a grant takes
+	// effect when it is stored, not when everyone has heard of it.
+	changed func(context.Context)
+}
+
+// refreshTimeout bounds telling connected subjects about a grant change, which
+// lists the upstream servers' tools.
+const refreshTimeout = 30 * time.Second
 
 func (a grantsAPI) Grants(_ context.Context, subject string) (local.GrantsJSON, error) {
 	var only access.Subject
@@ -51,5 +62,12 @@ func (a grantsAPI) change(g local.GrantJSON, f func(access.Grant) (bool, error))
 		return local.GrantChangeJSON{}, translated{local.ErrBadRequest, err}
 	}
 	changed, err := f(grant)
+	if err == nil && changed && a.changed != nil {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), refreshTimeout)
+			defer cancel()
+			a.changed(ctx)
+		}()
+	}
 	return local.GrantChangeJSON{Changed: changed}, err
 }
