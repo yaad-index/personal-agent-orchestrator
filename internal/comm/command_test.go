@@ -2,6 +2,7 @@ package comm
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -116,4 +117,81 @@ func TestCommandAsOperator(t *testing.T) {
 	require.NotNil(t, d)
 	require.Len(t, r.routed, 1)
 	assert.Equal(t, "[human]: hello", r.routed[0].Line())
+}
+
+// buttonChannel shows actions and records what it is asked to close.
+type buttonChannel struct {
+	fakeChannel
+	closed []string
+	err    error
+}
+
+func (c *buttonChannel) CloseActions(_ context.Context, id, outcome string) error {
+	c.closed = append(c.closed, id+" "+outcome)
+	return c.err
+}
+
+func TestSettledActionsAreClosedOnEveryChannelThatShowsButtons(t *testing.T) {
+	l, _, _ := setup(t)
+	plain := &fakeChannel{name: "local"}
+	one, two := &buttonChannel{fakeChannel: fakeChannel{name: "chat"}}, &buttonChannel{fakeChannel: fakeChannel{name: "other"}}
+	l.AddChannel(plain)
+	l.AddChannel(one)
+	l.AddChannel(two)
+
+	m, err := l.Notify(context.Background(), core.Message{Sender: "pao", Text: "may I?", Actions: []core.Action{{Label: "ALLOW", Command: "/pao allow q1"}}})
+	require.NoError(t, err)
+	for _, c := range []*fakeChannel{plain, &one.fakeChannel, &two.fakeChannel} {
+		require.Len(t, c.got, 1)
+		assert.Equal(t, []core.Action{{Label: "ALLOW", Command: "/pao allow q1"}}, c.got[0].Actions, "every channel gets the actions; one without buttons ignores them")
+	}
+
+	two.err = errors.New("gone")
+	err = l.CloseActions(context.Background(), m.ID, "allowed")
+	assert.ErrorContains(t, err, `channel "other": gone`)
+	assert.Equal(t, []string{m.ID + " allowed"}, one.closed)
+	assert.Equal(t, []string{m.ID + " allowed"}, two.closed, "a failure on one channel does not stop the others")
+}
+
+// A press is only ever a command. One whose payload is anything else is refused,
+// recorded and never routed, so a forged payload cannot reach an agent as text.
+func TestAPressThatIsNotACommandIsRefusedAndNeverRouted(t *testing.T) {
+	l, r, _, rc := chanSetup(t)
+	ops := &cmdOps{}
+	l.SetCommands(ops)
+	res, err := l.ReceiveFromChannel(context.Background(), ChannelInbound{Channel: "chat", Sender: "op", Text: "hello agent", Raw: "hello agent", Press: true, Target: byName("a")})
+	require.NoError(t, err)
+	assert.Equal(t, ReplyNotACommand, res.Reply)
+	assert.Nil(t, res.Delivery)
+	assert.Empty(t, r.routed)
+	assert.Empty(t, ops.calls)
+	assert.Equal(t, []rec{{"chat", "op", RecordMessage, "press not a command", "hello agent"}}, rc.got)
+
+	// The same text typed is routed as ever.
+	res, err = l.ReceiveFromChannel(context.Background(), ChannelInbound{Channel: "chat", Sender: "op", Text: "hello agent", Target: byName("a")})
+	require.NoError(t, err)
+	assert.NotNil(t, res.Delivery)
+}
+
+// A press is the command it carries, from whoever pressed, under the same checks.
+func TestAPressIsTheTypedCommandFromThePresser(t *testing.T) {
+	l, r, _, rc := chanSetup(t)
+	ops := &cmdOps{}
+	l.SetCommands(ops)
+	res, err := l.ReceiveFromChannel(context.Background(), ChannelInbound{Channel: "chat", Sender: "op", Text: "/pao allow q1", Press: true})
+	require.NoError(t, err)
+	assert.Equal(t, "q1: allow", res.Reply)
+	assert.Equal(t, []string{"allow q1"}, ops.calls)
+
+	for _, sender := range []string{"plain", "stranger"} {
+		res, err := l.ReceiveFromChannel(context.Background(), ChannelInbound{Channel: "chat", Sender: sender, Text: "/pao allow q1", Press: true})
+		require.NoError(t, err)
+		assert.NotEqual(t, "q1: allow", res.Reply, sender)
+	}
+	res, err = l.ReceiveFromChannel(context.Background(), ChannelInbound{Channel: "chat", Sender: "op", Text: "/pao allow q1", Press: true, Group: true})
+	require.NoError(t, err)
+	assert.Equal(t, ChannelResult{}, res, "a press in a group is a group's message")
+	assert.Equal(t, []string{"allow q1"}, ops.calls, "only the operator's own press decided")
+	assert.Empty(t, r.routed)
+	assert.Len(t, rc.got, 3, "the refused presses are recorded")
 }

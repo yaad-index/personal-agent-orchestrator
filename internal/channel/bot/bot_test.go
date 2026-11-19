@@ -28,12 +28,27 @@ const tok = "TOK-123"
 
 // update and message are the service's JSON shapes, as far as the fake needs them.
 type update struct {
-	ID      int64    `json:"update_id"`
+	ID       int64     `json:"update_id"`
+	Message  *message  `json:"message,omitempty"`
+	Callback *callback `json:"callback_query,omitempty"`
+}
+
+// callback is a press of a button under a message.
+type callback struct {
+	ID   string `json:"id"`
+	From struct {
+		ID    int64 `json:"id"`
+		IsBot bool  `json:"is_bot"`
+	} `json:"from"`
 	Message *message `json:"message,omitempty"`
+	Data    string   `json:"data"`
 }
 
 type message struct {
-	ID   int64 `json:"message_id"`
+	ID int64 `json:"message_id"`
+	// Date is when the message was sent. The service gives a message a bot can no
+	// longer reach a date of 0.
+	Date int64 `json:"date,omitempty"`
 	From *struct {
 		ID    int64 `json:"id"`
 		IsBot bool  `json:"is_bot"`
@@ -58,6 +73,9 @@ type server struct {
 	batches  [][]update
 	polls    []map[string]string
 	sent     []map[string]string
+	edits    []map[string]string
+	answers  []map[string]string
+	failEdit bool
 	nextID   int64
 	failNow  int              // polls to fail before serving
 	failSend map[float64]bool // chat ids whose sends fail
@@ -138,9 +156,38 @@ func (s *server) serve(w http.ResponseWriter, r *http.Request) {
 		s.sent = append(s.sent, body)
 		s.nextID++
 		_, _ = fmt.Fprintf(w, `{"ok":true,"result":{"message_id":%d}}`, s.nextID)
+	case "editMessageText":
+		if s.failEdit {
+			w.WriteHeader(400)
+			_, _ = io.WriteString(w, `{"ok":false,"error_code":400,"description":"message to edit not found"}`)
+			return
+		}
+		s.edits = append(s.edits, body)
+		_, _ = fmt.Fprintf(w, `{"ok":true,"result":{"message_id":%s}}`, body["message_id"])
+	case "answerCallbackQuery":
+		s.answers = append(s.answers, body)
+		_, _ = io.WriteString(w, `{"ok":true,"result":true}`)
 	default:
 		http.Error(w, "nope", 404)
 	}
+}
+
+func (s *server) snapshot(which *[]map[string]string) []map[string]string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]map[string]string(nil), (*which)...)
+}
+
+// press is a press by from of a button carrying data, under message msg in chat.
+func press(id int64, qid string, from, chat int64, chatType string, msg int64, data string) update {
+	c := &callback{ID: qid, Data: data}
+	c.From.ID = from
+	if msg != 0 {
+		m := &message{ID: msg, Date: 1700000000}
+		m.Chat.ID, m.Chat.Type = chat, chatType
+		c.Message = m
+	}
+	return update{ID: id, Callback: c}
 }
 
 func (s *server) queue(us ...update) { s.mu.Lock(); s.batches = append(s.batches, us); s.mu.Unlock() }
@@ -332,7 +379,7 @@ func TestTheOffsetAdvancesPastWhatWasHandled(t *testing.T) {
 	assert.Equal(t, "1", s.polls[0]["offset"], "nothing confirmed yet: update ids start at 1")
 	assert.Equal(t, "10", s.polls[1]["offset"], "one past the last update handled")
 	assert.Empty(t, s.polls[0]["timeout"], "poll_timeout 0 asks for no wait")
-	assert.Equal(t, `["message"]`, s.polls[0]["allowed_updates"])
+	assert.Equal(t, `["message","callback_query"]`, s.polls[0]["allowed_updates"], "messages, and presses of pao's buttons")
 }
 
 func TestRegisterIsTheRegistrationEntryPointAndItsSecretIsNotARoutedMessage(t *testing.T) {
@@ -532,7 +579,7 @@ func TestTheTokenIsNeverInAnError(t *testing.T) {
 	b, err := newBot(spec(s, nil), &handler{})
 	require.NoError(t, err)
 	s.ts.Close()
-	_, err = b.send(context.Background(), 900, "x")
+	_, err = b.send(context.Background(), 900, "x", nil)
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), tok, "a transport error names the URL, the URL holds the token")
 	assert.NotContains(t, err.Error(), "http://", "and the URL itself is not in the log either")
@@ -543,7 +590,7 @@ func TestTheTokenIsNeverInAnError(t *testing.T) {
 	sp.Credential = "WRONG"
 	b2, err := newBot(sp, &handler{})
 	require.NoError(t, err)
-	_, err = b2.send(context.Background(), 900, "x")
+	_, err = b2.send(context.Background(), 900, "x", nil)
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "WRONG")
 	assert.Equal(t, "the service's answer could not be used", err.Error())
@@ -554,12 +601,12 @@ func TestAnErrorIsInTheAdaptersWordsNotTheLibrarys(t *testing.T) {
 	s.mode = "unknown"
 	b, err := newBot(spec(s, nil), &handler{})
 	require.NoError(t, err)
-	_, err = b.send(context.Background(), 900, "x")
+	_, err = b.send(context.Background(), 900, "x", nil)
 	require.Error(t, err)
 	assert.Equal(t, "the service's answer could not be used", err.Error(), "an answer the adapter has no word for is not quoted")
 
 	s.failSend[901] = true
-	_, err = b.send(context.Background(), 901, "x")
+	_, err = b.send(context.Background(), 901, "x", nil)
 	assert.EqualError(t, err, "forbidden: blocked", "a known kind keeps what the service said")
 }
 
@@ -568,7 +615,7 @@ func TestAnAnswerPastTheCapIsRefused(t *testing.T) {
 	s.huge = true
 	b, err := newBot(spec(s, nil), &handler{})
 	require.NoError(t, err)
-	_, err = b.send(context.Background(), 900, "x")
+	_, err = b.send(context.Background(), 900, "x", nil)
 	assert.EqualError(t, err, "the service's answer was too large")
 }
 
@@ -605,7 +652,7 @@ func TestTheTokenIsScrubbedFromWhatTheServiceSays(t *testing.T) {
 	s.mode, s.describe = "okfalse", "your token "+tok+" is bad"
 	b, err := newBot(spec(s, nil), &handler{})
 	require.NoError(t, err)
-	_, err = b.send(context.Background(), 900, "x")
+	_, err = b.send(context.Background(), 900, "x", nil)
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), tok)
 	assert.Equal(t, "bad request: your token *** is bad", err.Error())
@@ -618,4 +665,194 @@ func TestTheRawPayloadKeptForTheRecordIsBounded(t *testing.T) {
 	waitFor(t, func() bool { return len(h.inbound()) == 1 }, "inbound")
 	assert.Len(t, []rune(h.inbound()[0].Raw), 4096)
 	assert.Greater(t, len(h.inbound()[0].Text), 9000, "the message itself is not cut")
+}
+
+// buttons reads the buttons a send carried: label and payload, row by row.
+func buttons(t *testing.T, sent map[string]string) [][2]string {
+	t.Helper()
+	raw, ok := sent["reply_markup"]
+	if !ok {
+		return nil
+	}
+	var mk struct {
+		Rows [][]struct {
+			Text string `json:"text"`
+			Data string `json:"callback_data"`
+		} `json:"inline_keyboard"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(raw), &mk), raw)
+	var out [][2]string
+	for _, row := range mk.Rows {
+		for _, b := range row {
+			out = append(out, [2]string{b.Text, b.Data})
+		}
+	}
+	return out
+}
+
+var gateActions = []core.Action{
+	{Label: "ALLOW", Command: "/pao allow q1"},
+	{Label: "ALWAYS", Command: "/pao always q1"},
+	{Label: "DENY", Command: "/pao deny q1"},
+}
+
+func TestAMessagesActionsAreButtonsUnderItsLastPieceCarryingTheirCommands(t *testing.T) {
+	s, h := newServer(t), &handler{recipients: []string{"900", "901"}}
+	b, err := newBot(spec(s, map[string]any{"message_limit": 100}), h)
+	require.NoError(t, err)
+	_, err = b.SendNative(context.Background(), core.Message{ID: "m7", Sender: "pao", Text: strings.Repeat("word ", 30), Actions: gateActions})
+	require.NoError(t, err)
+	sent := s.snapshot(&s.sent)
+	require.Len(t, sent, 4, "two pieces to each of two recipients")
+	want := [][2]string{{"ALLOW", "/pao allow q1"}, {"ALWAYS", "/pao always q1"}, {"DENY", "/pao deny q1"}}
+	for i, m := range sent {
+		if i%2 == 0 {
+			assert.Nil(t, buttons(t, m), "no buttons on a first piece")
+		} else {
+			assert.Equal(t, want, buttons(t, m), "the buttons are under the last piece")
+		}
+	}
+
+	require.NoError(t, b.Send(context.Background(), core.Message{ID: "m8", Sender: "pao", Text: "plain"}))
+	assert.Nil(t, buttons(t, s.snapshot(&s.sent)[4]), "a message with no actions has no buttons")
+}
+
+func TestAnActionThatDoesNotFitAButtonGetsNone(t *testing.T) {
+	s, h := newServer(t), &handler{recipients: []string{"900"}}
+	b, err := newBot(spec(s, nil), h)
+	require.NoError(t, err)
+	fits := "/pao allow " + strings.Repeat("x", maxPayload-len("/pao allow "))
+	require.NoError(t, b.Send(context.Background(), core.Message{ID: "m1", Sender: "pao", Text: "q", Actions: []core.Action{
+		{Label: "FITS", Command: fits},
+		{Label: "LONG", Command: fits + "x"},
+		{Label: "", Command: "/pao deny q1"},
+		{Label: "EMPTY"},
+	}}))
+	assert.Equal(t, [][2]string{{"FITS", fits}}, buttons(t, s.snapshot(&s.sent)[0]))
+
+	require.NoError(t, b.Send(context.Background(), core.Message{ID: "m2", Sender: "pao", Text: "q", Actions: []core.Action{{Label: "LONG", Command: fits + "x"}}}))
+	assert.Nil(t, buttons(t, s.snapshot(&s.sent)[1]), "no button at all when none fits")
+	require.NoError(t, b.CloseActions(context.Background(), "m2", "denied"))
+	assert.Empty(t, s.snapshot(&s.edits), "nothing was shown with buttons, so nothing is closed")
+}
+
+func TestClosingRemovesTheButtonsFromEveryCopyAndShowsTheOutcomeOnce(t *testing.T) {
+	s, h := newServer(t), &handler{recipients: []string{"900", "901"}}
+	b, err := newBot(spec(s, nil), h)
+	require.NoError(t, err)
+	require.NoError(t, b.Send(context.Background(), core.Message{ID: "m7", Sender: "pao", Text: "may I?", Actions: gateActions}))
+	require.NoError(t, b.Send(context.Background(), core.Message{ID: "m8", Sender: "pao", Text: "and this?", Actions: gateActions}))
+
+	require.NoError(t, b.CloseActions(context.Background(), "m7", "allowed"))
+	edits := s.snapshot(&s.edits)
+	require.Len(t, edits, 2, "one edit per copy of m7, none of m8")
+	for i, e := range edits {
+		assert.Equal(t, []string{"900", "901"}[i], e["chat_id"])
+		assert.Equal(t, []string{"101", "102"}[i], e["message_id"])
+		assert.Equal(t, "[pao]: may I?\n\n— allowed", e["text"])
+		assert.JSONEq(t, `{"inline_keyboard":[]}`, e["reply_markup"], "the buttons are removed")
+	}
+	require.NoError(t, b.CloseActions(context.Background(), "m7", "denied"))
+	assert.Len(t, s.snapshot(&s.edits), 2, "a closed message is not closed again")
+	require.NoError(t, b.CloseActions(context.Background(), "m8", "expired"))
+	assert.Len(t, s.snapshot(&s.edits), 4)
+}
+
+func TestAFailedCloseIsReportedInTheAdaptersWords(t *testing.T) {
+	s, h := newServer(t), &handler{recipients: []string{"900"}}
+	b, err := newBot(spec(s, nil), h)
+	require.NoError(t, err)
+	require.NoError(t, b.Send(context.Background(), core.Message{ID: "m7", Sender: "pao", Text: "may I?", Actions: gateActions}))
+	s.mu.Lock()
+	s.failEdit = true
+	s.mu.Unlock()
+	err = b.CloseActions(context.Background(), "m7", "allowed")
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), tok)
+}
+
+func TestAClosedTextStaysWithinTheLimit(t *testing.T) {
+	assert.Equal(t, "short\n\n— denied", closed("short", "denied", 100))
+	got := closed(strings.Repeat("é", 100), "denied", 100)
+	assert.Len(t, []rune(got), 100)
+	assert.True(t, strings.HasSuffix(got, "…\n\n— denied"), got)
+}
+
+func TestOnlyTheNewestMessagesButtonsAreKeptForClosing(t *testing.T) {
+	s, h := newServer(t), &handler{recipients: []string{"900"}}
+	b, err := newBot(spec(s, nil), h)
+	require.NoError(t, err)
+	for i := 0; i <= maxShown; i++ {
+		require.NoError(t, b.Send(context.Background(), core.Message{ID: "m" + strconv.Itoa(i), Sender: "pao", Text: "q", Actions: gateActions}))
+	}
+	require.NoError(t, b.CloseActions(context.Background(), "m0", "expired"))
+	assert.Empty(t, s.snapshot(&s.edits), "the oldest was forgotten")
+	require.NoError(t, b.CloseActions(context.Background(), "m1", "expired"))
+	assert.Len(t, s.snapshot(&s.edits), 1, "the next one is still kept")
+}
+
+func TestAPressReachesTheLayerAsTheCommandFromThePresserAndIsAnsweredToThemAlone(t *testing.T) {
+	s, h := newServer(t), &handler{res: comm.ChannelResult{Reply: "q1: allow"}}
+	start(t, s, h, nil)
+	s.queue(press(1, "cb1", 42, 42, "private", 101, "/pao allow q1"))
+	waitFor(t, func() bool { return len(s.snapshot(&s.answers)) == 1 }, "the press is answered")
+	in := h.inbound()
+	require.Len(t, in, 1)
+	assert.Equal(t, comm.ChannelInbound{Channel: "chat", Sender: "42", Text: "/pao allow q1", Raw: "/pao allow q1", Press: true}, in[0],
+		"the press is the command, from the service's sender of the press, with no target and no sticky address")
+	a := s.snapshot(&s.answers)[0]
+	assert.Equal(t, "cb1", a["callback_query_id"])
+	assert.Equal(t, "q1: allow", a["text"])
+	assert.Empty(t, s.snapshot(&s.sent), "the answer is the press's own, not a message to the chat")
+}
+
+func TestAPressAnswerIsCutToWhatAPressAnswerHolds(t *testing.T) {
+	s, h := newServer(t), &handler{res: comm.ChannelResult{Reply: strings.Repeat("y", 500)}}
+	start(t, s, h, nil)
+	s.queue(press(1, "cb1", 42, 42, "private", 101, "/pao help"))
+	waitFor(t, func() bool { return len(s.snapshot(&s.answers)) == 1 }, "the press is answered")
+	assert.Len(t, s.snapshot(&s.answers)[0]["text"], maxPressAnswer)
+}
+
+func TestAPressInAGroupOrOnNoMessageIsMarkedAGroup(t *testing.T) {
+	s, h := newServer(t), &handler{}
+	start(t, s, h, nil)
+	old := press(3, "cb3", 42, -500, "group", 102, "/pao allow q1")
+	old.Callback.Message.Date = 0
+	oldPrivate := press(4, "cb4", 42, 42, "private", 103, "/pao allow q1")
+	oldPrivate.Callback.Message.Date = 0
+	s.queue(press(1, "cb1", 42, -500, "group", 101, "/pao allow q1"), press(2, "cb2", 42, 0, "", 0, "/pao allow q1"), old, oldPrivate)
+	waitFor(t, func() bool { return len(s.snapshot(&s.answers)) == 4 }, "every press is answered")
+	in := h.inbound()
+	require.Len(t, in, 4)
+	assert.True(t, in[0].Group && in[0].Press, "a press under a group's message")
+	assert.True(t, in[1].Group && in[1].Press, "a press on no message")
+	assert.True(t, in[2].Group && in[2].Press, "a press under a group's message the bot can no longer reach")
+	assert.False(t, in[3].Group, "a private chat is read from a message the bot can no longer reach, too")
+	assert.Empty(t, s.snapshot(&s.answers)[0]["text"])
+}
+
+func TestAPressByABotOrWithNoPayloadIsAnsweredAndNotTakenIn(t *testing.T) {
+	s, h := newServer(t), &handler{}
+	start(t, s, h, nil)
+	botPress := press(1, "cb1", 42, 42, "private", 101, "/pao allow q1")
+	botPress.Callback.From.IsBot = true
+	s.queue(botPress, press(2, "cb2", 42, 42, "private", 101, ""))
+	waitFor(t, func() bool { return len(s.snapshot(&s.answers)) == 2 }, "both presses are answered, so the client stops waiting")
+	assert.Empty(t, h.inbound())
+}
+
+func TestAFailureToHandleAPressIsItsAnswer(t *testing.T) {
+	s, h := newServer(t), &handler{err: errors.New("no agent")}
+	start(t, s, h, nil)
+	s.queue(press(1, "cb1", 42, 42, "private", 101, "/pao allow q1"))
+	waitFor(t, func() bool { return len(s.snapshot(&s.answers)) == 1 }, "the press is answered")
+	assert.Equal(t, "no agent", s.snapshot(&s.answers)[0]["text"])
+
+	h.mu.Lock()
+	h.err = fmt.Errorf("%w: disk", comm.ErrRecord)
+	h.mu.Unlock()
+	s.queue(press(2, "cb2", 42, 42, "private", 101, "/pao allow q1"))
+	waitFor(t, func() bool { return len(s.snapshot(&s.answers)) == 2 }, "the press is answered")
+	assert.Empty(t, s.snapshot(&s.answers)[1]["text"], "a failure to record is logged, never told")
 }

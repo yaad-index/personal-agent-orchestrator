@@ -1,7 +1,10 @@
 // Package bot is a channel adapter for a chat service that offers a bot HTTP API
 // with long polling. It is the pilot adapter of ADR-0019: it receives private
 // messages, hands each to the layer with the service's own sender id, and sends
-// pao's output to the humans the layer names.
+// pao's output to the humans the layer names. A message's actions are shown as
+// buttons under it; a press comes back to the layer as the command the button
+// carries, and the buttons are closed when the layer says the message is settled
+// (ADR-0027).
 //
 // The API is spoken through a maintained client library. The endpoint, with the
 // token's place in it, is configuration, and the library's own error text is never
@@ -37,6 +40,14 @@ const (
 	maxPollTimeout      = 60 * time.Second
 	minMessageLimit     = 100
 	maxResponse         = 4 << 20
+	// maxPayload is the most a button can carry, in bytes. An action whose
+	// command is longer gets no button; it stays a typed command.
+	maxPayload = 64
+	// maxPressAnswer is the longest answer to a press, in characters.
+	maxPressAnswer = 200
+	// maxShown is how many messages' buttons are kept for closing. Past it, the
+	// oldest are forgotten, and a press on one decides nothing anyway.
+	maxShown = 256
 )
 
 // The client library builds every request URL as <server>/bot<token>/<method>, so
@@ -55,6 +66,16 @@ type Bot struct {
 	mu     sync.Mutex
 	last   map[string]core.Target // the agent or tag each sender last addressed
 	runCtx context.Context        // the context Run was given, nil before Run
+	shown  map[string][]shown     // the copies with buttons, by pao message id
+	order  []string               // the keys of shown, oldest first
+}
+
+// shown is one copy of a message that carries buttons: where it is, and its text,
+// to show again with the outcome when it is closed.
+type shown struct {
+	chat int64
+	id   int
+	text string
 }
 
 // New builds the adapter from its spec. The options are: endpoint (required), a URL
@@ -122,6 +143,7 @@ func newBot(spec adapter.Spec, h adapter.Handler) (*Bot, error) {
 	b := &Bot{
 		name: spec.Name, token: spec.Credential, h: h,
 		poll: set.poll, limit: set.limit, last: map[string]core.Target{},
+		shown: map[string][]shown{},
 	}
 	client := &http.Client{
 		Timeout:   b.poll + 15*time.Second,
@@ -134,7 +156,7 @@ func newBot(spec adapter.Spec, h adapter.Handler) (*Bot, error) {
 		api.WithServerURL(set.server),
 		api.WithHTTPClient(b.poll+time.Second, client),
 		api.WithSkipGetMe(),
-		api.WithAllowedUpdates(api.AllowedUpdates{"message"}),
+		api.WithAllowedUpdates(api.AllowedUpdates{"message", "callback_query"}),
 		api.WithWorkers(1),
 		api.WithNotAsyncHandlers(),
 		api.WithUpdatesChannelCap(0),
@@ -288,6 +310,10 @@ func (b *Bot) handle(ctx context.Context, u *models.Update) {
 	if u == nil {
 		return
 	}
+	if u.CallbackQuery != nil {
+		b.press(ctx, u.CallbackQuery)
+		return
+	}
 	m := u.Message
 	if m == nil || m.From == nil || m.From.IsBot || m.From.ID == 0 || m.Text == "" {
 		return
@@ -354,14 +380,15 @@ func cutCommand(text, cmd string) (string, bool) {
 }
 
 func (b *Bot) reply(ctx context.Context, chat int64, text string) {
-	if _, err := b.send(ctx, chat, text); err != nil {
+	if _, err := b.send(ctx, chat, text, nil); err != nil {
 		slog.Warn("channel could not reply", "channel", b.name, "error", err)
 	}
 }
 
-// send posts one message to a chat and returns the service's id for it.
-func (b *Bot) send(ctx context.Context, chat int64, text string) (int, error) {
-	m, err := b.api.SendMessage(ctx, &api.SendMessageParams{ChatID: chat, Text: text})
+// send posts one message to a chat, with buttons when keys is set, and returns the
+// service's id for it.
+func (b *Bot) send(ctx context.Context, chat int64, text string, keys models.ReplyMarkup) (int, error) {
+	m, err := b.api.SendMessage(ctx, &api.SendMessageParams{ChatID: chat, Text: text, ReplyMarkup: keys})
 	if err != nil {
 		return 0, b.describe(err)
 	}
@@ -375,11 +402,13 @@ func (b *Bot) Send(ctx context.Context, m core.Message) error {
 }
 
 // SendNative is Send, returning the native id of the first piece sent to each
-// recipient, so a reply to it can be found again.
+// recipient, so a reply to it can be found again. The message's actions are
+// buttons under its last piece.
 func (b *Bot) SendNative(ctx context.Context, m core.Message) ([]string, error) {
 	var natives []string
 	var errs []error
 	pieces := split(b.line(m), b.limit)
+	keys := keyboard(m.Actions)
 	for _, to := range b.h.Recipients(b.name) {
 		chat, err := strconv.ParseInt(to, 10, 64)
 		if err != nil {
@@ -387,13 +416,20 @@ func (b *Bot) SendNative(ctx context.Context, m core.Message) ([]string, error) 
 			continue
 		}
 		for i, p := range pieces {
-			id, err := b.send(ctx, chat, p)
+			var markup models.ReplyMarkup
+			if keys != nil && i == len(pieces)-1 {
+				markup = keys
+			}
+			id, err := b.send(ctx, chat, p, markup)
 			if err != nil {
 				errs = append(errs, err)
 				break
 			}
 			if i == 0 {
 				natives = append(natives, native(chat, id))
+			}
+			if markup != nil {
+				b.remember(m.ID, shown{chat: chat, id: id, text: p})
 			}
 		}
 	}
@@ -433,4 +469,116 @@ func split(text string, limit int) []string {
 		out = append(out, string(r))
 	}
 	return out
+}
+
+// keyboard draws actions as one row of buttons, each carrying its command. An
+// action without a label, or whose command does not fit in a button, gets none.
+// It is nil when no action gets a button.
+func keyboard(actions []core.Action) *models.InlineKeyboardMarkup {
+	var row []models.InlineKeyboardButton
+	for _, a := range actions {
+		if a.Label == "" || a.Command == "" || len(a.Command) > maxPayload {
+			continue
+		}
+		row = append(row, models.InlineKeyboardButton{Text: a.Label, CallbackData: a.Command})
+	}
+	if len(row) == 0 {
+		return nil
+	}
+	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{row}}
+}
+
+// remember keeps a copy with buttons for closing, forgetting the oldest message
+// past maxShown.
+func (b *Bot) remember(id string, c shown) {
+	if id == "" {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if _, ok := b.shown[id]; !ok {
+		b.order = append(b.order, id)
+		if len(b.order) > maxShown {
+			delete(b.shown, b.order[0])
+			b.order = b.order[1:]
+		}
+	}
+	b.shown[id] = append(b.shown[id], c)
+}
+
+// CloseActions removes the buttons from every copy of message id and shows the
+// outcome under its text. A message whose buttons were not shown here, or were
+// already closed, is left alone.
+func (b *Bot) CloseActions(ctx context.Context, id, outcome string) error {
+	b.mu.Lock()
+	copies := b.shown[id]
+	delete(b.shown, id)
+	for i, k := range b.order {
+		if k == id {
+			b.order = append(b.order[:i:i], b.order[i+1:]...)
+			break
+		}
+	}
+	b.mu.Unlock()
+	var errs []error
+	for _, c := range copies {
+		_, err := b.api.EditMessageText(ctx, &api.EditMessageTextParams{
+			ChatID: c.chat, MessageID: c.id, Text: closed(c.text, outcome, b.limit),
+			ReplyMarkup: &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{}},
+		})
+		if err != nil {
+			errs = append(errs, b.describe(err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// closed is a copy's text with its outcome under it, kept within limit.
+func closed(text, outcome string, limit int) string {
+	tail := "\n\n— " + outcome
+	if r := []rune(text); len(r)+len([]rune(tail)) > limit {
+		text = string(r[:max(0, limit-len([]rune(tail))-1)]) + "…"
+	}
+	return text + tail
+}
+
+// press hands a button press to the layer as the command the button carries,
+// from the service's authenticated sender of the press, and answers the press
+// with the layer's reply, which only the presser sees (ADR-0027 points 4 and 5).
+func (b *Bot) press(ctx context.Context, q *models.CallbackQuery) {
+	answer := ""
+	defer func() {
+		if _, err := b.api.AnswerCallbackQuery(ctx, &api.AnswerCallbackQueryParams{
+			CallbackQueryID: q.ID, Text: truncate(answer, maxPressAnswer),
+		}); err != nil {
+			slog.Warn("channel could not answer a press", "channel", b.name, "error", b.describe(err))
+		}
+	}()
+	if q.From.IsBot || q.From.ID == 0 || q.Data == "" {
+		return
+	}
+	in := comm.ChannelInbound{
+		Channel: b.name, Sender: strconv.FormatInt(q.From.ID, 10),
+		Text: q.Data, Raw: truncate(q.Data, 4096), Press: true,
+	}
+	chat := q.Message.Message
+	switch {
+	case chat != nil:
+		in.Group = chat.Chat.Type != models.ChatTypePrivate
+	case q.Message.InaccessibleMessage != nil:
+		in.Group = q.Message.InaccessibleMessage.Chat.Type != models.ChatTypePrivate
+	default:
+		// A press on no message the service names cannot be placed; it is
+		// treated as a group's, which is recorded and decides nothing.
+		in.Group = true
+	}
+	res, err := b.h.ReceiveFromChannel(ctx, in)
+	switch {
+	case errors.Is(err, comm.ErrRecord):
+		slog.Error("channel could not record a rejected inbound", "channel", b.name, "error", err)
+	case err != nil:
+		answer = err.Error()
+	default:
+		answer = res.Reply
+	}
 }

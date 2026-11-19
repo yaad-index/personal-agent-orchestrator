@@ -147,6 +147,14 @@ type Reaction struct {
 	Emoji string
 }
 
+// Action is one choice offered with a message (ADR-0027 point 1): a short label
+// and the typed command it stands for. A channel that shows buttons draws it as
+// one; a press is that command from whoever pressed.
+type Action struct {
+	Label   string
+	Command string
+}
+
 // Message is the source-agnostic message pao carries across all sources
 // (ADR-0010 point 1). The agent reads only Line(); everything else is
 // orchestrator-side.
@@ -165,6 +173,9 @@ type Message struct {
 	ReplyQuote  string
 	Attachments []Attachment
 	Reactions   []Reaction
+	// Actions are the choices offered with the message. Every action is also a
+	// command the text names, so a channel that shows no buttons loses nothing.
+	Actions []Action
 }
 
 // Line renders the message as the one line the agent reads: `[sender]: text`
