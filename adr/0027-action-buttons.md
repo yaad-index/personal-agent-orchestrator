@@ -1,6 +1,6 @@
 # ADR 0027: Action buttons on a gate question
 
-**Status:** Proposed
+**Status:** Accepted (2026-11-19)
 
 Extends ADR-0004 (the approval gate), ADR-0009 (channels), ADR-0010 (message model), ADR-0019 (channel adapters and sender identity), ADR-0026 (operator commands from chat).
 
