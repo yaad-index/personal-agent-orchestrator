@@ -220,6 +220,13 @@ func TestTheChannelsDefaultAgentIsReloadedSwitchedAtRuntimeAndSpeaksUnprefixed(t
 	lineWith(t, svc, person, "bee's output goes to chat only")
 	svc.push(chatUpdate(8, 17, person, "/pao stream nobody"))
 	lineWith(t, svc, person, `no agent "nobody"`)
+	svc.push(chatUpdate(9, 18, person, "/pao agents"))
+	out = lineWith(t, svc, person, "agents you may reach:")
+	assert.Equal(t, "agents you may reach:\nbee: running; tags team\nwasp: running; tags team", out)
+	require.NoError(t, n.client.AgentAction(ctx, "wasp", "stop"))
+	svc.push(chatUpdate(10, 19, person, "/pao agents"))
+	out = lineWith(t, svc, person, "wasp: stopped")
+	assert.Equal(t, "agents you may reach:\nbee: running; tags team\nwasp: stopped; tags team", out, "the state is read when asked")
 	for _, s := range svc.texts(person) {
 		assert.NotContains(t, s, "echo: [alice]: /pao", "no command reached an agent")
 	}

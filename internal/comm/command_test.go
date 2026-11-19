@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/yaad-index/personal-agent-orchestrator/internal/command"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
 )
 
@@ -23,6 +24,11 @@ func (c *cmdOps) View(_ context.Context, agent, action string) error {
 	return nil
 }
 
+func (c *cmdOps) Agents(context.Context) ([]command.Agent, error) {
+	c.calls = append(c.calls, "agents")
+	return []command.Agent{{Name: "a", State: "running"}}, nil
+}
+
 func (c *cmdOps) Decide(_ context.Context, id, decision, _ string) error {
 	c.calls = append(c.calls, decision+" "+id)
 	return nil
@@ -34,7 +40,7 @@ func TestACommandIsPaosAndNeverRouted(t *testing.T) {
 	l, r, _, rc := chanSetup(t)
 	ops := &cmdOps{}
 	l.SetCommands(ops)
-	for _, text := range []string{"/pao stream a", "/pao help", "/pao nosuch", "/pao", "/pao view a pause", "/pao allow q1"} {
+	for _, text := range []string{"/pao stream a", "/pao help", "/pao nosuch", "/pao", "/pao view a pause", "/pao allow q1", "/pao agents"} {
 		res, err := l.ReceiveFromChannel(context.Background(), ChannelInbound{Channel: "chat", Sender: "op", Text: text, Target: byName("a")})
 		require.NoError(t, err, text)
 		assert.Nil(t, res.Delivery, text)
@@ -42,7 +48,7 @@ func TestACommandIsPaosAndNeverRouted(t *testing.T) {
 		assert.NotEmpty(t, res.Reply, text)
 	}
 	assert.Empty(t, r.routed, "the sticky target does not carry a command to an agent")
-	assert.Equal(t, []string{"stream a chat", "view a pause", "allow q1"}, ops.calls, "a stream with no channel named is bound to the one the command came on")
+	assert.Equal(t, []string{"stream a chat", "view a pause", "allow q1", "agents"}, ops.calls, "a stream with no channel named is bound to the one the command came on")
 	assert.Empty(t, rc.got)
 }
 
@@ -67,7 +73,7 @@ func TestACommandFromASubjectThatIsNotTheOperatorIsRefused(t *testing.T) {
 	l, r, _, _ := chanSetup(t)
 	ops := &cmdOps{}
 	l.SetCommands(ops)
-	for _, text := range []string{"/pao help", "/pao stream a", "/pao agent a hi"} {
+	for _, text := range []string{"/pao help", "/pao stream a", "/pao agent a hi", "/pao agents"} {
 		res, err := l.ReceiveFromChannel(context.Background(), ChannelInbound{Channel: "chat", Sender: "plain", Text: text})
 		require.NoError(t, err)
 		assert.Equal(t, ReplyNoAccess, res.Reply, text)
@@ -78,9 +84,11 @@ func TestACommandFromASubjectThatIsNotTheOperatorIsRefused(t *testing.T) {
 
 func TestASteeringCommandWithoutOperationsSaysSo(t *testing.T) {
 	l, _, _, _ := chanSetup(t)
-	res, err := l.ReceiveFromChannel(context.Background(), ChannelInbound{Channel: "chat", Sender: "op", Text: "/pao stream a"})
-	require.NoError(t, err)
-	assert.Equal(t, errNoCommands.Error(), res.Reply)
+	for _, text := range []string{"/pao stream a", "/pao agents"} {
+		res, err := l.ReceiveFromChannel(context.Background(), ChannelInbound{Channel: "chat", Sender: "op", Text: text})
+		require.NoError(t, err)
+		assert.Equal(t, errNoCommands.Error(), res.Reply, text)
+	}
 }
 
 func TestCommandAsOperator(t *testing.T) {

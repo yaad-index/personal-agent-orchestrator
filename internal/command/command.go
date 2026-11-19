@@ -8,6 +8,7 @@ package command
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -26,6 +27,18 @@ type Ops interface {
 	View(ctx context.Context, agent, action string) error
 	// Decide answers a gate question: decision is "allow", "always" or "deny".
 	Decide(ctx context.Context, id, decision, reason string) error
+	// Agents lists the agents the operator may reach under the access matrix,
+	// as the node's agent list shows them: an agent out of reach is left out, as
+	// if it did not exist (ADR-0012 point 4).
+	Agents(ctx context.Context) ([]Agent, error)
+}
+
+// Agent is one agent as /pao agents lists it.
+type Agent struct {
+	Name string
+	Tags []string
+	// State is "running" or "stopped".
+	State string
 }
 
 // Caller is who sent a command, and where from.
@@ -61,6 +74,7 @@ var table = []spec{
 	{word: "help", about: "show the commands you may run"}, // run by Run itself: help reads the table
 	{word: "agent", args: "<name> <message>", about: "send a message to an agent (short form: /pao <name> <message>)", run: runAgent},
 	{word: "tag", args: "<tag> <message>", about: "send a message to every agent with a tag", run: runTag},
+	{word: "agents", about: "list the agents you may reach, with their tags and whether each is running", operator: true, run: runAgents},
 	{word: "stream", args: "<agent> [channel] [level] | <agent> --clear", about: "send an agent's output to one channel (this one if none is named), at a level; --clear sends it to every channel again", operator: true, run: runStream},
 	{word: "view", args: "<agent> pause|resume", about: "hold an agent's output back, or send what was held and let it through again", operator: true, run: runView},
 	{word: "allow", args: "<question>", about: "allow what a gate question asks, once", operator: true, run: decide("allow")},
@@ -178,6 +192,30 @@ func addressed(kind core.TargetKind, rest string) (Result, bool) {
 		return Result{}, false
 	}
 	return address(kind, value, msg), true
+}
+
+func runAgents(ctx context.Context, ops Ops, _ Caller, args []string, _ string) (Result, bool) {
+	if len(args) > 0 {
+		return Result{}, false
+	}
+	agents, err := ops.Agents(ctx)
+	if err != nil {
+		return Result{Reply: err.Error()}, true
+	}
+	if len(agents) == 0 {
+		return Result{Reply: "no agents you may reach"}, true
+	}
+	agents = slices.Clone(agents)
+	slices.SortFunc(agents, func(a, b Agent) int { return strings.Compare(a.Name, b.Name) })
+	var b strings.Builder
+	b.WriteString("agents you may reach:")
+	for _, a := range agents {
+		fmt.Fprintf(&b, "\n%s: %s", a.Name, a.State)
+		if len(a.Tags) > 0 {
+			fmt.Fprintf(&b, "; tags %s", strings.Join(a.Tags, ", "))
+		}
+	}
+	return Result{Reply: b.String()}, true
 }
 
 func runStream(ctx context.Context, ops Ops, c Caller, args []string, _ string) (Result, bool) {
