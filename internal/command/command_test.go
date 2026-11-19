@@ -15,8 +15,14 @@ import (
 
 // fakeOps records each call it is given.
 type fakeOps struct {
-	calls []string
-	err   error
+	calls  []string
+	err    error
+	agents []Agent
+}
+
+func (f *fakeOps) Agents(context.Context) ([]Agent, error) {
+	f.calls = append(f.calls, "agents")
+	return f.agents, f.err
 }
 
 func (f *fakeOps) SetStream(_ context.Context, agent, channel string, level int) error {
@@ -161,11 +167,33 @@ func TestViewAndDecide(t *testing.T) {
 	}
 }
 
+func TestAgents(t *testing.T) {
+	ops := &fakeOps{agents: []Agent{
+		{Name: "wasp", State: "stopped"},
+		{Name: "bee", Tags: []string{"ops", "team"}, State: "running"},
+	}}
+	res := Run(context.Background(), ops, operator, "/pao agents")
+	assert.Equal(t, "agents you may reach:\nbee: running; tags ops, team\nwasp: stopped", res.Reply, "sorted by name, tags only where there are some")
+	assert.Nil(t, res.Address)
+	assert.Equal(t, []string{"agents"}, ops.calls)
+	assert.Equal(t, "wasp", ops.agents[0].Name, "the operation's own list is not reordered")
+
+	assert.Equal(t, "no agents you may reach", Run(context.Background(), &fakeOps{}, operator, "/pao agents").Reply)
+
+	ops = &fakeOps{}
+	assert.Equal(t, "usage: /pao agents", Run(context.Background(), ops, operator, "/pao agents bee").Reply)
+	assert.Empty(t, ops.calls)
+
+	assert.Contains(t, Run(context.Background(), ops, other, "/pao agents").Reply, `unknown command "agents"`, "operator-only in the first build")
+	assert.NotContains(t, Help(other), Prefix+" agents")
+	assert.Empty(t, ops.calls)
+}
+
 // An operation's failure is the reply, in the operation's own words, as the
 // operator surface reports it.
 func TestFailureIsTheOperationsOwnWords(t *testing.T) {
 	ops := &fakeOps{err: errors.New(`no agent "coder"`)}
-	for _, text := range []string{"/pao stream coder", "/pao view coder pause", "/pao allow q1"} {
+	for _, text := range []string{"/pao stream coder", "/pao view coder pause", "/pao allow q1", "/pao agents"} {
 		assert.Equal(t, `no agent "coder"`, Run(context.Background(), ops, operator, text).Reply, "%q", text)
 	}
 }

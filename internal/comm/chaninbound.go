@@ -261,6 +261,7 @@ type noCommands struct{}
 func (noCommands) SetStream(context.Context, string, string, int) error { return errNoCommands }
 func (noCommands) View(context.Context, string, string) error           { return errNoCommands }
 func (noCommands) Decide(context.Context, string, string, string) error { return errNoCommands }
+func (noCommands) Agents(context.Context) ([]command.Agent, error)      { return nil, errNoCommands }
 
 // CommandAsOperator runs a /pao command from the operator at a channel that
 // routes as the operator without an identity binding, such as the node's local

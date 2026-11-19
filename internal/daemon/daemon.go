@@ -331,7 +331,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		localOpts = append(localOpts, local.WithMesh(meshStatusWith(meshNode, dir)))
 	}
 
-	layer.SetCommands(chatCommands{streams: streamOps, decider: decider})
+	layer.SetCommands(chatCommands{streams: streamOps, decider: decider, agents: ops, auth: auth})
 
 	srv, err := local.New(layer, token, append([]local.Option{local.WithDecider(decider), local.WithTemp(tempOps), local.WithStream(streamOps), local.WithWatch(streamOps), local.WithLifecycle(lifeOps), local.WithRejected(rejectedAPI{rejects}), local.WithIdentity(identityAPI{ids}),
 		local.WithDefaults(newDefaultsAPI(defaults, cfg.Orchestrator.Channels, router.Resolve)), local.WithGrants(grantsAPI{store: grantStore, changed: mcpServer.Refresh}),
