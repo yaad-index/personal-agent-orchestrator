@@ -14,7 +14,7 @@ That work differs by platform. Each platform has its own way to attach buttons t
 
 ## Decision
 
-1. **A message pao sends may carry actions, in a platform-neutral form.** An action is a short label and the typed command it stands for (ADR-0026 point 7). The message model gains this list, and nothing in it is platform-specific. A gate question carries three actions: allow, always and deny, each with its command and the question's id. The question's text still lists the typed answers, so a channel that shows no buttons loses nothing, and every action stays reachable by typing.
+1. **A message pao sends may carry actions, in a platform-neutral form.** An action is a short label and the typed command it stands for (ADR-0026 point 7). The message model gains this list, and nothing in it is platform-specific. A gate question carries three actions: allow, always and deny, each with its command and the question's id. The deny button carries no reason; a deny with a reason is the typed command. The question's text still lists the typed answers, so a channel that shows no buttons loses nothing, and every action stays reachable by typing.
 
 2. **Interactive control is a capability interface that the core consumes. All platform code stays in that platform's adapter.** The communication layer, the gate and the daemon know only the platform-neutral interface:
    - **Show:** a channel that can show actions renders a message's actions as buttons. A channel that cannot show them ignores the actions and shows the text.
@@ -35,13 +35,13 @@ That work differs by platform. Each platform has its own way to attach buttons t
 
 5. **A press's answer goes to the presser alone.** As ADR-0026 point 5 requires for a typed command, the answer to a press goes only to the subject who pressed. Where the platform has a private acknowledgement of a press, that acknowledgement is the answer. Otherwise the answer is a reply on the channel the press came from. The answer never fans out to other channels.
 
-6. **A settled question's buttons are closed on every channel that showed them.** A gate question is sent to every channel. When it is answered on any of them, or its ask timeout passes, the layer asks each channel that showed buttons to remove them and to show the outcome: allowed, allowed and remembered, denied, or expired. Closing is best effort. A copy whose buttons could not be removed still fails closed: a press on it gets the answer for a question that is not waiting, and decides nothing.
+6. **A settled question's buttons are closed on every channel that showed them.** A gate question can be shown on more than one channel. When it is answered on any of them, or its ask timeout passes, the layer asks each channel that showed buttons to remove them and to show the outcome: allowed, allowed and remembered, denied, or expired. Closing is best effort. A copy whose buttons could not be removed still fails closed: a press on it gets the answer for a question that is not waiting, and decides nothing.
 
 ## What this ADR deliberately does NOT decide
 
 - The button labels and their layout. The first build uses the three answers in the order the question lists them.
 - Buttons for any other action. ADR-0026 point 7 names pause and resume on a bound agent's output as an example. Each further set of actions is a later change on the same interface.
-- How a press's deny reason is given. A button denies without a reason. A deny with a reason stays a typed command.
+- Whether a press can carry a deny reason, and how.
 - A confirmation step before `always` writes a rule into the gate's policy.
 - Any platform beyond the first adapter.
 - Recording presses in an audit log. That waits for the audit-log ADR, as ADR-0026 says for typed commands.
