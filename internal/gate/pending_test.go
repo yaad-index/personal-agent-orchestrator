@@ -10,6 +10,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
 )
 
 type notes struct {
@@ -66,7 +68,7 @@ func idIn(t *testing.T, text string) string {
 
 func TestAskAnnouncesAndWaitsForTheAnswer(t *testing.T) {
 	n := newNotes()
-	p := NewPending(n.notify)
+	p := NewPending(NotifyFunc(n.notify))
 	res := ask(p, context.Background(), "a", "Bash", `{"command":"ls"}`)
 	waitSent(t, n)
 
@@ -88,7 +90,7 @@ func TestAskAnnouncesAndWaitsForTheAnswer(t *testing.T) {
 
 func TestEachQuestionHasItsOwnId(t *testing.T) {
 	n := newNotes()
-	p := NewPending(n.notify)
+	p := NewPending(NotifyFunc(n.notify))
 	r1 := ask(p, context.Background(), "a", "Bash", `{"c":1}`)
 	waitSent(t, n)
 	id1 := idIn(t, n.last())
@@ -110,7 +112,7 @@ func TestEachQuestionHasItsOwnId(t *testing.T) {
 
 func TestAnAnswerIsTakenOnce(t *testing.T) {
 	n := newNotes()
-	p := NewPending(n.notify)
+	p := NewPending(NotifyFunc(n.notify))
 	res := ask(p, context.Background(), "a", "Bash", `{}`)
 	waitSent(t, n)
 	id := idIn(t, n.last())
@@ -122,13 +124,13 @@ func TestAnAnswerIsTakenOnce(t *testing.T) {
 }
 
 func TestUnknownQuestion(t *testing.T) {
-	p := NewPending(newNotes().notify)
+	p := NewPending(NotifyFunc(newNotes().notify))
 	assert.ErrorIs(t, p.Answer("q404", Answer{Allow: true}), ErrNoSuchQuestion)
 }
 
 func TestACancelledQuestionStopsWaitingAndCannotBeAnswered(t *testing.T) {
 	n := newNotes()
-	p := NewPending(n.notify)
+	p := NewPending(NotifyFunc(n.notify))
 	ctx, cancel := context.WithCancel(context.Background())
 	res := ask(p, ctx, "a", "Bash", `{}`)
 	waitSent(t, n)
@@ -148,7 +150,7 @@ func TestACancelledQuestionStopsWaitingAndCannotBeAnswered(t *testing.T) {
 func TestANotificationFailureIsAnError(t *testing.T) {
 	n := newNotes()
 	n.err = errors.New("no channel")
-	p := NewPending(n.notify)
+	p := NewPending(NotifyFunc(n.notify))
 
 	_, err := p.Ask(context.Background(), Request{Agent: "a", Tool: "Bash"}, `{}`)
 	assert.ErrorContains(t, err, "no channel")
@@ -157,7 +159,7 @@ func TestANotificationFailureIsAnError(t *testing.T) {
 
 func TestLongInputsAreClippedInTheQuestion(t *testing.T) {
 	n := newNotes()
-	p := NewPending(n.notify)
+	p := NewPending(NotifyFunc(n.notify))
 	ask(p, context.Background(), "a", "Bash", strings.Repeat("x", 5000))
 	waitSent(t, n)
 	assert.Less(t, len(n.last()), 1500)
@@ -166,7 +168,7 @@ func TestLongInputsAreClippedInTheQuestion(t *testing.T) {
 
 func TestTwoAnswersInARowTheSecondIsRefusedImmediately(t *testing.T) {
 	n := newNotes()
-	p := NewPending(n.notify)
+	p := NewPending(NotifyFunc(n.notify))
 	res := ask(p, context.Background(), "a", "Bash", `{}`)
 	waitSent(t, n)
 	id := idIn(t, n.last())
@@ -192,7 +194,7 @@ func TestTwoAnswersInARowTheSecondIsRefusedImmediately(t *testing.T) {
 
 func TestAQuestionCarriesTheIdOfTheNodeThatAskedItAndIsAnsweredByThatId(t *testing.T) {
 	asked := make(chan string, 2)
-	p := NewPending(func(_ context.Context, text string) error { asked <- text; return nil })
+	p := NewPending(NotifyFunc(func(_ context.Context, text string) error { asked <- text; return nil }))
 	p.SetNode("s2")
 	assert.Equal(t, "s2", p.Node())
 
@@ -209,4 +211,109 @@ func TestAQuestionCarriesTheIdOfTheNodeThatAskedItAndIsAnsweredByThatId(t *testi
 	require.ErrorIs(t, p.Answer("s3.q1", Answer{Allow: true}), ErrNoSuchQuestion, "another node's question is not found here")
 	require.NoError(t, p.Answer("s2.q1", Answer{Allow: true}))
 	assert.True(t, (<-got).Allow)
+}
+
+// board is a Notifier that keeps what was announced and how each was settled.
+type board struct {
+	mu        sync.Mutex
+	asked     chan Question
+	settled   map[string]string
+	handleErr error
+	handle    string
+}
+
+func newBoard() *board {
+	return &board{asked: make(chan Question, 4), settled: map[string]string{}, handle: "m1"}
+}
+
+func (b *board) Announce(_ context.Context, q Question) (string, error) {
+	b.asked <- q
+	return b.handle, b.handleErr
+}
+
+func (b *board) Settled(handle, outcome string) {
+	b.mu.Lock()
+	b.settled[handle] = outcome
+	b.mu.Unlock()
+}
+
+func (b *board) outcome(handle string) (string, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	o, ok := b.settled[handle]
+	return o, ok
+}
+
+func TestAQuestionOffersItsAnswersAsActionsThatAreItsTypedCommands(t *testing.T) {
+	b := newBoard()
+	p := NewPending(b)
+	p.SetNode("s2")
+	res := ask(p, context.Background(), "a", "Bash", `{"command":"ls"}`)
+	q := <-b.asked
+	assert.Equal(t, "s2.q1", q.ID)
+	assert.Equal(t, []core.Action{
+		{Label: "ALLOW", Command: "/pao allow s2.q1"},
+		{Label: "ALWAYS", Command: "/pao always s2.q1"},
+		{Label: "DENY", Command: "/pao deny s2.q1"},
+	}, q.Actions)
+	for _, a := range q.Actions {
+		assert.Contains(t, q.Text, a.Command+" ", "every action is a command the text names")
+	}
+	require.NoError(t, p.Answer("s2.q1", Answer{Allow: true}))
+	<-res
+}
+
+func TestASettledQuestionIsClosedWithItsOutcome(t *testing.T) {
+	for _, c := range []struct {
+		ans  Answer
+		want string
+	}{
+		{Answer{Allow: true}, OutcomeAllowed},
+		{Answer{Allow: true, Remember: true}, OutcomeRemembered},
+		{Answer{Reason: "no"}, OutcomeDenied},
+		{Answer{}, OutcomeDenied},
+		{Answer{Remember: true}, OutcomeDenied}, // the gate denies it, so it reads as denied
+	} {
+		b := newBoard()
+		p := NewPending(b)
+		res := ask(p, context.Background(), "a", "Bash", "ls")
+		q := <-b.asked
+		_, early := b.outcome("m1")
+		assert.False(t, early, "not settled before it is answered")
+		require.NoError(t, p.Answer(q.ID, c.ans))
+		<-res
+		got, ok := b.outcome("m1")
+		assert.True(t, ok)
+		assert.Equal(t, c.want, got, "%+v", c.ans)
+	}
+}
+
+func TestAQuestionNoOneAnswersIsClosedAsExpired(t *testing.T) {
+	b := newBoard()
+	p := NewPending(b)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	res := ask(p, ctx, "a", "Bash", "ls")
+	<-b.asked
+	assert.Contains(t, (<-res).Reason, "ERR:")
+	got, _ := b.outcome("m1")
+	assert.Equal(t, OutcomeExpired, got)
+}
+
+func TestAQuestionPartlyAnnouncedIsClosedAndOneNotAnnouncedIsNot(t *testing.T) {
+	b := newBoard()
+	b.handleErr = errors.New("one channel failed")
+	p := NewPending(b)
+	assert.Contains(t, (<-ask(p, context.Background(), "a", "Bash", "ls")).Reason, "one channel failed")
+	got, _ := b.outcome("m1")
+	assert.Equal(t, OutcomeExpired, got, "what was shown is closed")
+	assert.Zero(t, p.Waiting())
+
+	b = newBoard()
+	b.handle, b.handleErr = "", errors.New("nothing sent")
+	p = NewPending(b)
+	<-ask(p, context.Background(), "a", "Bash", "ls")
+	b.mu.Lock()
+	assert.Empty(t, b.settled, "nothing was shown, so nothing is closed")
+	b.mu.Unlock()
 }

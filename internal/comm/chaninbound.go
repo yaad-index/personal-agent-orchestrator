@@ -24,6 +24,9 @@ const (
 	ReplyNoAccess   = "no access."
 )
 
+// ReplyNotACommand answers an operator's press whose payload is not a pao command.
+const ReplyNotACommand = "that button is not a pao command."
+
 // ErrRecord wraps a failure to keep the record of a rejected inbound. It is for the
 // adapter to log; the sender, who may be a stranger, is told nothing of it.
 var ErrRecord = errors.New("could not record a rejected inbound")
@@ -80,6 +83,10 @@ type ChannelInbound struct {
 	ReplyQuote string
 	// Raw is the platform payload, kept only in the record of a rejection.
 	Raw string
+	// Press marks a button press (ADR-0027 point 4): Text is the command the
+	// button carries, and Sender the platform's authenticated sender of the press.
+	// A press is only ever a command; one that is not is refused and never routed.
+	Press bool
 	// Group marks a message from a group conversation. A group is denied by
 	// default whoever the sender is (ADR-0019 point 6): the layer records it and
 	// routes nothing, replies with nothing, and never reads it as a registration.
@@ -192,6 +199,10 @@ func (l *Layer) ReceiveFromChannel(ctx context.Context, in ChannelInbound) (Chan
 	}
 	if !l.identity.IsOperator(subject) {
 		return ChannelResult{Reply: ReplyNoAccess}, l.reject(in, RecordMessage, "outside access", in.Raw)
+	}
+
+	if in.Press && !command.Is(in.Text) {
+		return ChannelResult{Reply: ReplyNotACommand}, l.reject(in, RecordMessage, "press not a command", in.Raw)
 	}
 
 	// A /pao command is pao's, whatever the target the adapter brings (ADR-0026

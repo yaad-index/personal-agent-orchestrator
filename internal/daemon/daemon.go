@@ -237,10 +237,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	if err != nil {
 		return err
 	}
-	pending := gate.NewPending(func(ctx context.Context, text string) error {
-		_, err := layer.Notify(ctx, core.Message{Sender: "pao", Text: text})
-		return err
-	})
+	pending := gate.NewPending(gateNotifier{layer: layer})
 	decider := &gateDecider{pending: pending}
 	autoAllow := make(map[gate.Risk]bool)
 	for _, r := range cfg.Orchestrator.Gate.AutoAllow {

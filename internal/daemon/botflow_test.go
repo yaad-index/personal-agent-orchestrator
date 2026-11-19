@@ -20,6 +20,7 @@ import (
 	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/builtin"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/local"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/config"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/gate"
 )
 
 // service is a stand-in for the chat service the bot adapter talks to.
@@ -28,6 +29,14 @@ type service struct {
 	pending []map[string]any
 	sent    []map[string]any
 	nextID  int
+	// other is every other call, by method.
+	other map[string][]map[string]any
+}
+
+func (s *service) calls(method string) []map[string]any {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]map[string]any(nil), s.other[method]...)
 }
 
 func (s *service) push(update map[string]any) {
@@ -75,9 +84,40 @@ func (s *service) handler(w http.ResponseWriter, r *http.Request) {
 		s.sent = append(s.sent, body)
 		s.nextID++
 		_, _ = fmt.Fprintf(w, `{"ok":true,"result":{"message_id":%d}}`, 5000+s.nextID)
+	case strings.HasSuffix(r.URL.Path, "/editMessageText"), strings.HasSuffix(r.URL.Path, "/answerCallbackQuery"):
+		method := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
+		if s.other == nil {
+			s.other = map[string][]map[string]any{}
+		}
+		s.other[method] = append(s.other[method], body)
+		if method == "answerCallbackQuery" {
+			_, _ = fmt.Fprint(w, `{"ok":true,"result":true}`)
+			return
+		}
+		_, _ = fmt.Fprintf(w, `{"ok":true,"result":{"message_id":%v}}`, body["message_id"])
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// sentWith returns the first message sent to chat whose text contains want.
+func (s *service) sentWith(chat float64, want string) map[string]any {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, m := range s.sent {
+		if m["chat_id"].(float64) == chat && strings.Contains(m["text"].(string), want) {
+			return m
+		}
+	}
+	return nil
+}
+
+func pressUpdate(id, msg, from int, qid, data string) map[string]any {
+	return map[string]any{"update_id": id, "callback_query": map[string]any{
+		"id": qid, "data": data,
+		"from":    map[string]any{"id": from, "is_bot": false},
+		"message": map[string]any{"message_id": msg, "date": 1700000000, "chat": map[string]any{"id": from, "type": "private"}},
+	}}
 }
 
 func chatUpdate(id, msg, from int, text string) map[string]any {
@@ -243,4 +283,82 @@ func TestTheChannelsDefaultAgentIsReloadedSwitchedAtRuntimeAndSpeaksUnprefixed(t
 	require.NoError(t, err)
 	assert.Equal(t, uint64(5), d.Version)
 	assert.Empty(t, d.Defaults)
+}
+
+// TestAGateQuestionIsAnsweredByAButtonAndItsButtonsAreClosed runs ADR-0027 on a
+// real node: the gate's question reaches the operator's chat with three buttons,
+// a press decides it as the typed command would and is answered to the presser,
+// and the question's buttons are then replaced by the outcome. A press by someone
+// who is not the operator decides nothing.
+func TestAGateQuestionIsAnsweredByAButtonAndItsButtonsAreClosed(t *testing.T) {
+	svc := &service{}
+	ts := httptest.NewServer(http.HandlerFunc(svc.handler))
+	t.Cleanup(ts.Close)
+	t.Setenv("PAO_TEST_BOT_TOKEN", "tok-1")
+
+	n := startNodeWith(t, map[string]string{"bee": ""}, func(_, _ string, cfg *config.Config) {
+		cfg.Orchestrator.Channels = []config.Channel{{ID: 1, Name: "chat", Kind: "bot", CredentialEnv: "PAO_TEST_BOT_TOKEN",
+			Options: map[string]any{"endpoint": ts.URL + "/bot{token}/{method}", "poll_timeout": 0}}}
+	}, func(o *Options) { o.Adapters = builtin.Table() })
+	ctx := context.Background()
+	const person, other = 4242, 5151
+
+	for i, who := range []struct {
+		name string
+		id   int
+	}{{"alice", person}, {"bob", other}} {
+		require.NoError(t, n.client.AddSubject(ctx, who.name))
+		inv, err := n.client.Invite(ctx, who.name, time.Hour)
+		require.NoError(t, err)
+		svc.push(chatUpdate(1+i, 10+i, who.id, "/register "+inv.Secret))
+		lineWith(t, svc, float64(who.id), "registered.")
+	}
+	require.NoError(t, n.client.SetOperator(ctx, "alice", true))
+
+	decided := make(chan gate.Decision, 1)
+	go func() {
+		d, _ := gate.Ask(ctx, n.gateSock, gate.Request{Agent: "bee", Tool: "Bash", Input: []byte(`{"command":"echo hi"}`)})
+		decided <- d
+	}()
+	lineWith(t, svc, person, `agent "bee" wants to run Bash`)
+	q := svc.sentWith(person, `agent "bee" wants to run Bash`)
+	assert.JSONEq(t, `{"inline_keyboard":[[`+
+		`{"text":"ALLOW","callback_data":"/pao allow q1"},`+
+		`{"text":"ALWAYS","callback_data":"/pao always q1"},`+
+		`{"text":"DENY","callback_data":"/pao deny q1"}]]}`, q["reply_markup"].(string))
+	assert.Nil(t, svc.sentWith(other, "wants to run"), "pao's output goes to the operator only")
+	native := int(5000 + len(svc.texts(person)) + len(svc.texts(other)))
+
+	svc.push(pressUpdate(20, native, other, "cb-other", "/pao allow q1"))
+	require.Eventually(t, func() bool { return len(svc.calls("answerCallbackQuery")) == 1 }, 5*time.Second, 20*time.Millisecond)
+	assert.Equal(t, "no access.", svc.calls("answerCallbackQuery")[0]["text"], "a press is checked as its command, from the presser")
+	select {
+	case d := <-decided:
+		t.Fatalf("a press by someone who is not the operator decided the question: %+v", d)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	svc.push(pressUpdate(21, native, person, "cb-op", "/pao allow q1"))
+	select {
+	case d := <-decided:
+		assert.Equal(t, gate.Decision{Allow: true, Via: "operator", Reason: "approved by the operator"}, d)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the operator's press did not decide the question")
+	}
+	require.Eventually(t, func() bool { return len(svc.calls("answerCallbackQuery")) == 2 }, 5*time.Second, 20*time.Millisecond)
+	a := svc.calls("answerCallbackQuery")[1]
+	assert.Equal(t, "cb-op", a["callback_query_id"])
+	assert.Equal(t, "q1: allow", a["text"], "the press is answered to the presser")
+
+	require.Eventually(t, func() bool { return len(svc.calls("editMessageText")) == 1 }, 5*time.Second, 20*time.Millisecond)
+	e := svc.calls("editMessageText")[0]
+	assert.Equal(t, float64(person), e["chat_id"])
+	assert.Equal(t, strconv.Itoa(native), e["message_id"])
+	assert.Equal(t, q["text"].(string)+"\n\n— allowed", e["text"])
+	assert.JSONEq(t, `{"inline_keyboard":[]}`, e["reply_markup"].(string), "the buttons are gone")
+
+	svc.push(pressUpdate(22, native, person, "cb-late", "/pao deny q1"))
+	require.Eventually(t, func() bool { return len(svc.calls("answerCallbackQuery")) == 3 }, 5*time.Second, 20*time.Millisecond)
+	assert.Contains(t, svc.calls("answerCallbackQuery")[2]["text"], "no such pending question", "a stale press decides nothing")
+	assert.Len(t, svc.calls("editMessageText"), 1)
 }

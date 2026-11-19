@@ -63,6 +63,32 @@ type Channel interface {
 	Send(ctx context.Context, m core.Message) error
 }
 
+// ActionChannel is a channel that shows a message's actions as buttons (ADR-0027
+// point 2). Send draws them; a press comes back as a ChannelInbound marked Press.
+// CloseActions removes the buttons from what the channel showed for the message
+// with pao id id, and shows the outcome there; for a message whose actions it
+// did not show, it does nothing. A channel that is not an ActionChannel shows the
+// text alone, and every action stays a typed command.
+type ActionChannel interface {
+	Channel
+	CloseActions(ctx context.Context, id, outcome string) error
+}
+
+// CloseActions asks every channel that shows buttons to close the ones it showed
+// for message id, with the outcome. It is best effort: what fails is returned
+// for the caller to log, and a button left showing decides nothing.
+func (l *Layer) CloseActions(ctx context.Context, id, outcome string) error {
+	var errs []error
+	for _, c := range l.channels {
+		if ac, ok := c.(ActionChannel); ok {
+			if err := ac.CloseActions(ctx, id, outcome); err != nil {
+				errs = append(errs, fmt.Errorf("channel %q: %w", c.Name(), err))
+			}
+		}
+	}
+	return errors.Join(errs...)
+}
+
 // Layer is safe for concurrent use once configured.
 type Layer struct {
 	store    *msgstore.Store
