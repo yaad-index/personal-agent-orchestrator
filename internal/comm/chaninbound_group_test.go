@@ -163,3 +163,18 @@ func TestAGroupWithNoConversationIdIsNeverAdmittedEvenIfAnEmptyIdIsListed(t *tes
 	assert.Empty(t, r.routed, "a press on no message reaches the layer with no conversation, and must stay refused")
 	assert.Equal(t, []rec{{"chat", "op", RecordMessage, "group", "RAW"}}, rc.got)
 }
+
+// The layer refuses a group registration without keeping its secret on its own,
+// whatever the adapter passes: in a group that is not admitted as in one that is.
+func TestARegistrationInAnyGroupIsRecordedAsOneAndItsSecretIsNotKept(t *testing.T) {
+	l, _, id, rc := groupSetup(t)
+	for _, conv := range []string{"-5", "-6", ""} {
+		in := inGroup(conv, "new", "SEC")
+		in.Registration, in.Raw = true, "/register SEC"
+		res, err := l.ReceiveFromChannel(context.Background(), in)
+		require.NoError(t, err)
+		assert.Equal(t, ChannelResult{}, res, conv)
+	}
+	assert.Zero(t, id.registers)
+	assert.Equal(t, []rec{{"chat", "new", RecordRegistration, "from a group", ""}, {"chat", "new", RecordRegistration, "from a group", ""}, {"chat", "new", RecordRegistration, "from a group", ""}}, rc.got)
+}

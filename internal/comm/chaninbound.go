@@ -249,17 +249,17 @@ func (l *Layer) receiveFromGroup(ctx context.Context, in ChannelInbound) (Channe
 	if in.MovedTo != "" {
 		return ChannelResult{}, l.reject(in, RecordMessage, "conversation moved", "from "+in.Conversation+" to "+in.MovedTo)
 	}
+	// A secret said in a group is read by everyone in it: it is refused and not
+	// kept, whether or not the group is admitted (ADR-0028 point 3).
+	if in.Registration {
+		return ChannelResult{}, l.reject(in, RecordRegistration, "from a group", "")
+	}
 	policy, ok := l.groupPolicy(in.Channel, in.Conversation)
 	if !ok {
 		if in.Join {
 			return ChannelResult{}, nil
 		}
 		return ChannelResult{}, l.reject(in, RecordMessage, "group", in.Raw)
-	}
-	// A secret said in a group is read by everyone in it: it is refused and not
-	// kept (ADR-0028 point 3).
-	if in.Registration {
-		return ChannelResult{}, l.reject(in, RecordRegistration, "from a group", "")
 	}
 	subject, bound := l.identity.Resolve(in.Channel, in.Sender)
 	admitted := bound && l.admits(policy, subject)
