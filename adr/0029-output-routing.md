@@ -23,7 +23,11 @@ The streams are the ones ADR-0023 names, and this ADR keeps its model:
 
 ## Decision
 
-1. **A destination is a conversation, and it has a name.** pao routes output to conversations, not to channels as a whole. An admitted group is named by its name. An operator's private conversation on a channel is named by the operator's subject. Where a subject has bindings on several channels, the channel's name qualifies it. A destination name is unique within a node. The operator uses these names wherever a destination is set or shown, and the platform's ids stay inside the adapter and the admission.
+1. **A destination is a conversation, and it has a name that says its kind.** pao routes output to conversations, not to channels as a whole. A destination name carries its kind, so the two sources of names cannot collide:
+   - An admitted group is `group:<name>`, by the name in its admission. Group names are already unique within a node.
+   - An operator's private conversation is `private:<subject>`, by the subject it belongs to. Subject names are already unique within a node. Where the subject has bindings on several channels, the channel's name qualifies it: `private:<subject>@<channel>`.
+
+   A group and a subject may share a bare name without ambiguity, because the kind is part of every destination name. No check across the two stores is needed. The operator uses these names wherever a destination is set or shown, and the platform's ids stay inside the adapter and the admission.
 
 2. **A reply goes back to the conversation it was addressed from.** When pao delivers a message to an agent, it notes the conversation the message came from as the origin of the agent's turn. Output from the agent during that turn goes to the origin. A private message is answered privately and a group message in the group. This replaces ADR-0028 point 6 for agent output. It holds for a message addressed by name, by tag, by reply or by the default agent alike. A message from the node's local channel or the operator surface has the local channel as its origin.
    - A turn ends when the next message is delivered to the agent. Output after that belongs to the new origin.
@@ -40,7 +44,7 @@ The streams are the ones ADR-0023 names, and this ADR keeps its model:
 
 5. **A binding may carry a prefix the operator chooses.** A standing binding, and the origin reply of the agent it belongs to, may carry a prefix of at most 10 characters. It is put before every message the binding sends. Where it is set, it replaces the `[name]:` rule of ADR-0023 point 5 for that binding. Where it is not set, that rule applies unchanged: the channel's default agent is unprefixed and every other agent is named.
 
-6. **Every destination is checked against everyone who reads it.** The narrowest-reader rule of ADR-0028 point 5 applies to each destination: the origin, every standing binding, every stderr destination. A conversation is sent a message only if every one of its readers may see it.
+6. **Every destination is checked against everyone who reads it.** The narrowest-reader rule of ADR-0028 point 5 applies to each destination: the origin, every standing binding, every stderr destination. A conversation is sent a message only if every one of its readers may see it. For an agent's output, that means every reader may reach the agent (ADR-0012).
    - A reply whose origin fails the rule is not sent there. It is held back and recorded, so the operator can see it. It is never redirected somewhere else.
    - A standing binding that fails the rule sends nothing to that destination. This applies to mirrored input at the log level too: a message delivered to an agent is shown in a destination only if every reader there may see it. For example, a private message mirrored to a group passes only when everyone the group admits may read it.
    - Routing chooses where a message may go. The reader rule decides whether it goes.
