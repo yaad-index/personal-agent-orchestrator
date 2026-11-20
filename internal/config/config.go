@@ -127,6 +127,23 @@ type Channel struct {
 	CredentialEnv string `yaml:"credential_env"`
 	// Options are the adapter's own settings; only the adapter interprets them.
 	Options map[string]any `yaml:"options"`
+	// Groups are the group conversations the channel serves (ADR-0028 point 1).
+	// A group not listed here is refused. If the platform moves a conversation to
+	// a new id, the new id is not listed and the group is refused until it is.
+	Groups []Group `yaml:"groups"`
+}
+
+// MembersOperators is the member policy that admits only subjects routed as the
+// operator (ADR-0028 point 2). It is the only policy there is.
+const MembersOperators = "operators"
+
+// Group admits one group conversation on a channel (ADR-0028 points 1 and 2).
+type Group struct {
+	// ID is the platform's own id for the conversation, the one a reply to it
+	// goes to.
+	ID string `yaml:"id"`
+	// Members is the group's member policy: who may act in it.
+	Members string `yaml:"members"`
 }
 
 var (
@@ -162,6 +179,26 @@ func checkChannels(path string, chs []Channel) error {
 			return fmt.Errorf("%s: name %q is already used", at, c.Name)
 		}
 		ids[c.ID], names[c.Name] = c.Name, true
+		if err := checkGroups(at, c.Groups); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func checkGroups(at string, gs []Group) error {
+	seen := map[string]bool{}
+	for i, g := range gs {
+		gat := fmt.Sprintf("%s.groups[%d]", at, i)
+		switch {
+		case strings.TrimSpace(g.ID) == "" || g.ID != strings.TrimSpace(g.ID):
+			return fmt.Errorf("%s: id is required, with no surrounding space", gat)
+		case g.Members != MembersOperators:
+			return fmt.Errorf("%s: members must be %q", gat, MembersOperators)
+		case seen[g.ID]:
+			return fmt.Errorf("%s: id %q is already listed", gat, g.ID)
+		}
+		seen[g.ID] = true
 	}
 	return nil
 }

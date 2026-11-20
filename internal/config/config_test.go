@@ -409,3 +409,34 @@ func TestUpstreamsRejects(t *testing.T) {
 		assert.Contains(t, err.Error(), c.want, name)
 	}
 }
+
+func TestChannelGroupsAreLoaded(t *testing.T) {
+	path, err := channelsConfig(t, "channels:\n  - id: 1\n    name: chat\n    kind: bot\n    credential_env: PAO_BOT\n    groups:\n      - id: \"-100200\"\n        members: operators\n      - id: \"-300\"\n        members: operators\n")
+	require.NoError(t, err)
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	assert.Equal(t, []Group{{ID: "-100200", Members: "operators"}, {ID: "-300", Members: "operators"}}, cfg.Orchestrator.Channels[0].Groups)
+}
+
+func TestChannelGroupsRejects(t *testing.T) {
+	head := "channels:\n  - id: 1\n    name: chat\n    kind: bot\n    credential_env: PAO_BOT\n    groups:\n"
+	for name, c := range map[string]struct{ body, want string }{
+		"no id":         {"      - members: operators\n", "groups[0]: id is required"},
+		"blank id":      {"      - id: \" \"\n        members: operators\n", "id is required"},
+		"padded id":     {"      - id: \" -5\"\n        members: operators\n", "no surrounding space"},
+		"no members":    {"      - id: \"-5\"\n", `members must be "operators"`},
+		"other members": {"      - id: \"-5\"\n        members: everyone\n", `members must be "operators"`},
+		"duplicate id":  {"      - id: \"-5\"\n        members: operators\n      - id: \"-5\"\n        members: operators\n", `groups[1]: id "-5" is already listed`},
+		"unknown field": {"      - id: \"-5\"\n        members: operators\n        output: group\n", "output"},
+	} {
+		_, err := channelsConfig(t, head+c.body)
+		require.Error(t, err, name)
+		assert.Contains(t, err.Error(), c.want, name)
+	}
+}
+
+func TestTheSameGroupMayBeListedOnTwoChannels(t *testing.T) {
+	g := "    groups:\n      - id: \"-5\"\n        members: operators\n"
+	_, err := channelsConfig(t, "channels:\n  - id: 1\n    name: a\n    kind: bot\n    credential_env: PAO_BOT\n"+g+"  - id: 2\n    name: b\n    kind: bot\n    credential_env: PAO_BOT2\n"+g)
+	require.NoError(t, err)
+}
