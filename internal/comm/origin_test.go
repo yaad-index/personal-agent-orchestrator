@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/route"
 )
 
 // convChannel is a channel with conversations, like a bot: it asks the layer
@@ -26,7 +27,11 @@ func (c *convChannel) Send(_ context.Context, m core.Message) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, to := range c.l.Destinations(c.name, m) {
-		c.got[to] = append(c.got[to], m.Text)
+		text := m.Text
+		if m.Label != "" {
+			text = m.Label + " " + text
+		}
+		c.got[to] = append(c.got[to], text)
 	}
 	return nil
 }
@@ -215,4 +220,41 @@ func TestAMessageForwardedToAnotherNodeNotesTheOriginToo(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"ok"}, local.texts())
 	assert.Empty(t, other.texts())
+}
+
+// An agent may answer as soon as it reads a message, before delivery returns: the
+// answer already goes to the conversation the message came from.
+func TestAnAnswerWrittenDuringDeliveryGoesToTheNewOrigin(t *testing.T) {
+	for name, c := range map[string]struct {
+		before func(*testing.T, *Layer)
+		in     ChannelInbound
+		want   map[string][]string
+	}{
+		"from a group to private": {func(t *testing.T, l *Layer) { fromChat(t, l, inGroup("-5", "op", "first")) }, privately("now"), map[string][]string{"op": {"quick"}}},
+		"from private to a group": {func(t *testing.T, l *Layer) { fromChat(t, l, privately("first")) }, inGroup("-5", "op", "now"), map[string][]string{"-5": {"quick"}}},
+		"the first message":       {func(*testing.T, *Layer) {}, privately("now"), map[string][]string{"op": {"quick"}}},
+	} {
+		l, r, chat, local := originSetup(t)
+		c.before(t, l)
+		chat.take()
+		r.atRoute = func(m core.Message) {
+			if m.Text == "now" {
+				say(t, l, "quick")
+			}
+		}
+		fromChat(t, l, c.in)
+		assert.Equal(t, c.want, chat.take(), name)
+		assert.Empty(t, local.texts(), name)
+	}
+}
+
+func TestAFailedDeliveryLeavesAnOriginThatMovedSince(t *testing.T) {
+	l, _, _, _ := originSetup(t)
+	group := origin{channel: "chat", conversation: "-5"}
+	claims := l.claimOrigin(Inbound{Source: "chat", Conversation: "op"}, []core.Profile{{Name: "a"}})
+	l.mu.Lock()
+	l.origins["a"] = group // another message moved it while this one was delivered
+	l.mu.Unlock()
+	l.settleOrigin(claims, []route.Result{{Agent: "a", Err: errors.New("down")}})
+	assert.Equal(t, group, l.origins["a"])
 }

@@ -13,6 +13,7 @@ import (
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/local"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/config"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/daemon"
 )
 
@@ -73,7 +74,7 @@ func (c ChatCmd) run(ctx context.Context, in io.Reader, out, errw io.Writer) err
 	streamDone := make(chan error, 1)
 	go func() {
 		streamDone <- client.Stream(ctx, func(m local.MessageJSON) {
-			_, _ = fmt.Fprintf(out, "[%s]: %s\n", m.Sender, m.Text)
+			_, _ = fmt.Fprintln(out, core.Message{Sender: m.Sender, Text: m.Text, Label: m.Label}.Shown())
 		})
 	}()
 

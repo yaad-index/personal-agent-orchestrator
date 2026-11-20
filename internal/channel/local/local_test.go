@@ -378,6 +378,17 @@ func TestSendReachesEveryStream(t *testing.T) {
 	}
 }
 
+func TestAStreamedMessageCarriesItsLabel(t *testing.T) {
+	s, ts := newServer(t, &fakeLayer{})
+	one, stop := openStream(t, ts)
+	defer stop()
+	waitSubscribers(t, s, 1)
+	require.NoError(t, s.Send(context.Background(), core.Message{ID: "m6", Sender: "a", Kind: core.MessageContent, Text: "hi", Label: "TA:"}))
+	var m MessageJSON
+	require.NoError(t, json.Unmarshal([]byte(next(t, one).data), &m))
+	assert.Equal(t, "TA:", m.Label)
+}
+
 func TestStreamIsRemovedWhenTheClientLeaves(t *testing.T) {
 	s, ts := newServer(t, &fakeLayer{})
 	_, stop := openStream(t, ts)

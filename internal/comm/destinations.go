@@ -12,14 +12,14 @@ import (
 // channel (whose id is the operator's sender id), and the channel's admitted
 // groups.
 //
-// An agent's output in a turn with an origin goes back to the origin's
-// conversation (toOrigin). Anything else is shown as wide says.
+// An agent's output goes where its route says (routed). Anything else is shown as
+// wide says.
 func (l *Layer) Destinations(channel string, m core.Message) []string {
 	if l.identity == nil {
 		return nil
 	}
 	if r, ok := l.routes.Load(m.ID); ok {
-		return l.toOrigin(channel, m, r.(outRoute))
+		return l.routed(channel, m, r.(outRoute))
 	}
 	out := l.wide(channel, m)
 	if len(out) == 0 {

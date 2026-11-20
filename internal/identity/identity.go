@@ -278,6 +278,20 @@ func (s *Store) IsOperator(name string) bool {
 	return op
 }
 
+// Senders returns the sender ids bound on a channel to the subject, read afresh.
+func (s *Store) Senders(subject, channel string) []string {
+	var out []string
+	_ = s.db.View(func(tx *bolt.Tx) error {
+		return tx.Bucket(bindings).ForEach(func(k, v []byte) error {
+			if ch, snd, _ := strings.Cut(string(k), "\x00"); ch == channel && string(v) == subject {
+				out = append(out, snd)
+			}
+			return nil
+		})
+	})
+	return out
+}
+
 // Operators returns the sender ids bound on a channel to an operator-flagged
 // subject, read afresh (ADR-0022).
 func (s *Store) Operators(channel string) []string {

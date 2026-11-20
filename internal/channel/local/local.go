@@ -336,6 +336,8 @@ type MessageJSON struct {
 	Kind   string    `json:"kind"`
 	Text   string    `json:"text"`
 	Reply  string    `json:"reply,omitempty"`
+	// Label, when set, is shown before the text in place of the sender's name.
+	Label string `json:"label,omitempty"`
 }
 
 func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
@@ -382,7 +384,7 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 			if !open {
 				return // dropped as too slow; the client reconnects
 			}
-			b, err := json.Marshal(MessageJSON{ID: s.qualify(m.ID), Time: m.Time, Sender: m.Sender, Kind: string(m.Kind), Text: m.Text, Reply: s.qualify(m.Reply)})
+			b, err := json.Marshal(MessageJSON{ID: s.qualify(m.ID), Time: m.Time, Sender: m.Sender, Kind: string(m.Kind), Text: m.Text, Reply: s.qualify(m.Reply), Label: m.Label})
 			if err != nil {
 				continue
 			}

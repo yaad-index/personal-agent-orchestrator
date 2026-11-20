@@ -176,11 +176,24 @@ type Message struct {
 	// Actions are the choices offered with the message. Every action is also a
 	// command the text names, so a channel that shows no buttons loses nothing.
 	Actions []Action
+	// Label, when set, is shown to the human before the text in place of the
+	// sender's name: a standing binding's prefix (ADR-0029 point 5). It is never
+	// stored and an agent never reads it.
+	Label string
 }
 
 // Line renders the message as the one line the agent reads: `[sender]: text`
 // (ADR-0001 point 4).
 func (m Message) Line() string { return "[" + m.Sender + "]: " + m.Text }
+
+// Shown renders the message as a human is shown it: after its label where it has
+// one, otherwise as Line.
+func (m Message) Shown() string {
+	if m.Label != "" {
+		return m.Label + " " + m.Text
+	}
+	return m.Line()
+}
 
 // Launcher brings an agent up from its profile and returns once the agent is
 // ready to receive input, or with the reason it is not (ADR-0007 point 2).

@@ -454,3 +454,56 @@ func TestTheSameGroupMayBeListedOnTwoChannels(t *testing.T) {
 	_, err := channelsConfig(t, "channels:\n  - id: 1\n    name: a\n    kind: bot\n    credential_env: PAO_BOT\n"+g("via_a")+"  - id: 2\n    name: b\n    kind: bot\n    credential_env: PAO_BOT2\n"+g("via_b"))
 	require.NoError(t, err)
 }
+
+const bindingsHead = "level: 2\nchannels:\n  - id: 1\n    name: chat\n    kind: bot\n    credential_env: PAO_BOT\n    groups:\n      - id: \"-5\"\n        name: team\n        members: operators\nbindings:\n"
+
+func TestBindingsAreLoadedWithTheirDefaults(t *testing.T) {
+	path, err := channelsConfig(t, bindingsHead+
+		"  - agent: a\n    to: group:team\n"+
+		"  - agent: a\n    stream: stdout\n    to: private:alice@chat\n    level: 3\n    prefix: \"TA:\"\n"+
+		"  - agent: a\n    to: channel:local\n    level: 1\n")
+	require.NoError(t, err)
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	assert.Equal(t, []Binding{
+		{Agent: "a", Stream: "stdout", To: "group:team", Level: 2},
+		{Agent: "a", Stream: "stdout", To: "private:alice@chat", Level: 3, Prefix: "TA:"},
+		{Agent: "a", Stream: "stdout", To: "channel:local", Level: 1},
+	}, cfg.Orchestrator.Bindings, "the stream defaults to stdout and the level to the node's")
+}
+
+func TestBindingsRejects(t *testing.T) {
+	for name, c := range map[string]struct{ body, want string }{
+		"unknown agent":      {"  - agent: z\n    to: group:team\n", `agent "z" is not a configured agent`},
+		"stderr":             {"  - agent: a\n    stream: stderr\n    to: group:team\n", `stream must be "stdout"`},
+		"no destination":     {"  - agent: a\n", `destination "" must be`},
+		"unknown kind":       {"  - agent: a\n    to: room:team\n", `kind "room"`},
+		"unknown group":      {"  - agent: a\n    to: group:other\n", `no admitted group is named "other"`},
+		"bad subject":        {"  - agent: a\n    to: private:Al ice\n", "is not a subject name"},
+		"unknown channel":    {"  - agent: a\n    to: private:alice@nope\n", `no channel is named "nope"`},
+		"bad channel":        {"  - agent: a\n    to: private:alice@\n", "is not a channel name"},
+		"channel with convs": {"  - agent: a\n    to: channel:chat\n", `channel "chat" has several conversations`},
+		"negative level":     {"  - agent: a\n    to: group:team\n    level: -1\n", "level must be at least 1"},
+		"long prefix":        {"  - agent: a\n    to: group:team\n    prefix: \"12345678901\"\n", "longer than 10"},
+		"two-line prefix":    {"  - agent: a\n    to: group:team\n    prefix: \"a\\nb\"\n", "one line"},
+		"duplicate":          {"  - agent: a\n    to: private:alice\n  - agent: a\n    to: private:alice\n    level: 3\n", `bindings[1]: agent "a" is already bound to private:alice at bindings[0]`},
+		"unknown field":      {"  - agent: a\n    to: group:team\n    mode: quiet\n", "mode"},
+	} {
+		_, err := channelsConfig(t, bindingsHead+c.body)
+		require.Error(t, err, name)
+		assert.Contains(t, err.Error(), c.want, name)
+	}
+}
+
+func TestAPrefixOfTenCharactersIsAllowedCountedAsCharacters(t *testing.T) {
+	_, err := channelsConfig(t, bindingsHead+"  - agent: a\n    to: group:team\n    prefix: \"ääääääääää\"\n")
+	assert.NoError(t, err)
+}
+
+func TestParseDestinationRoundTrips(t *testing.T) {
+	for _, s := range []string{"group:team", "private:alice", "private:alice@chat", "channel:local"} {
+		d, err := ParseDestination(s)
+		require.NoError(t, err, s)
+		assert.Equal(t, s, d.String())
+	}
+}

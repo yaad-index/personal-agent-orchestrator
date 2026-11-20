@@ -48,6 +48,9 @@ type Identity interface {
 	// Operators returns the sender ids on the channel that resolve to an
 	// operator-flagged subject, read afresh.
 	Operators(channel string) []string
+	// Senders returns the sender ids on the channel bound to the subject, read
+	// afresh.
+	Senders(subject, channel string) []string
 }
 
 // Recorder keeps what the layer did not act on (ADR-0019 point 7). It is write-only

@@ -502,10 +502,10 @@ func (b *Bot) SendNative(ctx context.Context, m core.Message) ([]string, error) 
 // the channel's default agent, which speaks as the channel's own voice (ADR-0023
 // point 5).
 func (b *Bot) line(m core.Message) string {
-	if agent, ok := b.h.DefaultAgent(b.name); ok && agent == m.Sender {
+	if agent, ok := b.h.DefaultAgent(b.name); ok && agent == m.Sender && m.Label == "" {
 		return m.Text
 	}
-	return m.Line()
+	return m.Shown()
 }
 
 // split cuts text into pieces of at most limit characters, at a line or word

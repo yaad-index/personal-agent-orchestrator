@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"go.yaml.in/yaml/v3"
 
@@ -77,6 +78,90 @@ type Orchestrator struct {
 	// MCPUpstreams are the MCP servers pao reaches as a client and offers tools of
 	// on its own MCP surface (ADR-0024).
 	MCPUpstreams []MCPUpstream `yaml:"mcp_upstreams"`
+	// Bindings are the standing bindings: who follows an agent besides the
+	// conversation it is answering (ADR-0029 point 3).
+	Bindings []Binding `yaml:"bindings"`
+}
+
+// Binding subscribes a destination to an agent's stream at a level (ADR-0029
+// point 3).
+type Binding struct {
+	// Agent is the agent followed, by name.
+	Agent string `yaml:"agent"`
+	// Stream is the stream followed. Only "stdout", the agent's output, is
+	// accepted, and it is the default.
+	Stream string `yaml:"stream"`
+	// To is the destination, by name: group:<name>, private:<subject>,
+	// private:<subject>@<channel> or channel:local (ADR-0029 point 1).
+	To string `yaml:"to"`
+	// Level is the verbosity level the destination is shown the stream at, read
+	// against the agent's level map (ADR-0008). Default: the node's level.
+	Level int `yaml:"level"`
+	// Prefix, when set, is put before every message the binding sends, in place
+	// of the agent's name (ADR-0029 point 5). At most MaxPrefix characters.
+	Prefix string `yaml:"prefix"`
+}
+
+// StreamStdout is an agent's output.
+const StreamStdout = "stdout"
+
+// MaxPrefix is the longest prefix a binding may carry (ADR-0029 point 5).
+const MaxPrefix = 10
+
+// The kinds of destination (ADR-0029 point 1).
+const (
+	DestGroup   = "group"
+	DestPrivate = "private"
+	DestChannel = "channel"
+)
+
+// Destination is a parsed destination name.
+type Destination struct {
+	// Kind is DestGroup, DestPrivate or DestChannel.
+	Kind string
+	// Name is the group's name, the subject's name or the channel's name.
+	Name string
+	// Channel qualifies a private destination by the channel it is on; empty
+	// leaves it to the subject's one channel.
+	Channel string
+}
+
+// String is the destination's name.
+func (d Destination) String() string {
+	s := d.Kind + ":" + d.Name
+	if d.Channel != "" {
+		s += "@" + d.Channel
+	}
+	return s
+}
+
+// ParseDestination reads a destination name. It checks the form only: whether the
+// group, subject or channel exists is checked where they are known.
+func ParseDestination(s string) (Destination, error) {
+	kind, rest, ok := strings.Cut(s, ":")
+	if !ok {
+		return Destination{}, fmt.Errorf("destination %q must be group:<name>, private:<subject>[@<channel>] or channel:<name>", s)
+	}
+	d := Destination{Kind: kind, Name: rest}
+	if kind == DestPrivate {
+		d.Name, d.Channel, _ = strings.Cut(rest, "@")
+		if strings.Contains(rest, "@") && !channelNamePattern.MatchString(d.Channel) {
+			return Destination{}, fmt.Errorf("destination %q: channel %q is not a channel name", s, d.Channel)
+		}
+	}
+	switch kind {
+	case DestGroup, DestChannel:
+		if !channelNamePattern.MatchString(d.Name) {
+			return Destination{}, fmt.Errorf("destination %q: %q is not a %s name", s, d.Name, kind)
+		}
+	case DestPrivate:
+		if !namePattern.MatchString(d.Name) {
+			return Destination{}, fmt.Errorf("destination %q: %q is not a subject name", s, d.Name)
+		}
+	default:
+		return Destination{}, fmt.Errorf("destination %q: kind %q must be %s, %s or %s", s, kind, DestGroup, DestPrivate, DestChannel)
+	}
+	return d, nil
 }
 
 // MCPUpstream configures one upstream MCP server (ADR-0024 points 1 and 7).
@@ -438,7 +523,61 @@ func load(path string, withMesh bool) (*Config, error) {
 		seen[p.Name] = f
 		cfg.Profiles = append(cfg.Profiles, p)
 	}
+	if err := checkBindings(path, &cfg.Orchestrator, seen); err != nil {
+		return nil, err
+	}
 	return cfg, nil
+}
+
+// checkBindings validates the standing bindings against the node's agents,
+// channels and groups, and fills in the defaults. Whether a private destination's
+// subject exists is known only at run time.
+func checkBindings(path string, o *Orchestrator, agents map[string]string) error {
+	groups, channels := map[string]bool{}, map[string]bool{}
+	for _, c := range o.Channels {
+		channels[c.Name] = true
+		for _, g := range c.Groups {
+			groups[g.Name] = true
+		}
+	}
+	seen := map[string]int{}
+	for i := range o.Bindings {
+		b := &o.Bindings[i]
+		at := fmt.Sprintf("%s: bindings[%d]", path, i)
+		if b.Stream == "" {
+			b.Stream = StreamStdout
+		}
+		if b.Level == 0 {
+			b.Level = o.Level
+		}
+		d, err := ParseDestination(b.To)
+		switch {
+		case agents[b.Agent] == "":
+			return fmt.Errorf("%s: agent %q is not a configured agent", at, b.Agent)
+		case b.Stream != StreamStdout:
+			return fmt.Errorf("%s: stream must be %q", at, StreamStdout)
+		case err != nil:
+			return fmt.Errorf("%s: %w", at, err)
+		case d.Kind == DestGroup && !groups[d.Name]:
+			return fmt.Errorf("%s: no admitted group is named %q", at, d.Name)
+		case d.Kind == DestPrivate && d.Channel != "" && !channels[d.Channel]:
+			return fmt.Errorf("%s: no channel is named %q", at, d.Channel)
+		case d.Kind == DestChannel && !reservedChannelNames[d.Name]:
+			return fmt.Errorf("%s: channel %q has several conversations: name one as %s:<name> or %s:<subject>", at, d.Name, DestGroup, DestPrivate)
+		case b.Level < 1:
+			return fmt.Errorf("%s: level must be at least 1", at)
+		case utf8.RuneCountInString(b.Prefix) > MaxPrefix:
+			return fmt.Errorf("%s: prefix is longer than %d characters", at, MaxPrefix)
+		case strings.ContainsAny(b.Prefix, "\r\n"):
+			return fmt.Errorf("%s: prefix is one line", at)
+		}
+		key := b.Agent + "\x00" + b.Stream + "\x00" + d.String()
+		if prev, dup := seen[key]; dup {
+			return fmt.Errorf("%s: agent %q is already bound to %s at bindings[%d]", at, b.Agent, d, prev)
+		}
+		seen[key] = i
+	}
+	return nil
 }
 
 // checkLoopback accepts only a host:port whose host is a loopback address.
