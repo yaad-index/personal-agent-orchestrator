@@ -26,7 +26,11 @@ func (c *convChannel) Send(_ context.Context, m core.Message) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, to := range c.l.Destinations(c.name, m) {
-		c.got[to] = append(c.got[to], m.Text)
+		text := m.Text
+		if m.Label != "" {
+			text = m.Label + " " + text
+		}
+		c.got[to] = append(c.got[to], text)
 	}
 	return nil
 }

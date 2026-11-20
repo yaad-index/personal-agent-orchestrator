@@ -109,6 +109,8 @@ type Layer struct {
 	// routes holds the route of each agent message while channels are handed it,
 	// by message id.
 	routes sync.Map
+	// bindings are the node's standing bindings (ADR-0029 point 3).
+	bindings []Binding
 
 	// self is this node's id in a mesh, empty outside one; known says whether an id
 	// is a node of the mesh.
@@ -357,15 +359,15 @@ func (l *Layer) resolveReply(in Inbound, targets []core.Profile) (string, map[st
 	return "", nil, nil
 }
 
-// Send is the single conduit to the human: it stores m in from's scope (so the
-// agent can quote or fetch its own output) and hands it to the channels it goes to
-// (sendFrom). A channel that fails does not stop the others; the errors are joined.
+// Send is the single conduit to the human for a message an agent's output was
+// already rendered into: it stores m in from's scope (so the agent can quote or
+// fetch its own output) and hands it to the default stream's targets (planFor),
+// not to standing bindings. A channel that fails does not stop the others; the
+// errors are joined.
 func (l *Layer) Send(ctx context.Context, from string, m core.Message) (core.Message, error) {
-	stored, err := l.store.Add(m, from)
-	if err != nil {
-		return core.Message{}, err
-	}
-	return stored, l.sendFrom(ctx, from, stored)
+	p := l.planFor(from, 0)
+	base := p.byRendering[0]
+	return l.sendRendered(ctx, from, m, "", base.targets[:base.base], p.covered)
 }
 
 // sendTo hands m to the one channel named. A channel that has gone is an error,

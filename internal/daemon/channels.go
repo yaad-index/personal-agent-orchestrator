@@ -25,6 +25,7 @@ func (r rejectRecorder) Record(channel, sender, kind, reason, payload string) er
 func wireChannels(cfg *config.Config, creds map[string]string, table adapter.Table, layer *comm.Layer, ids *identity.Store, rejects *rejected.Store) ([]adapter.Adapter, error) {
 	layer.SetIdentity(ids, rejectRecorder{rejects})
 	layer.SetCompositeWindow(cfg.Orchestrator.MessageWindow)
+	layer.SetBindings(standingBindings(cfg.Orchestrator.Bindings))
 	if len(cfg.Orchestrator.Channels) == 0 {
 		return nil, nil
 	}
@@ -51,6 +52,20 @@ func wireChannels(cfg *config.Config, creds map[string]string, table adapter.Tab
 		layer.AddChannel(a)
 	}
 	return adapters, nil
+}
+
+// standingBindings is the configured standing bindings as the layer routes them
+// (ADR-0029 point 3). Loading the config checked every destination's name.
+func standingBindings(bs []config.Binding) []comm.Binding {
+	out := make([]comm.Binding, 0, len(bs))
+	for _, b := range bs {
+		d, err := config.ParseDestination(b.To)
+		if err != nil {
+			continue
+		}
+		out = append(out, comm.Binding{Agent: b.Agent, To: comm.Dest{Kind: d.Kind, Name: d.Name, Channel: d.Channel}, Level: b.Level, Prefix: b.Prefix})
+	}
+	return out
 }
 
 // admittedGroups is each channel's admitted group conversations with their member

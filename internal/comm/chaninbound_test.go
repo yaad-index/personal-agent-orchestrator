@@ -32,6 +32,16 @@ func (f *fakeIdentity) Register(ch, snd, secret string) (string, bool) {
 	return "alice", true
 }
 func (f *fakeIdentity) IsOperator(s string) bool { return f.operators[s] }
+func (f *fakeIdentity) Senders(subject, ch string) []string {
+	var out []string
+	for k, subj := range f.bound {
+		if c, snd, _ := strings.Cut(k, "\x00"); c == ch && subj == subject {
+			out = append(out, snd)
+		}
+	}
+	return out
+}
+
 func (f *fakeIdentity) Operators(ch string) []string {
 	var out []string
 	for k, subj := range f.bound {

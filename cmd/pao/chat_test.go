@@ -96,6 +96,8 @@ func TestChatSendsLinesAndPrintsWhatPaoSends(t *testing.T) {
 
 	require.NoError(t, srv.Send(context.Background(), core.Message{ID: "m9", Sender: "a", Text: "pong"}))
 	require.Eventually(t, func() bool { return strings.Contains(out.String(), "[a]: pong\n") }, 3*time.Second, 10*time.Millisecond)
+	require.NoError(t, srv.Send(context.Background(), core.Message{ID: "m10", Sender: "a", Text: "labelled", Label: "TA:"}))
+	require.Eventually(t, func() bool { return strings.Contains(out.String(), "TA: labelled\n") }, 3*time.Second, 10*time.Millisecond, "a label in place of the name")
 
 	pr.close()
 	select {

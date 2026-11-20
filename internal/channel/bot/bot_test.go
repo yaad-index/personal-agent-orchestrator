@@ -608,6 +608,15 @@ func TestTheChannelsDefaultAgentSpeaksUnprefixedAndAnyOtherIsNamed(t *testing.T)
 		"only this channel's default drops the prefix; another channel's default is named here")
 }
 
+func TestALabelReplacesTheNameEvenForTheDefaultAgent(t *testing.T) {
+	s, h := newServer(t), &handler{recipients: []string{"900"}, defaults: map[string]string{"chat": "bee"}}
+	b, err := newBot(spec(s, nil), h)
+	require.NoError(t, err)
+	require.NoError(t, b.Send(context.Background(), core.Message{Sender: "bee", Text: "one", Label: "TA:"}))
+	require.NoError(t, b.Send(context.Background(), core.Message{Sender: "wasp", Text: "two", Label: "W"}))
+	assert.Equal(t, []string{"TA: one", "W two"}, s.sentTo(900))
+}
+
 func TestALongMessageIsSplitAtTheConfiguredLimitAndNamedByItsFirstPiece(t *testing.T) {
 	s, h := newServer(t), &handler{recipients: []string{"900"}}
 	b, err := newBot(spec(s, map[string]any{"message_limit": 100}), h)

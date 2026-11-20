@@ -484,3 +484,34 @@ func TestAnAdmittedGroupServesTheOperatorAndNoOneElse(t *testing.T) {
 	require.Eventually(t, func() bool { return len(svc.calls("editMessageText")) == 1 }, 5*time.Second, 20*time.Millisecond, "the copy is closed")
 	assert.Equal(t, float64(person), svc.calls("editMessageText")[0]["chat_id"].(float64))
 }
+
+// TestAStandingBindingFollowsTheAgentBesideTheOrigin runs ADR-0029 point 3 on a
+// real node: the operator writes privately, the reply comes back privately, and a
+// standing binding shows the agent's output in the group as well, with its
+// prefix in place of the agent's name.
+func TestAStandingBindingFollowsTheAgentBesideTheOrigin(t *testing.T) {
+	svc := &service{}
+	ts := httptest.NewServer(http.HandlerFunc(svc.handler))
+	t.Cleanup(ts.Close)
+	t.Setenv("PAO_TEST_BOT_TOKEN", "tok-1")
+	const person, group = 4242, -700
+
+	n := startNodeWith(t, map[string]string{"bee": ""}, func(_, _ string, cfg *config.Config) {
+		cfg.Orchestrator.Channels = []config.Channel{{ID: 1, Name: "chat", Kind: "bot", CredentialEnv: "PAO_TEST_BOT_TOKEN",
+			Options: map[string]any{"endpoint": ts.URL + "/bot{token}/{method}", "poll_timeout": 0},
+			Groups:  []config.Group{{ID: strconv.Itoa(group), Name: "team", Members: config.MembersOperators}}}}
+		cfg.Orchestrator.Bindings = []config.Binding{{Agent: "bee", Stream: config.StreamStdout, To: "group:team", Level: 1, Prefix: "B:"}}
+	}, func(o *Options) { o.Adapters = builtin.Table() })
+	ctx := context.Background()
+
+	require.NoError(t, n.client.AddSubject(ctx, "alice"))
+	inv, err := n.client.Invite(ctx, "alice", time.Hour)
+	require.NoError(t, err)
+	svc.push(chatUpdate(1, 10, person, "/register "+inv.Secret))
+	lineWith(t, svc, float64(person), "registered.")
+	require.NoError(t, n.client.SetOperator(ctx, "alice", true))
+
+	svc.push(chatUpdate(2, 11, person, "/pao agent bee hello"))
+	assert.Equal(t, "[bee]: echo: [alice]: hello", lineWith(t, svc, person, "hello"), "the origin: privately, named as before")
+	assert.Equal(t, "B: echo: [alice]: hello", lineWith(t, svc, group, "hello"), "the binding: in the group, with its prefix")
+}
