@@ -35,6 +35,11 @@ type Inbound struct {
 	ReplyQuote  string
 	Attachments []core.Attachment
 	Target      core.Target
+	// Conversation is the conversation on the source channel the message came
+	// from: the platform's id for it, which for a private conversation is the
+	// sender's id. It is empty where the channel has one conversation. The agent's
+	// output in the turn this message starts goes back to it (ADR-0029 point 2).
+	Conversation string
 	// Allow, when set, narrows the agents Target resolves to: an agent it
 	// returns false for is left out, and if none is left the target matches
 	// no agent, in the same words as one that does not exist. It is how access
@@ -98,6 +103,12 @@ type Layer struct {
 
 	mu    sync.RWMutex
 	bound map[string]string // agent name to the channel its output goes to
+	// origins is the origin of each agent's current turn, by agent name
+	// (ADR-0029 point 2).
+	origins map[string]origin
+	// routes holds the route of each agent message while channels are handed it,
+	// by message id.
+	routes sync.Map
 
 	// self is this node's id in a mesh, empty outside one; known says whether an id
 	// is a node of the mesh.
@@ -125,7 +136,7 @@ type Layer struct {
 
 // New returns a Layer.
 func New(store *msgstore.Store, router Router) *Layer {
-	return &Layer{store: store, router: router, pre: make(map[string]Preprocessor), bound: make(map[string]string),
+	return &Layer{store: store, router: router, pre: make(map[string]Preprocessor), bound: make(map[string]string), origins: map[string]origin{},
 		channelIDs: map[string]int{}, composites: newCompositeMap(DefaultCompositeWindow)}
 }
 
@@ -271,7 +282,9 @@ func (l *Layer) Receive(ctx context.Context, in Inbound) (Delivery, error) {
 	}
 
 	if len(forwards) == 0 {
-		return Delivery{Message: msg, Results: l.router.Deliver(ctx, targets, msg)}, nil
+		results := l.router.Deliver(ctx, targets, msg)
+		l.noteOrigin(in, results)
+		return Delivery{Message: msg, Results: results}, nil
 	}
 	// An agent on another node is given the reference its own node resolves, not the
 	// one stored here.
@@ -283,6 +296,7 @@ func (l *Layer) Receive(ctx context.Context, in Inbound) (Delivery, error) {
 		}
 		results = append(results, l.router.Deliver(ctx, []core.Profile{t}, m)...)
 	}
+	l.noteOrigin(in, results)
 	return Delivery{Message: msg, Results: results}, nil
 }
 
@@ -344,20 +358,14 @@ func (l *Layer) resolveReply(in Inbound, targets []core.Profile) (string, map[st
 }
 
 // Send is the single conduit to the human: it stores m in from's scope (so the
-// agent can quote or fetch its own output) and hands it to every channel. A
-// channel that fails does not stop the others; the errors are joined.
+// agent can quote or fetch its own output) and hands it to the channels it goes to
+// (sendFrom). A channel that fails does not stop the others; the errors are joined.
 func (l *Layer) Send(ctx context.Context, from string, m core.Message) (core.Message, error) {
 	stored, err := l.store.Add(m, from)
 	if err != nil {
 		return core.Message{}, err
 	}
-	l.mu.RLock()
-	only, bound := l.bound[from]
-	l.mu.RUnlock()
-	if bound {
-		return stored, l.sendTo(ctx, only, stored)
-	}
-	return stored, l.fanOut(ctx, stored)
+	return stored, l.sendFrom(ctx, from, stored)
 }
 
 // sendTo hands m to the one channel named. A channel that has gone is an error,

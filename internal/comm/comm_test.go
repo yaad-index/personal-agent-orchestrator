@@ -30,6 +30,8 @@ type fakeRouter struct {
 	// seenInStore, when set, is called at Route time to check the message was
 	// already stored.
 	atRoute func(core.Message)
+	// fail, when set, is the error each named agent's delivery reports.
+	fail map[string]error
 }
 
 func (f *fakeRouter) Resolve(t core.Target) ([]core.Profile, error) {
@@ -55,7 +57,7 @@ func (f *fakeRouter) Deliver(_ context.Context, ps []core.Profile, m core.Messag
 	var rs []route.Result
 	var names []string
 	for _, p := range ps {
-		rs = append(rs, route.Result{Agent: p.Name})
+		rs = append(rs, route.Result{Agent: p.Name, Err: f.fail[p.Name]})
 		names = append(names, p.Name)
 	}
 	f.to = append(f.to, names)

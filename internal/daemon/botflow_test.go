@@ -415,6 +415,15 @@ func TestAnAdmittedGroupServesTheOperatorAndNoOneElse(t *testing.T) {
 	svc.push(groupUpdate(4, 21, person, group, "and again"))
 	assert.Equal(t, "[bee]: echo: [alice]: and again", lineWith(t, svc, group, "and again"), "the address made in the group is kept there")
 
+	// A reply goes back to the conversation it was addressed from, though the
+	// channel has an admitted group (ADR-0029 point 2).
+	svc.push(chatUpdate(40, 40, person, "/pao agent bee in private"))
+	assert.Equal(t, "[bee]: echo: [alice]: in private", lineWith(t, svc, person, "in private"), "a private message is answered privately")
+	assert.Nil(t, svc.sentWith(group, "in private"), "and not in the group")
+	svc.push(groupUpdate(41, 41, person, group, "back in the group"))
+	lineWith(t, svc, group, "back in the group")
+	assert.Nil(t, svc.sentWith(person, "back in the group"), "the next message from the group is answered there")
+
 	inv, err := n.client.Invite(ctx, "bob", time.Hour)
 	require.NoError(t, err)
 	svc.push(groupUpdate(5, 22, other, group, "/pao agent bee from bob"))
