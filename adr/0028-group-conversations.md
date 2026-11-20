@@ -29,15 +29,17 @@ Some platforms limit what a bot receives in a group. By default such a bot sees 
    - **A gate question** is shown only if every reader may answer it. ADR-0023 point 7 sends a question only to the operator, never to anyone else. A group whose readers are all operators meets it. A group with any other reader does not, and the question goes to the operator's private conversation instead.
    - **A command's answer** goes to its sender on the channel it came from (ADR-0026 point 5). In a group it is shown there only if every reader may see it. Otherwise it goes to the sender privately where the platform allows, and is dropped where it does not.
 
-   pao knows a group's readers only from its policy. It cannot see who the platform actually has in the group: someone added who never writes is invisible to pao, and reads everything shown there. So the rule holds only while the group's real membership stays within its policy. Keeping it there is the operator's job, a prerequisite like point 7. Where the platform reports someone joining a group, pao records a join by anyone the policy does not admit, so the operator can see it. In a group whose policy is "operators" and whose members are all operators, the rule always passes. It is defined over the reader set now, so admitting more readers later changes who passes and nothing else.
+   pao knows a group's readers only from its policy. It cannot see who the platform actually has in the group: someone added who never writes is invisible to pao, and reads everything shown there. So the rule holds only while the group's real membership stays within its policy. Keeping it there is the operator's job, a prerequisite like the one on the platform's group limit (see Prerequisite). Where the platform reports someone joining a group, pao records a join by anyone the policy does not admit, so the operator can see it. In a group whose policy is "operators" and whose members are all operators, the rule always passes. It is defined over the reader set now, so admitting more readers later changes who passes and nothing else.
 
-6. **Where an agent's output and a gate question go, once a group is admitted: for the operator to decide.** The channel's output can go to the admitted group, to each operator's private conversation, or to both. Lean: output goes to the group only, and a gate question goes to both.
+6. **Once a channel has an admitted group, an agent's output goes to the group, and a gate question goes to both the group and each operator's private conversation.** This is the first build's default, and the only routing this ADR decides.
    - Output in one place is the point of the group. Two copies of everything would bury it.
    - A question is the one message that cannot wait, and the operator may have the group muted. Showing it in both places makes it more likely to be seen within the ask timeout. ADR-0027 point 6 already closes the buttons on every copy once it is settled, so the second copy costs nothing after the answer.
 
-   The choice is per channel, and a channel with no admitted group keeps sending to the operators' private conversations as today.
+   A channel with no admitted group keeps sending to the operators' private conversations as today. Routing each agent's streams to destinations of their own is left to a later ADR (see below).
 
-7. **Turning off the platform's group limit is a prerequisite that the operator sets up, not pao code.** Where a platform limits a bot in a group to commands and mentions, plain text in the group reaches pao only after the operator lifts that limit in the platform's own settings for the bot, or makes the bot an administrator of the group. pao does not change it and does not depend on it. Without it, `/pao` commands and replies to pao's messages still reach the bot, so the group works for commands and loses only plain text to the default or last-addressed agent.
+## Prerequisite
+
+**The platform's group limit is the operator's to lift. It is not a decision and not pao code.** Where a platform limits a bot in a group to commands and mentions, plain text in the group reaches pao only after the operator lifts that limit in the platform's own settings for the bot, or makes the bot an administrator of the group. pao has no way to change that setting and does not depend on it. Without it, `/pao` commands and replies to pao's messages still reach the bot, so the group works for commands and loses only plain text to the default or last-addressed agent.
 
 ## What this ADR deliberately does NOT decide
 
@@ -48,7 +50,8 @@ These are left for the multi-human ADR. Each is a new policy value or a new read
 - **Where a gate question goes in a mixed group.** Point 5 already sends it privately. A later ADR may refine that.
 - **Notices to a member who is not the operator** (ADR-0023 point 7) and whether a refusal is said to that person privately.
 - **A group's own default agent.** The first build shares the channel's default agent between the group and the private conversations. Topics as channels (ADR-0023 point 9) stay deferred.
-- **The configuration schema** for admitted groups, their policy and the output choice of point 6.
+- **Output routing beyond the default of point 6.** A follow-up ADR, built on the reader-set rule of point 5, routes each agent's streams on their own. An agent's output can go to several destinations at once, each at its own level: one group at the normal level, another at a higher one. Its errors and its gate questions are routed separately, for example to the operator's private conversation. An agent's input stays single: pao does not merge or tell apart two places writing to the same agent, and keeping them unambiguous is the operator's job.
+- **The configuration schema** for admitted groups and their policy.
 
 ## Consequences
 
