@@ -421,7 +421,7 @@ func TestAnAdmittedGroupServesTheOperatorAndNoOneElse(t *testing.T) {
 	svc.push(groupUpdate(6, 23, person, unlisted, "/pao agent bee from elsewhere"))
 	svc.push(groupUpdate(7, 24, stranger, group, "/register "+inv.Secret))
 	// The record keeps each sender's latest rejection.
-	want := map[string]string{strconv.Itoa(other): "message/outside access", strconv.Itoa(person): "message/group", strconv.Itoa(stranger): "registration/from a group"}
+	want := map[string]string{strconv.Itoa(other): "message/outside access", strconv.Itoa(person): "message/group " + strconv.Itoa(unlisted), strconv.Itoa(stranger): "registration/from a group"}
 	require.Eventually(t, func() bool {
 		rej, err := n.client.Rejected(ctx)
 		if err != nil {

@@ -249,7 +249,13 @@ func (l *Layer) receiveFromGroup(ctx context.Context, in ChannelInbound) (Channe
 		if in.Join {
 			return ChannelResult{}, nil
 		}
-		return ChannelResult{}, l.reject(in, RecordMessage, "group", in.Raw)
+		// The record names the conversation, so the operator can admit it by
+		// the id the platform gives it (ADR-0028 point 1).
+		reason := "group"
+		if in.Conversation != "" {
+			reason += " " + in.Conversation
+		}
+		return ChannelResult{}, l.reject(in, RecordMessage, reason, in.Raw)
 	}
 	subject, bound := l.identity.Resolve(in.Channel, in.Sender)
 	admitted := bound && l.admits(policy, subject)

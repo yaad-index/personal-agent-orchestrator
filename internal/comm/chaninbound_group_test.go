@@ -44,7 +44,8 @@ func TestAGroupThatIsNotAdmittedIsRefusedWhoeverSends(t *testing.T) {
 		assert.Equal(t, ChannelResult{}, res)
 	}
 	assert.Empty(t, r.routed)
-	assert.Equal(t, []rec{{"chat", "op", RecordMessage, "group", "RAW"}, {"chat", "op", RecordMessage, "group", "RAW"}, {"other", "op", RecordMessage, "group", "RAW"}}, rc.got)
+	assert.Equal(t, []rec{{"chat", "op", RecordMessage, "group -6", "RAW"}, {"chat", "op", RecordMessage, "group", "RAW"}, {"other", "op", RecordMessage, "group -5", "RAW"}}, rc.got,
+		"the record names the conversation, so the operator can admit it by its id")
 }
 
 func TestWithNoGroupsAdmittedEveryGroupIsRefused(t *testing.T) {
@@ -53,7 +54,7 @@ func TestWithNoGroupsAdmittedEveryGroupIsRefused(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, ChannelResult{}, res)
 	assert.Empty(t, r.routed)
-	assert.Equal(t, []rec{{"chat", "op", RecordMessage, "group", "RAW"}}, rc.got)
+	assert.Equal(t, []rec{{"chat", "op", RecordMessage, "group -5", "RAW"}}, rc.got)
 }
 
 func TestInAnAdmittedGroupAnyoneThePolicyDoesNotAdmitIsRecordedAndNotAnswered(t *testing.T) {
