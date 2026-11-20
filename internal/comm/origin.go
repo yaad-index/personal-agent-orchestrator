@@ -16,19 +16,51 @@ type origin struct {
 	conversation string
 }
 
-// noteOrigin makes the conversation in came from the origin of each agent it was
-// delivered to (ADR-0029 point 2). A message from a source that is not a channel,
-// such as another agent or a peer node, starts a turn with no origin.
-func (l *Layer) noteOrigin(in Inbound, results []route.Result) {
+// claim is an origin set for a delivery, and what it replaced.
+type claim struct {
+	set, prev  origin
+	isSet, had bool
+}
+
+// claimOrigin makes the conversation in came from the origin of each agent it is
+// about to be delivered to (ADR-0029 point 2), before it is delivered: an agent may
+// answer as soon as it reads the message. A message from a source that is not a
+// channel, such as another agent or a peer node, starts a turn with no origin. It
+// returns what it replaced, for settleOrigin.
+func (l *Layer) claimOrigin(in Inbound, targets []core.Profile) map[string]claim {
 	o, fromChannel := origin{channel: in.Source, conversation: in.Conversation}, l.HasChannel(in.Source)
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	claims := make(map[string]claim, len(targets))
+	for _, t := range targets {
+		prev, had := l.origins[t.Name]
+		claims[t.Name] = claim{set: o, isSet: fromChannel, prev: prev, had: had}
+		if fromChannel {
+			l.origins[t.Name] = o
+		} else {
+			delete(l.origins, t.Name)
+		}
+	}
+	return claims
+}
+
+// settleOrigin puts back the origin of each agent the delivery failed for: a
+// message the agent never read starts no turn. An origin something else moved
+// since is left as it is.
+func (l *Layer) settleOrigin(claims map[string]claim, results []route.Result) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	for _, r := range results {
-		if r.Err != nil {
+		c, ok := claims[r.Agent]
+		if r.Err == nil || !ok {
 			continue
 		}
-		if fromChannel {
-			l.origins[r.Agent] = o
+		now, has := l.origins[r.Agent]
+		if has != c.isSet || (has && now != c.set) {
+			continue
+		}
+		if c.had {
+			l.origins[r.Agent] = c.prev
 		} else {
 			delete(l.origins, r.Agent)
 		}
