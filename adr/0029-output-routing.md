@@ -1,6 +1,6 @@
 # ADR 0029: Output routing — replies go where they were addressed, named destinations per stream
 
-**Status:** Proposed (2026-11-20)
+**Status:** Accepted (2026-11-20)
 
 Supersedes ADR-0028 (group conversations). Keeps its points 1 to 5, its prerequisite and its deferred list unchanged, and changes point 6. Extends ADR-0008 (verbosity), ADR-0012 (access), ADR-0023 (agent I/O and channel bindings), ADR-0026 (operator commands from chat).
 

@@ -2,6 +2,8 @@
 
 **Status:** Accepted (2026-11-20)
 
+**Superseded-by:** ADR-0029 (output routing), 2026-11-20
+
 Extends ADR-0012 (multiple humans and tag-scoped access), ADR-0019 (channel adapters and sender identity), ADR-0022 (operator subjects), ADR-0023 (agent I/O and channel bindings), ADR-0026 (operator commands from chat), ADR-0027 (action buttons).
 
 ## Context
