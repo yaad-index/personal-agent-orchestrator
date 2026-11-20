@@ -29,7 +29,7 @@ Some platforms limit what a bot receives in a group. By default such a bot sees 
    - **A gate question** is shown only if every reader may answer it. ADR-0023 point 7 sends a question only to the operator, never to anyone else. A group whose readers are all operators meets it. A group with any other reader does not, and the question goes to the operator's private conversation instead.
    - **A command's answer** goes to its sender on the channel it came from (ADR-0026 point 5). In a group it is shown there only if every reader may see it. Otherwise it goes to the sender privately where the platform allows, and is dropped where it does not.
 
-   In a group whose policy is "operators" the rule always passes. It is defined over the reader set now, so admitting more readers later changes who passes and nothing else.
+   pao knows a group's readers only from its policy. It cannot see who the platform actually has in the group: someone added who never writes is invisible to pao, and reads everything shown there. So the rule holds only while the group's real membership stays within its policy. Keeping it there is the operator's job, a prerequisite like point 7. Where the platform reports someone joining a group, pao records a join by anyone the policy does not admit, so the operator can see it. In a group whose policy is "operators" and whose members are all operators, the rule always passes. It is defined over the reader set now, so admitting more readers later changes who passes and nothing else.
 
 6. **Where an agent's output and a gate question go, once a group is admitted: for the operator to decide.** The channel's output can go to the admitted group, to each operator's private conversation, or to both. Lean: output goes to the group only, and a gate question goes to both.
    - Output in one place is the point of the group. Two copies of everything would bury it.
@@ -52,7 +52,7 @@ These are left for the multi-human ADR. Each is a new policy value or a new read
 
 ## Consequences
 
-The operator can run every agent the node reaches from one group conversation, with the same commands, buttons and access as in a private conversation. The group becomes the window on the fleet. Nothing new is trusted: the group grants no access, a message in it is attributed to its sender exactly as a private one is, and an unlisted group is refused as before.
+The operator can run every agent the node reaches from one group conversation, with the same commands, buttons and access as in a private conversation. The group becomes the window on the fleet. The group grants no access, a message in it is attributed to its sender exactly as a private one is, and an unlisted group is refused as before. One thing is newly trusted: that the group's real membership matches its policy (point 5). pao cannot check that, and anything shown in the group is read by whoever the platform has in it.
 
 The multi-human group is a policy step. The admission already carries a member policy, identity is already per sender, and every delivery is already checked against the conversation's readers. Admitting a second person changes the policy's value and so the reader set. The rules that use the reader set stay as they are.
 
