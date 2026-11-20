@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/comm"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
 )
 
 // Spec is one configured channel, with its credential resolved.
@@ -35,9 +36,11 @@ type Handler interface {
 	// ReceiveFromChannel hands the layer one inbound message or registration
 	// attempt and returns what to do next.
 	ReceiveFromChannel(ctx context.Context, in comm.ChannelInbound) (comm.ChannelResult, error)
-	// Recipients returns the sender ids on the channel that pao's own output goes
-	// to: those bound to an operator-flagged subject.
-	Recipients(channel string) []string
+	// Destinations returns the conversations on the channel that a message is
+	// shown in, by the platform's id for each: operators' private conversations
+	// and admitted groups, each only if every reader there may see it (ADR-0028
+	// points 5 and 6).
+	Destinations(channel string, m core.Message) []string
 	// NativeOf recovers the platform's own message id from a composite id, only if
 	// it is this channel's own (ADR-0021 point 4).
 	NativeOf(channel, composite string) (native string, ok bool)

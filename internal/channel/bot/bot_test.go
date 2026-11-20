@@ -254,8 +254,8 @@ func (h *handler) ReceiveFromChannel(_ context.Context, in comm.ChannelInbound) 
 	}
 	return res, h.err
 }
-func (h *handler) Recipients(string) []string             { return h.recipients }
-func (h *handler) NativeOf(string, string) (string, bool) { return "", false }
+func (h *handler) Destinations(string, core.Message) []string { return h.recipients }
+func (h *handler) NativeOf(string, string) (string, bool)     { return "", false }
 func (h *handler) DefaultAgent(channel string) (string, bool) {
 	a, ok := h.defaults[channel]
 	return a, ok

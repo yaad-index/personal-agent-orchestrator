@@ -179,16 +179,6 @@ func (l *Layer) ReceiveAsOperator(ctx context.Context, in Inbound) (Delivery, er
 // channel inbound needs. Call it before the layer starts receiving.
 func (l *Layer) SetIdentity(id Identity, rec Recorder) { l.identity, l.recorder = id, rec }
 
-// Recipients returns the sender ids on a channel that pao's own output goes to:
-// those bound to an operator-flagged subject (ADR-0022). A human who is not
-// flagged is sent nothing.
-func (l *Layer) Recipients(channel string) []string {
-	if l.identity == nil {
-		return nil
-	}
-	return l.identity.Operators(channel)
-}
-
 func (l *Layer) reject(in ChannelInbound, kind, reason, payload string) error {
 	if l.recorder == nil {
 		return nil
