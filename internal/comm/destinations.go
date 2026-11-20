@@ -12,17 +12,31 @@ import (
 // channel (whose id is the operator's sender id), and the channel's admitted
 // groups.
 //
-// A conversation gets m only if every one of its readers may see it (ADR-0028
-// point 5). A private conversation's one reader is its operator; an admitted
-// group's readers are its members under its policy. Where the channel has an
-// admitted group that may show m, an agent's output goes there and not to the
-// private conversations, and a gate question goes to both (ADR-0028 point 6). A
-// channel with no such group sends to the private conversations, as it did before
-// groups were admitted.
+// An agent's output in a turn with an origin goes back to the origin's
+// conversation (toOrigin). Anything else is shown as wide says.
 func (l *Layer) Destinations(channel string, m core.Message) []string {
 	if l.identity == nil {
 		return nil
 	}
+	if r, ok := l.routes.Load(m.ID); ok {
+		return l.toOrigin(channel, m, r.(outRoute))
+	}
+	out := l.wide(channel, m)
+	if len(out) == 0 {
+		l.warnUnshown(channel, m)
+	}
+	return out
+}
+
+// wide returns every conversation on a channel that may show m.
+//
+// A conversation gets m only if every one of its readers may see it (ADR-0028
+// point 5). A private conversation's one reader is its operator; an admitted
+// group's readers are its members under its policy. Where the channel has an
+// admitted group that may show m, an agent's output goes there and not to the
+// private conversations, and a gate question goes to both. A channel with no such
+// group sends to the private conversations, as it did before groups were admitted.
+func (l *Layer) wide(channel string, m core.Message) []string {
 	var groups []string
 	for id, g := range l.groups[channel] {
 		if id != "" && l.readersMay(g.Policy, m) {
@@ -35,9 +49,6 @@ func (l *Layer) Destinations(channel string, m core.Message) []string {
 		if l.readersMay(PolicyOperators, m) {
 			out = append(out, l.identity.Operators(channel)...)
 		}
-	}
-	if len(out) == 0 {
-		l.warnUnshown(channel, m)
 	}
 	return out
 }

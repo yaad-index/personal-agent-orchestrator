@@ -325,13 +325,18 @@ func (l *Layer) receiveAsOperator(ctx context.Context, in ChannelInbound, subjec
 			target = core.Target{Kind: core.ByName, Value: agent}
 		}
 	}
+	conversation := in.Sender
+	if in.Group {
+		conversation = in.Conversation
+	}
 	d, err := l.ReceiveAsOperator(ctx, Inbound{
-		Source:     in.Channel,
-		Sender:     subject,
-		Text:       in.Text,
-		Target:     target,
-		Reply:      reply,
-		ReplyQuote: in.ReplyQuote,
+		Source:       in.Channel,
+		Sender:       subject,
+		Text:         in.Text,
+		Target:       target,
+		Reply:        reply,
+		ReplyQuote:   in.ReplyQuote,
+		Conversation: conversation,
 	})
 	if err != nil {
 		return ChannelResult{}, err
