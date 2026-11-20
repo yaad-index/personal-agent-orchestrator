@@ -24,7 +24,7 @@ import (
 	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
 )
 
-const tok = "TOK-123"
+const tok = "123:TOK-SECRET" // the service issues "<bot id>:<secret>"
 
 // update and message are the service's JSON shapes, as far as the fake needs them.
 type update struct {
@@ -61,6 +61,15 @@ type message struct {
 	ReplyTo *struct {
 		ID int64 `json:"message_id"`
 	} `json:"reply_to_message,omitempty"`
+	// The service's reports about a group.
+	NewMembers  []member `json:"new_chat_members,omitempty"`
+	MigrateTo   int64    `json:"migrate_to_chat_id,omitempty"`
+	MigrateFrom int64    `json:"migrate_from_chat_id,omitempty"`
+}
+
+type member struct {
+	ID    int64 `json:"id"`
+	IsBot bool  `json:"is_bot"`
 }
 
 // server is a fake of the service's API: it hands out queued batches of updates,
@@ -335,24 +344,80 @@ func TestAPrivateMessageReachesTheLayerWithTheServicesSenderIdAndNativeIds(t *te
 		"a command goes to the layer whole: the layer reads it")
 }
 
-func TestAGroupTextGoesToTheLayerMarkedAsAGroupAndNeverAsARegistration(t *testing.T) {
+// grp is priv said in group conversation chat.
+func grp(id, msg, from, chat int64, text string) update {
+	u := priv(id, msg, from, text)
+	u.Message.Chat.ID, u.Message.Chat.Type = chat, "supergroup"
+	return u
+}
+
+func TestAGroupTextGoesToTheLayerWithItsConversationAndASecretIsNeverPassedOn(t *testing.T) {
 	s, h := newServer(t), &handler{}
-	grp := priv(1, 1, 900, "@bee hi")
-	grp.Message.Chat.Type = "supergroup"
-	reg := priv(2, 2, 901, "/register@thebot s3cret")
-	reg.Message.Chat.Type = "group"
-	s.queue(grp, reg)
+	reply := grp(3, 3, 900, -500, "and this")
+	reply.Message.ReplyTo = &struct {
+		ID int64 `json:"message_id"`
+	}{ID: 1}
+	s.queue(grp(1, 1, 900, -500, "@bee hi"), grp(2, 2, 901, -500, "/register@thebot s3cret"), reply)
 	start(t, s, h, nil)
-	waitFor(t, func() bool { return len(h.inbound()) == 2 }, "both")
+	waitFor(t, func() bool { return len(h.inbound()) == 3 }, "all three")
 	got := h.inbound()
-	assert.True(t, got[0].Group)
-	assert.Equal(t, "@bee hi", got[0].Raw)
-	assert.True(t, got[1].Group)
-	assert.False(t, got[1].Registration, "a group never registers")
-	assert.Empty(t, got[1].Raw, "a secret said in a group is not kept")
+	assert.Equal(t, comm.ChannelInbound{Channel: "chat", Sender: "900", Native: "-500:1", Text: "@bee hi", Raw: "@bee hi", Group: true, Conversation: "-500"}, got[0],
+		"the sender is the person, the conversation the group")
+	assert.Equal(t, comm.ChannelInbound{Channel: "chat", Sender: "901", Native: "-500:2", Registration: true, Group: true, Conversation: "-500"}, got[1],
+		"a registration from a group carries no secret: the layer refuses it, and it is not kept")
+	assert.Equal(t, "-500:1", got[2].ReplyNative)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	assert.Empty(t, s.sent, "a group is answered with nothing")
+	assert.Empty(t, s.sent, "what the layer leaves unanswered is not answered")
+}
+
+func TestTheLayersAnswerToAGroupMessageGoesToTheGroup(t *testing.T) {
+	s, h := newServer(t), &handler{res: comm.ChannelResult{Reply: "pao says"}}
+	s.queue(grp(1, 1, 900, -500, "/pao help"))
+	start(t, s, h, nil)
+	waitFor(t, func() bool { return len(s.sentTo(-500)) == 1 }, "the answer")
+	assert.Equal(t, []string{"pao says"}, s.sentTo(-500))
+	assert.Empty(t, s.sentTo(900), "not to the sender privately")
+}
+
+func TestAStickyAddressIsPerSenderAndPerConversation(t *testing.T) {
+	s, h := newServer(t), &handler{res: comm.ChannelResult{Delivery: &comm.Delivery{}}}
+	s.queue(grp(1, 1, 900, -500, "/pao agent bee one"), grp(2, 2, 900, -500, "two"), priv(3, 3, 900, "three"),
+		grp(4, 4, 900, -600, "four"), grp(5, 5, 901, -500, "five"))
+	start(t, s, h, nil)
+	waitFor(t, func() bool { return len(h.inbound()) == 5 }, "five")
+	in := h.inbound()
+	assert.Equal(t, core.Target{Kind: core.ByName, Value: "bee"}, in[1].Target, "kept in the group it was made in")
+	assert.Zero(t, in[2].Target, "an address made in a group does not steer the private conversation")
+	assert.Zero(t, in[3].Target, "nor another group")
+	assert.Zero(t, in[4].Target, "nor another sender in the same group")
+}
+
+func TestAGroupsMoveIsHandedToTheLayerWithBothIds(t *testing.T) {
+	s, h := newServer(t), &handler{}
+	to := grp(1, 1, 900, -500, "")
+	to.Message.Chat.Type, to.Message.MigrateTo = "group", -1009
+	from := grp(2, 1, 900, -1009, "")
+	from.Message.From, from.Message.MigrateFrom = nil, -500
+	s.queue(to, from)
+	start(t, s, h, nil)
+	waitFor(t, func() bool { return len(h.inbound()) == 2 }, "both reports")
+	want := comm.ChannelInbound{Channel: "chat", Sender: "-500", Group: true, Conversation: "-500", MovedTo: "-1009"}
+	assert.Equal(t, []comm.ChannelInbound{want, want}, h.inbound(), "the old group's report and the new one's say the same")
+}
+
+func TestAJoinIsHandedToTheLayerForEachMemberButTheBotItself(t *testing.T) {
+	s, h := newServer(t), &handler{}
+	j := grp(1, 1, 900, -500, "")
+	j.Message.NewMembers = []member{{ID: 777}, {ID: 123, IsBot: true}, {ID: 888, IsBot: true}}
+	s.queue(j, priv(2, 2, 900, "after"))
+	start(t, s, h, nil)
+	waitFor(t, func() bool { return len(h.inbound()) == 3 }, "two joins and the private message")
+	in := h.inbound()
+	assert.Equal(t, comm.ChannelInbound{Channel: "chat", Sender: "777", Group: true, Conversation: "-500", Join: true}, in[0])
+	assert.Equal(t, comm.ChannelInbound{Channel: "chat", Sender: "888", Group: true, Conversation: "-500", Join: true}, in[1],
+		"another bot is a reader too; only this bot, whose id the credential carries, is left out")
+	assert.Equal(t, "900", in[2].Sender)
 }
 
 func TestOnlyATextFromAPersonIsConsidered(t *testing.T) {
@@ -826,9 +891,13 @@ func TestAPressInAGroupOrOnNoMessageIsMarkedAGroup(t *testing.T) {
 	in := h.inbound()
 	require.Len(t, in, 4)
 	assert.True(t, in[0].Group && in[0].Press, "a press under a group's message")
+	assert.Equal(t, "-500", in[0].Conversation)
 	assert.True(t, in[1].Group && in[1].Press, "a press on no message")
+	assert.Empty(t, in[1].Conversation, "one that names no conversation, which no group admits")
 	assert.True(t, in[2].Group && in[2].Press, "a press under a group's message the bot can no longer reach")
+	assert.Equal(t, "-500", in[2].Conversation)
 	assert.False(t, in[3].Group, "a private chat is read from a message the bot can no longer reach, too")
+	assert.Empty(t, in[3].Conversation)
 	assert.Empty(t, s.snapshot(&s.answers)[0]["text"])
 }
 
@@ -855,4 +924,11 @@ func TestAFailureToHandleAPressIsItsAnswer(t *testing.T) {
 	s.queue(press(2, "cb2", 42, 42, "private", 101, "/pao allow q1"))
 	waitFor(t, func() bool { return len(s.snapshot(&s.answers)) == 2 }, "the press is answered")
 	assert.Empty(t, s.snapshot(&s.answers)[1]["text"], "a failure to record is logged, never told")
+}
+
+func TestTheBotsOwnIdIsReadFromItsCredential(t *testing.T) {
+	assert.Equal(t, int64(123), selfID("123:TOK"))
+	for _, c := range []string{"TOK", "abc:TOK", ":TOK", ""} {
+		assert.Zero(t, selfID(c), c)
+	}
 }

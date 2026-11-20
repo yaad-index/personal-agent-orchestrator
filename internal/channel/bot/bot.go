@@ -1,7 +1,8 @@
 // Package bot is a channel adapter for a chat service that offers a bot HTTP API
-// with long polling. It is the pilot adapter of ADR-0019: it receives private
-// messages, hands each to the layer with the service's own sender id, and sends
-// pao's output to the humans the layer names. A message's actions are shown as
+// with long polling. It is the pilot adapter of ADR-0019: it receives messages from
+// private and group conversations, hands each to the layer with the service's own
+// sender id and, for a group, the conversation's id, and sends pao's output to the
+// humans the layer names. Which groups are served is the layer's to say (ADR-0028). A message's actions are shown as
 // buttons under it; a press comes back to the layer as the command the button
 // carries, and the buttons are closed when the layer says the message is settled
 // (ADR-0027).
@@ -63,8 +64,10 @@ type Bot struct {
 	limit int
 	api   *api.Bot
 
+	self int64 // the bot's own user id, read from its credential; 0 if unknown
+
 	mu     sync.Mutex
-	last   map[string]core.Target // the agent or tag each sender last addressed
+	last   map[string]core.Target // the agent or tag each sender last addressed, by conversation and sender
 	runCtx context.Context        // the context Run was given, nil before Run
 	shown  map[string][]shown     // the copies with buttons, by pao message id
 	order  []string               // the keys of shown, oldest first
@@ -143,7 +146,7 @@ func newBot(spec adapter.Spec, h adapter.Handler) (*Bot, error) {
 	b := &Bot{
 		name: spec.Name, token: spec.Credential, h: h,
 		poll: set.poll, limit: set.limit, last: map[string]core.Target{},
-		shown: map[string][]shown{},
+		shown: map[string][]shown{}, self: selfID(spec.Credential),
 	}
 	client := &http.Client{
 		Timeout:   b.poll + 15*time.Second,
@@ -290,6 +293,27 @@ func native(chat int64, msg int) string {
 	return strconv.FormatInt(chat, 10) + ":" + strconv.Itoa(msg)
 }
 
+// selfID reads the bot's own user id from its credential, which the service
+// issues as "<id>:<secret>". It is 0 when the credential is not of that form.
+func selfID(credential string) int64 {
+	head, _, ok := strings.Cut(credential, ":")
+	if !ok {
+		return 0
+	}
+	id, err := strconv.ParseInt(head, 10, 64)
+	if err != nil {
+		return 0
+	}
+	return id
+}
+
+// lastKey is where a sender's last address is kept: per sender and per
+// conversation, so an address made in a group does not steer what the same person
+// types privately (ADR-0028 point 4).
+func lastKey(chat int64, sender string) string {
+	return strconv.FormatInt(chat, 10) + "/" + sender
+}
+
 // Run polls for updates until ctx is done, handling each before the next. An update
 // is confirmed when the next poll is made, so a restart does not replay what was
 // handled; the one being handled when the node died may not be replayed either.
@@ -303,9 +327,11 @@ func (b *Bot) Run(ctx context.Context) error {
 
 const usage = "address an agent: /pao agent <name> <message>, or see /pao help."
 
-// handle acts on one update. A text from a person is considered. One from a group
-// goes to the layer marked as such, which records and denies it (ADR-0019 point 6);
-// anything without a person or text is not a message to a bot.
+// handle acts on one update. A text from a person is considered, from a private
+// conversation or a group alike; the layer decides whether a group is served. In
+// a group, the service's reports that the conversation moved to a new id, and that
+// someone joined it, go to the layer too, to be recorded. Anything else without a
+// person or text is not a message to a bot.
 func (b *Bot) handle(ctx context.Context, u *models.Update) {
 	if u == nil {
 		return
@@ -315,21 +341,20 @@ func (b *Bot) handle(ctx context.Context, u *models.Update) {
 		return
 	}
 	m := u.Message
-	if m == nil || m.From == nil || m.From.IsBot || m.From.ID == 0 || m.Text == "" {
+	if m == nil {
+		return
+	}
+	group := m.Chat.Type != models.ChatTypePrivate
+	if group && b.notice(ctx, m) {
+		return
+	}
+	if m.From == nil || m.From.IsBot || m.From.ID == 0 || m.Text == "" {
 		return
 	}
 	sender := strconv.FormatInt(m.From.ID, 10)
 	in := comm.ChannelInbound{Channel: b.name, Sender: sender, Native: native(m.Chat.ID, m.ID), Raw: truncate(m.Text, 4096)}
-	if m.Chat.Type != models.ChatTypePrivate {
-		// A secret said in a group is not kept, even in the record of a denial.
-		if _, reg := cutCommand(m.Text, "/register"); reg {
-			in.Raw = ""
-		}
-		in.Group = true
-		if _, err := b.h.ReceiveFromChannel(ctx, in); err != nil {
-			slog.Error("channel could not record a rejected inbound", "channel", b.name, "error", err)
-		}
-		return
+	if group {
+		in.Group, in.Conversation = true, strconv.FormatInt(m.Chat.ID, 10)
 	}
 	if m.ReplyToMessage != nil {
 		in.ReplyNative = native(m.Chat.ID, m.ReplyToMessage.ID)
@@ -337,13 +362,18 @@ func (b *Bot) handle(ctx context.Context, u *models.Update) {
 
 	if rest, ok := cutCommand(m.Text, "/register"); ok {
 		in.Registration, in.Text = true, strings.TrimSpace(rest)
+		if group {
+			// A secret said in a group is never kept or tried, even in the record
+			// of a denial (ADR-0028 point 3).
+			in.Text, in.Raw = "", ""
+		}
 	} else {
 		// A /pao command names its own target, or none; the layer reads it. Any other
-		// text goes where the sender last addressed, unless it answers a message.
+		// text goes where the sender last addressed here, unless it answers a message.
 		in.Text = m.Text
 		if m.ReplyToMessage == nil {
 			b.mu.Lock()
-			in.Target = b.last[sender]
+			in.Target = b.last[lastKey(m.Chat.ID, sender)]
 			b.mu.Unlock()
 		}
 	}
@@ -359,13 +389,45 @@ func (b *Bot) handle(ctx context.Context, u *models.Update) {
 	default:
 		if res.Addressed != nil && res.Delivery != nil {
 			b.mu.Lock()
-			b.last[sender] = *res.Addressed
+			b.last[lastKey(m.Chat.ID, sender)] = *res.Addressed
 			b.mu.Unlock()
 		}
 		if res.Reply != "" {
 			b.reply(ctx, m.Chat.ID, res.Reply)
 		}
 	}
+}
+
+// notice hands the layer a group's service report, if m is one, and reports whether
+// it was: the conversation moving to a new id, or people joining it. Who joined is
+// known only where the service reports it; someone added without a report is not
+// seen (ADR-0028 point 5).
+func (b *Bot) notice(ctx context.Context, m *models.Message) bool {
+	chat := strconv.FormatInt(m.Chat.ID, 10)
+	var ins []comm.ChannelInbound
+	switch {
+	case m.MigrateToChatID != 0:
+		ins = append(ins, comm.ChannelInbound{Sender: chat, Conversation: chat, MovedTo: strconv.FormatInt(m.MigrateToChatID, 10)})
+	case m.MigrateFromChatID != 0:
+		from := strconv.FormatInt(m.MigrateFromChatID, 10)
+		ins = append(ins, comm.ChannelInbound{Sender: from, Conversation: from, MovedTo: chat})
+	case len(m.NewChatMembers) > 0:
+		for _, u := range m.NewChatMembers {
+			if u.ID == 0 || u.ID == b.self {
+				continue
+			}
+			ins = append(ins, comm.ChannelInbound{Sender: strconv.FormatInt(u.ID, 10), Conversation: chat, Join: true})
+		}
+	default:
+		return false
+	}
+	for _, in := range ins {
+		in.Channel, in.Group = b.name, true
+		if _, err := b.h.ReceiveFromChannel(ctx, in); err != nil {
+			slog.Error("channel could not record a rejected inbound", "channel", b.name, "error", err)
+		}
+	}
+	return true
 }
 
 // cutCommand reports whether text is the command, alone or followed by a space and
@@ -561,12 +623,18 @@ func (b *Bot) press(ctx context.Context, q *models.CallbackQuery) {
 		Channel: b.name, Sender: strconv.FormatInt(q.From.ID, 10),
 		Text: q.Data, Raw: truncate(q.Data, 4096), Press: true,
 	}
-	chat := q.Message.Message
+	var where *models.Chat
 	switch {
-	case chat != nil:
-		in.Group = chat.Chat.Type != models.ChatTypePrivate
+	case q.Message.Message != nil:
+		where = &q.Message.Message.Chat
 	case q.Message.InaccessibleMessage != nil:
-		in.Group = q.Message.InaccessibleMessage.Chat.Type != models.ChatTypePrivate
+		where = &q.Message.InaccessibleMessage.Chat
+	}
+	switch {
+	case where != nil:
+		if where.Type != models.ChatTypePrivate {
+			in.Group, in.Conversation = true, strconv.FormatInt(where.ID, 10)
+		}
 	default:
 		// A press on no message the service names cannot be placed; it is
 		// treated as a group's, which is recorded and decides nothing.

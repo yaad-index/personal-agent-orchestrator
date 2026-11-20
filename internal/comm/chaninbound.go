@@ -87,10 +87,49 @@ type ChannelInbound struct {
 	// button carries, and Sender the platform's authenticated sender of the press.
 	// A press is only ever a command; one that is not is refused and never routed.
 	Press bool
-	// Group marks a message from a group conversation. A group is denied by
-	// default whoever the sender is (ADR-0019 point 6): the layer records it and
-	// routes nothing, replies with nothing, and never reads it as a registration.
-	Group bool
+	// Group marks a message from a group conversation, and Conversation is the
+	// platform's id for that conversation. A group the channel does not admit is
+	// denied whoever the sender is (ADR-0019 point 6, ADR-0028 point 1): the layer
+	// records it and routes nothing, replies with nothing, and never reads it as a
+	// registration. In an admitted group, a sender the group's member policy admits
+	// is served as in a private conversation; anyone else is recorded and nothing
+	// is said in the group (ADR-0028 point 2).
+	Group        bool
+	Conversation string
+	// Join marks the platform's report that Sender joined the group conversation.
+	// A join the group's member policy does not admit is recorded (ADR-0028
+	// point 5); nothing is routed or answered either way.
+	Join bool
+	// MovedTo marks the platform's report that the group conversation moved to a
+	// new id: Conversation is the old id and MovedTo the new one. It is recorded so
+	// the operator can list the new id; the new id is not admitted by it.
+	MovedTo string
+}
+
+// PolicyOperators is the member policy of a group that admits only subjects
+// routed as the operator (ADR-0028 point 2).
+const PolicyOperators = "operators"
+
+// SetGroups gives the layer the group conversations each channel admits, by
+// channel name and then the platform's conversation id, each with its member
+// policy (ADR-0028 points 1 and 2). A group not given is refused. Call it before
+// the layer starts receiving.
+func (l *Layer) SetGroups(groups map[string]map[string]string) { l.groups = groups }
+
+// groupPolicy returns the member policy of an admitted group.
+func (l *Layer) groupPolicy(channel, conversation string) (string, bool) {
+	p, ok := l.groups[channel][conversation]
+	return p, ok && conversation != ""
+}
+
+// admits reports whether a group's member policy lets subject act in it. A policy
+// it does not know admits no one.
+func (l *Layer) admits(policy, subject string) bool {
+	switch policy {
+	case PolicyOperators:
+		return l.identity.IsOperator(subject)
+	}
+	return false
 }
 
 // ChannelResult is what the adapter does next. Reply is the text to send the
@@ -183,7 +222,7 @@ func (l *Layer) ReceiveFromChannel(ctx context.Context, in ChannelInbound) (Chan
 	}
 
 	if in.Group {
-		return ChannelResult{}, l.reject(in, RecordMessage, "group", in.Raw)
+		return l.receiveFromGroup(ctx, in)
 	}
 
 	if in.Registration {
@@ -200,7 +239,46 @@ func (l *Layer) ReceiveFromChannel(ctx context.Context, in ChannelInbound) (Chan
 	if !l.identity.IsOperator(subject) {
 		return ChannelResult{Reply: ReplyNoAccess}, l.reject(in, RecordMessage, "outside access", in.Raw)
 	}
+	return l.receiveAsOperator(ctx, in, subject)
+}
 
+// receiveFromGroup is ReceiveFromChannel for a message from a group conversation.
+// Nothing refused here is answered in the group, where everyone in it would read
+// the answer (ADR-0028 point 2).
+func (l *Layer) receiveFromGroup(ctx context.Context, in ChannelInbound) (ChannelResult, error) {
+	if in.MovedTo != "" {
+		return ChannelResult{}, l.reject(in, RecordMessage, "conversation moved", "from "+in.Conversation+" to "+in.MovedTo)
+	}
+	policy, ok := l.groupPolicy(in.Channel, in.Conversation)
+	if !ok {
+		if in.Join {
+			return ChannelResult{}, nil
+		}
+		return ChannelResult{}, l.reject(in, RecordMessage, "group", in.Raw)
+	}
+	// A secret said in a group is read by everyone in it: it is refused and not
+	// kept (ADR-0028 point 3).
+	if in.Registration {
+		return ChannelResult{}, l.reject(in, RecordRegistration, "from a group", "")
+	}
+	subject, bound := l.identity.Resolve(in.Channel, in.Sender)
+	admitted := bound && l.admits(policy, subject)
+	switch {
+	case in.Join && admitted:
+		return ChannelResult{}, nil
+	case in.Join:
+		return ChannelResult{}, l.reject(in, RecordMessage, "joined outside policy", "conversation "+in.Conversation)
+	case !bound:
+		return ChannelResult{}, l.reject(in, RecordMessage, "no subject", in.Raw)
+	case !admitted:
+		return ChannelResult{}, l.reject(in, RecordMessage, "outside access", in.Raw)
+	}
+	return l.receiveAsOperator(ctx, in, subject)
+}
+
+// receiveAsOperator acts on an inbound from a subject routed as the operator, in a
+// private conversation or an admitted group alike (ADR-0028 point 4).
+func (l *Layer) receiveAsOperator(ctx context.Context, in ChannelInbound, subject string) (ChannelResult, error) {
 	if in.Press && !command.Is(in.Text) {
 		return ChannelResult{Reply: ReplyNotACommand}, l.reject(in, RecordMessage, "press not a command", in.Raw)
 	}

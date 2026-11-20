@@ -109,6 +109,9 @@ type Layer struct {
 	recorder Recorder
 	defaults Defaults
 	commands command.Ops
+	// groups are the admitted group conversations: channel, then conversation id,
+	// to member policy.
+	groups map[string]map[string]string
 
 	// operatorAllow bounds the operator's routing; nil narrows nothing.
 	operatorAllow func(core.Profile) bool
