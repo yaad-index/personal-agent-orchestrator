@@ -369,18 +369,12 @@ func groupUpdate(id, msg, from, chat int, text string) map[string]any {
 	return u
 }
 
-func groupPress(id, msg, from, chat int, qid, data string) map[string]any {
-	u := pressUpdate(id, msg, from, qid, data)
-	u["callback_query"].(map[string]any)["message"].(map[string]any)["chat"] = map[string]any{"id": chat, "type": "supergroup"}
-	return u
-}
-
 // TestAnAdmittedGroupServesTheOperatorAndNoOneElse runs ADR-0028 on a real node:
 // the operator reaches an agent from an admitted group and its output comes back to
 // the group, not privately; anyone else in the group, a group that is not admitted,
 // and a registration from a group are recorded and answered with nothing; a gate
-// question reaches the group and the operator privately, a press in the group
-// decides it, and the buttons close on both copies.
+// question reaches the operator privately and not the group, and a press decides
+// it and closes its buttons.
 func TestAnAdmittedGroupServesTheOperatorAndNoOneElse(t *testing.T) {
 	svc := &service{}
 	ts := httptest.NewServer(http.HandlerFunc(svc.handler))
@@ -461,31 +455,32 @@ func TestAnAdmittedGroupServesTheOperatorAndNoOneElse(t *testing.T) {
 		d, _ := gate.Ask(ctx, n.gateSock, gate.Request{Agent: "bee", Tool: "Bash", Input: []byte(`{"command":"echo hi"}`)})
 		decided <- d
 	}()
-	lineWith(t, svc, group, `agent "bee" wants to run Bash`)
+	// A gate question goes to the operator privately, not to the group (ADR-0029
+	// point 4).
 	lineWith(t, svc, person, `agent "bee" wants to run Bash`)
-	inGroup := svc.sentWith(group, `agent "bee" wants to run Bash`)
-	assert.Contains(t, inGroup["reply_markup"].(string), "/pao allow q1", "the question carries its buttons in the group")
+	q := svc.sentWith(person, `agent "bee" wants to run Bash`)
+	assert.Contains(t, q["reply_markup"].(string), "/pao allow q1", "the question carries its buttons")
+	assert.Nil(t, svc.sentWith(group, "wants to run"), "not in the group")
 	assert.Nil(t, svc.sentWith(other, "wants to run"), "never to anyone but the operator")
 
 	native := func() int {
 		svc.mu.Lock()
 		defer svc.mu.Unlock()
 		for i, m := range svc.sent {
-			if m["chat_id"].(float64) == group && strings.Contains(m["text"].(string), "wants to run") {
+			if m["chat_id"].(float64) == person && strings.Contains(m["text"].(string), "wants to run") {
 				return 5001 + i
 			}
 		}
 		return 0
 	}()
 	require.NotZero(t, native)
-	svc.push(groupPress(30, native, person, group, "cb-group", "/pao allow q1"))
+	svc.push(pressUpdate(30, native, person, "cb-private", "/pao allow q1"))
 	select {
 	case d := <-decided:
 		assert.Equal(t, gate.Decision{Allow: true, Via: "operator", Reason: "approved by the operator"}, d)
 	case <-time.After(5 * time.Second):
-		t.Fatal("the operator's press in the group did not decide the question")
+		t.Fatal("the operator's press did not decide the question")
 	}
-	require.Eventually(t, func() bool { return len(svc.calls("editMessageText")) == 2 }, 5*time.Second, 20*time.Millisecond, "both copies are closed")
-	chats := []float64{svc.calls("editMessageText")[0]["chat_id"].(float64), svc.calls("editMessageText")[1]["chat_id"].(float64)}
-	assert.ElementsMatch(t, []float64{group, person}, chats)
+	require.Eventually(t, func() bool { return len(svc.calls("editMessageText")) == 1 }, 5*time.Second, 20*time.Millisecond, "the copy is closed")
+	assert.Equal(t, float64(person), svc.calls("editMessageText")[0]["chat_id"].(float64))
 }
