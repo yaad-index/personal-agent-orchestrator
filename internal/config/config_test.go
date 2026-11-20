@@ -488,6 +488,7 @@ func TestBindingsRejects(t *testing.T) {
 		"two-line prefix":    {"  - agent: a\n    to: group:team\n    prefix: \"a\\nb\"\n", "one line"},
 		"duplicate":          {"  - agent: a\n    to: private:alice\n  - agent: a\n    to: private:alice\n    level: 3\n", `bindings[1]: agent "a" is already bound to private:alice at bindings[0]`},
 		"unknown field":      {"  - agent: a\n    to: group:team\n    mode: quiet\n", "mode"},
+		"unknown level word": {"  - agent: a\n    to: group:team\n    level: loud\n", `level must be a number or "log"`},
 	} {
 		_, err := channelsConfig(t, bindingsHead+c.body)
 		require.Error(t, err, name)
@@ -506,4 +507,12 @@ func TestParseDestinationRoundTrips(t *testing.T) {
 		require.NoError(t, err, s)
 		assert.Equal(t, s, d.String())
 	}
+}
+
+func TestABindingAtTheLogLevel(t *testing.T) {
+	path, err := channelsConfig(t, bindingsHead+"  - agent: a\n    to: group:team\n    level: log\n")
+	require.NoError(t, err)
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	assert.Equal(t, BindingLevel(core.LevelLog), cfg.Orchestrator.Bindings[0].Level)
 }

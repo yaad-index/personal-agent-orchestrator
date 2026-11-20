@@ -2,6 +2,7 @@ package core
 
 import (
 	"fmt"
+	"math"
 	"time"
 )
 
@@ -69,6 +70,11 @@ type TranscriptReader interface {
 // (ADR-0008 point 2). Viewing at level N shows every kind whose level is at
 // most N.
 type Levels map[Kind]int
+
+// LevelLog is the highest verbosity level, log: it shows every kind a level map
+// gives a level, and a destination that follows an agent at it is also shown the
+// messages delivered to the agent (ADR-0029 point 3).
+const LevelLog = math.MaxInt32
 
 // DefaultLevels is the level map a profile gets when it declares none:
 // conversation first, then tool calls, then results and reasoning, then the
