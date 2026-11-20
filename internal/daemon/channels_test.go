@@ -189,12 +189,14 @@ func wireChannelsForTest(t *testing.T, c config.Channel, cred string) ([]adapter
 	return wireChannels(cfg, map[string]string{c.Name: cred}, fakeTable(built), l, nil, nil)
 }
 
-func TestAdmittedGroupsAreEachChannelsListedGroupsWithTheirPolicy(t *testing.T) {
+func TestAdmittedGroupsAreEachChannelsListedGroupsWithTheirNameAndPolicy(t *testing.T) {
 	got := admittedGroups([]config.Channel{
-		{Name: "chat", Groups: []config.Group{{ID: "-5", Members: config.MembersOperators}, {ID: "-6", Members: config.MembersOperators}}},
+		{Name: "chat", Groups: []config.Group{{ID: "-5", Name: "team", Members: config.MembersOperators}, {ID: "-6", Name: "ops", Members: config.MembersOperators}}},
 		{Name: "alt"},
-		{Name: "odd", Groups: []config.Group{{ID: "-7", Members: "everyone"}}},
+		{Name: "odd", Groups: []config.Group{{ID: "-7", Name: "odd", Members: "everyone"}}},
 	})
-	assert.Equal(t, map[string]map[string]string{"chat": {"-5": comm.PolicyOperators, "-6": comm.PolicyOperators}}, got,
-		"a channel with no groups admits none, and a policy with no name in the layer is left out")
+	assert.Equal(t, map[string]map[string]comm.Group{"chat": {
+		"-5": {Name: "team", Policy: comm.PolicyOperators},
+		"-6": {Name: "ops", Policy: comm.PolicyOperators},
+	}}, got, "a channel with no groups admits none, and a policy with no name in the layer is left out")
 }

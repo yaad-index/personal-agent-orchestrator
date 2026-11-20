@@ -140,8 +140,12 @@ const MembersOperators = "operators"
 // Group admits one group conversation on a channel (ADR-0028 points 1 and 2).
 type Group struct {
 	// ID is the platform's own id for the conversation, the one a reply to it
-	// goes to.
+	// goes to. It is what the group is admitted and delivered by.
 	ID string `yaml:"id"`
+	// Name is the operator's handle for the group: lowercase letters, digits,
+	// '-' or '_', unique among the node's groups. It names the group wherever pao
+	// shows it to the operator, such as the record of rejected inbound.
+	Name string `yaml:"name"`
 	// Members is the group's member policy: who may act in it.
 	Members string `yaml:"members"`
 }
@@ -157,7 +161,7 @@ var (
 var reservedChannelNames = map[string]bool{"local": true}
 
 func checkChannels(path string, chs []Channel) error {
-	ids, names := map[int]string{}, map[string]bool{}
+	ids, names, groupNames := map[int]string{}, map[string]bool{}, map[string]string{}
 	for i, c := range chs {
 		at := fmt.Sprintf("%s: channels[%d]", path, i)
 		switch {
@@ -179,26 +183,33 @@ func checkChannels(path string, chs []Channel) error {
 			return fmt.Errorf("%s: name %q is already used", at, c.Name)
 		}
 		ids[c.ID], names[c.Name] = c.Name, true
-		if err := checkGroups(at, c.Groups); err != nil {
+		if err := checkGroups(at, c.Groups, groupNames); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func checkGroups(at string, gs []Group) error {
+// checkGroups validates one channel's groups. names holds the group names already
+// used on the node, by where they were used; a group's name is added to it.
+func checkGroups(at string, gs []Group, names map[string]string) error {
 	seen := map[string]bool{}
 	for i, g := range gs {
 		gat := fmt.Sprintf("%s.groups[%d]", at, i)
 		switch {
 		case strings.TrimSpace(g.ID) == "" || g.ID != strings.TrimSpace(g.ID):
 			return fmt.Errorf("%s: id is required, with no surrounding space", gat)
+		case !channelNamePattern.MatchString(g.Name):
+			return fmt.Errorf("%s: name %q must be lowercase letters, digits, '-' or '_', at most 32", gat, g.Name)
 		case g.Members != MembersOperators:
 			return fmt.Errorf("%s: members must be %q", gat, MembersOperators)
 		case seen[g.ID]:
 			return fmt.Errorf("%s: id %q is already listed", gat, g.ID)
 		}
-		seen[g.ID] = true
+		if prev, dup := names[g.Name]; dup {
+			return fmt.Errorf("%s: name %q is already %s", gat, g.Name, prev)
+		}
+		seen[g.ID], names[g.Name] = true, gat
 	}
 	return nil
 }

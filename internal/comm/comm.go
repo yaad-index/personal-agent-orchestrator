@@ -110,8 +110,8 @@ type Layer struct {
 	defaults Defaults
 	commands command.Ops
 	// groups are the admitted group conversations: channel, then conversation id,
-	// to member policy.
-	groups map[string]map[string]string
+	// to the group's name and member policy.
+	groups map[string]map[string]Group
 	// unshown is the (channel, sender) pairs already logged as shown nowhere.
 	unshown sync.Map
 

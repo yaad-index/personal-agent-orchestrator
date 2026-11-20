@@ -8,12 +8,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// groupSetup is chanSetup with group "-5" admitted on channel "chat" under the
-// operators policy.
+// groupSetup is chanSetup with group "-5", named "team", admitted on channel
+// "chat" under the operators policy.
 func groupSetup(t *testing.T) (*Layer, *fakeRouter, *fakeIdentity, *fakeRecorder) {
 	t.Helper()
 	l, r, id, rc := chanSetup(t)
-	l.SetGroups(map[string]map[string]string{"chat": {"-5": PolicyOperators}})
+	l.SetGroups(map[string]map[string]Group{"chat": {"-5": Group{Name: "team", Policy: PolicyOperators}}})
 	return l, r, id, rc
 }
 
@@ -65,7 +65,7 @@ func TestInAnAdmittedGroupAnyoneThePolicyDoesNotAdmitIsRecordedAndNotAnswered(t 
 		assert.Equal(t, ChannelResult{}, res, "%s: nothing is said in the group, not even a refusal", sender)
 	}
 	assert.Empty(t, r.routed)
-	assert.Equal(t, []rec{{"chat", "plain", RecordMessage, "outside access", "RAW"}, {"chat", "stranger", RecordMessage, "no subject", "RAW"}}, rc.got)
+	assert.Equal(t, []rec{{"chat", "plain", RecordMessage, "outside access in group team", "RAW"}, {"chat", "stranger", RecordMessage, "no subject in group team", "RAW"}}, rc.got)
 }
 
 func TestTheOperatorFlagIsReadAtEachGroupMessage(t *testing.T) {
@@ -115,7 +115,7 @@ func TestAPressInAnAdmittedGroupIsTheOperatorsAndOneFromAnyoneElseIsRecorded(t *
 	require.NoError(t, err)
 	assert.Equal(t, ChannelResult{}, res)
 	assert.Empty(t, r.routed)
-	assert.Equal(t, []rec{{"chat", "op", RecordMessage, "press not a command", "RAW"}, {"chat", "plain", RecordMessage, "outside access", "RAW"}}, rc.got)
+	assert.Equal(t, []rec{{"chat", "op", RecordMessage, "press not a command", "RAW"}, {"chat", "plain", RecordMessage, "outside access in group team", "RAW"}}, rc.got)
 }
 
 func TestAJoinThePolicyDoesNotAdmitIsRecordedAndAnAdmittedOneIsNot(t *testing.T) {
@@ -130,7 +130,7 @@ func TestAJoinThePolicyDoesNotAdmitIsRecordedAndAnAdmittedOneIsNot(t *testing.T)
 	_, err := l.ReceiveFromChannel(context.Background(), ChannelInbound{Channel: "chat", Sender: "stranger", Group: true, Conversation: "-6", Join: true})
 	require.NoError(t, err)
 	assert.Empty(t, r.routed)
-	assert.Equal(t, []rec{{"chat", "plain", RecordMessage, "joined outside policy", "conversation -5"}, {"chat", "stranger", RecordMessage, "joined outside policy", "conversation -5"}}, rc.got)
+	assert.Equal(t, []rec{{"chat", "plain", RecordMessage, "joined outside policy in group team", ""}, {"chat", "stranger", RecordMessage, "joined outside policy in group team", ""}}, rc.got)
 }
 
 func TestAConversationThatMovedIsRecordedWithBothIdsAndTheNewIdIsNotAdmitted(t *testing.T) {
@@ -138,7 +138,7 @@ func TestAConversationThatMovedIsRecordedWithBothIdsAndTheNewIdIsNotAdmitted(t *
 	res, err := l.ReceiveFromChannel(context.Background(), ChannelInbound{Channel: "chat", Sender: "-5", Group: true, Conversation: "-5", MovedTo: "-1009"})
 	require.NoError(t, err)
 	assert.Equal(t, ChannelResult{}, res)
-	assert.Equal(t, []rec{{"chat", "-5", RecordMessage, "conversation moved", "from -5 to -1009"}}, rc.got)
+	assert.Equal(t, []rec{{"chat", "-5", RecordMessage, "conversation moved", "group team: from -5 to -1009"}}, rc.got)
 
 	_, err = l.ReceiveFromChannel(context.Background(), inGroup("-1009", "op", "hi"))
 	require.NoError(t, err)
@@ -147,17 +147,17 @@ func TestAConversationThatMovedIsRecordedWithBothIdsAndTheNewIdIsNotAdmitted(t *
 
 func TestAPolicyTheLayerDoesNotKnowAdmitsNoOne(t *testing.T) {
 	l, r, _, rc := chanSetup(t)
-	l.SetGroups(map[string]map[string]string{"chat": {"-5": "everyone"}})
+	l.SetGroups(map[string]map[string]Group{"chat": {"-5": {Name: "odd", Policy: "everyone"}}})
 	res, err := l.ReceiveFromChannel(context.Background(), inGroup("-5", "op", "hi"))
 	require.NoError(t, err)
 	assert.Equal(t, ChannelResult{}, res)
 	assert.Empty(t, r.routed)
-	assert.Equal(t, []rec{{"chat", "op", RecordMessage, "outside access", "RAW"}}, rc.got)
+	assert.Equal(t, []rec{{"chat", "op", RecordMessage, "outside access in group odd", "RAW"}}, rc.got)
 }
 
 func TestAGroupWithNoConversationIdIsNeverAdmittedEvenIfAnEmptyIdIsListed(t *testing.T) {
 	l, r, _, rc := chanSetup(t)
-	l.SetGroups(map[string]map[string]string{"chat": {"": PolicyOperators}})
+	l.SetGroups(map[string]map[string]Group{"chat": {"": Group{Name: "team", Policy: PolicyOperators}}})
 	res, err := l.ReceiveFromChannel(context.Background(), inGroup("", "op", "hi"))
 	require.NoError(t, err)
 	assert.Equal(t, ChannelResult{}, res)

@@ -411,23 +411,27 @@ func TestUpstreamsRejects(t *testing.T) {
 }
 
 func TestChannelGroupsAreLoaded(t *testing.T) {
-	path, err := channelsConfig(t, "channels:\n  - id: 1\n    name: chat\n    kind: bot\n    credential_env: PAO_BOT\n    groups:\n      - id: \"-100200\"\n        members: operators\n      - id: \"-300\"\n        members: operators\n")
+	path, err := channelsConfig(t, "channels:\n  - id: 1\n    name: chat\n    kind: bot\n    credential_env: PAO_BOT\n    groups:\n      - id: \"-100200\"\n        name: group_channel_one\n        members: operators\n      - id: \"-300\"\n        name: ops-2\n        members: operators\n")
 	require.NoError(t, err)
 	cfg, err := Load(path)
 	require.NoError(t, err)
-	assert.Equal(t, []Group{{ID: "-100200", Members: "operators"}, {ID: "-300", Members: "operators"}}, cfg.Orchestrator.Channels[0].Groups)
+	assert.Equal(t, []Group{{ID: "-100200", Name: "group_channel_one", Members: "operators"}, {ID: "-300", Name: "ops-2", Members: "operators"}}, cfg.Orchestrator.Channels[0].Groups)
 }
 
 func TestChannelGroupsRejects(t *testing.T) {
 	head := "channels:\n  - id: 1\n    name: chat\n    kind: bot\n    credential_env: PAO_BOT\n    groups:\n"
 	for name, c := range map[string]struct{ body, want string }{
-		"no id":         {"      - members: operators\n", "groups[0]: id is required"},
-		"blank id":      {"      - id: \" \"\n        members: operators\n", "id is required"},
-		"padded id":     {"      - id: \" -5\"\n        members: operators\n", "no surrounding space"},
-		"no members":    {"      - id: \"-5\"\n", `members must be "operators"`},
-		"other members": {"      - id: \"-5\"\n        members: everyone\n", `members must be "operators"`},
-		"duplicate id":  {"      - id: \"-5\"\n        members: operators\n      - id: \"-5\"\n        members: operators\n", `groups[1]: id "-5" is already listed`},
-		"unknown field": {"      - id: \"-5\"\n        members: operators\n        output: group\n", "output"},
+		"no id":          {"      - name: a\n        members: operators\n", "groups[0]: id is required"},
+		"blank id":       {"      - id: \" \"\n        name: a\n        members: operators\n", "id is required"},
+		"padded id":      {"      - id: \" -5\"\n        name: a\n        members: operators\n", "no surrounding space"},
+		"no name":        {"      - id: \"-5\"\n        members: operators\n", `name "" must be`},
+		"bad name":       {"      - id: \"-5\"\n        name: Group One\n        members: operators\n", `name "Group One" must be`},
+		"long name":      {"      - id: \"-5\"\n        name: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n        members: operators\n", "at most 32"},
+		"no members":     {"      - id: \"-5\"\n        name: a\n", `members must be "operators"`},
+		"other members":  {"      - id: \"-5\"\n        name: a\n        members: everyone\n", `members must be "operators"`},
+		"duplicate id":   {"      - id: \"-5\"\n        name: a\n        members: operators\n      - id: \"-5\"\n        name: b\n        members: operators\n", `groups[1]: id "-5" is already listed`},
+		"duplicate name": {"      - id: \"-5\"\n        name: a\n        members: operators\n      - id: \"-6\"\n        name: a\n        members: operators\n", `groups[1]: name "a" is already`},
+		"unknown field":  {"      - id: \"-5\"\n        name: a\n        members: operators\n        output: group\n", "output"},
 	} {
 		_, err := channelsConfig(t, head+c.body)
 		require.Error(t, err, name)
@@ -435,8 +439,18 @@ func TestChannelGroupsRejects(t *testing.T) {
 	}
 }
 
+func TestAGroupNameIsUniqueAcrossTheNodesChannels(t *testing.T) {
+	_, err := channelsConfig(t, "channels:\n  - id: 1\n    name: a\n    kind: bot\n    credential_env: PAO_BOT\n    groups:\n      - id: \"-5\"\n        name: team\n        members: operators\n"+
+		"  - id: 2\n    name: b\n    kind: bot\n    credential_env: PAO_BOT2\n    groups:\n      - id: \"-6\"\n        name: team\n        members: operators\n")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `channels[1].groups[0]: name "team" is already`)
+	assert.Contains(t, err.Error(), "channels[0].groups[0]", "the error says where the name was first used")
+}
+
 func TestTheSameGroupMayBeListedOnTwoChannels(t *testing.T) {
-	g := "    groups:\n      - id: \"-5\"\n        members: operators\n"
-	_, err := channelsConfig(t, "channels:\n  - id: 1\n    name: a\n    kind: bot\n    credential_env: PAO_BOT\n"+g+"  - id: 2\n    name: b\n    kind: bot\n    credential_env: PAO_BOT2\n"+g)
+	g := func(name string) string {
+		return "    groups:\n      - id: \"-5\"\n        name: " + name + "\n        members: operators\n"
+	}
+	_, err := channelsConfig(t, "channels:\n  - id: 1\n    name: a\n    kind: bot\n    credential_env: PAO_BOT\n"+g("via_a")+"  - id: 2\n    name: b\n    kind: bot\n    credential_env: PAO_BOT2\n"+g("via_b"))
 	require.NoError(t, err)
 }

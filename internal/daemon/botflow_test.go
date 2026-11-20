@@ -391,7 +391,7 @@ func TestAnAdmittedGroupServesTheOperatorAndNoOneElse(t *testing.T) {
 	n := startNodeWith(t, map[string]string{"bee": ""}, func(_, _ string, cfg *config.Config) {
 		cfg.Orchestrator.Channels = []config.Channel{{ID: 1, Name: "chat", Kind: "bot", CredentialEnv: "PAO_TEST_BOT_TOKEN",
 			Options: map[string]any{"endpoint": ts.URL + "/bot{token}/{method}", "poll_timeout": 0},
-			Groups:  []config.Group{{ID: strconv.Itoa(group), Members: config.MembersOperators}}}}
+			Groups:  []config.Group{{ID: strconv.Itoa(group), Name: "team", Members: config.MembersOperators}}}}
 	}, func(o *Options) { o.Adapters = builtin.Table() })
 	ctx := context.Background()
 
@@ -421,7 +421,7 @@ func TestAnAdmittedGroupServesTheOperatorAndNoOneElse(t *testing.T) {
 	svc.push(groupUpdate(6, 23, person, unlisted, "/pao agent bee from elsewhere"))
 	svc.push(groupUpdate(7, 24, stranger, group, "/register "+inv.Secret))
 	// The record keeps each sender's latest rejection.
-	want := map[string]string{strconv.Itoa(other): "message/outside access", strconv.Itoa(person): "message/group " + strconv.Itoa(unlisted), strconv.Itoa(stranger): "registration/from a group"}
+	want := map[string]string{strconv.Itoa(other): "message/outside access in group team", strconv.Itoa(person): "message/group " + strconv.Itoa(unlisted), strconv.Itoa(stranger): "registration/from a group"}
 	require.Eventually(t, func() bool {
 		rej, err := n.client.Rejected(ctx)
 		if err != nil {

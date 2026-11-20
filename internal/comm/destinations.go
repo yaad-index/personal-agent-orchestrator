@@ -24,8 +24,8 @@ func (l *Layer) Destinations(channel string, m core.Message) []string {
 		return nil
 	}
 	var groups []string
-	for id, policy := range l.groups[channel] {
-		if id != "" && l.readersMay(policy, m) {
+	for id, g := range l.groups[channel] {
+		if id != "" && l.readersMay(g.Policy, m) {
 			groups = append(groups, id)
 		}
 	}
