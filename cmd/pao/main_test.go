@@ -77,6 +77,7 @@ func TestEveryCommandLineParsesToItsCommand(t *testing.T) {
 		"access revoke agent:a --tag t":             "access revoke <subject>",
 		"access grants --subject agent:a":           "access grants",
 		"access grant operator --tool-tag research": "access grant <subject>",
+		"message bee hello":                         "message <agent> <text>",
 	} {
 		// A fresh parser per line: a process parses once, and a reused one keeps the
 		// flags of the line before.
