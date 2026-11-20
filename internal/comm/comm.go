@@ -112,6 +112,8 @@ type Layer struct {
 	// groups are the admitted group conversations: channel, then conversation id,
 	// to member policy.
 	groups map[string]map[string]string
+	// unshown is the (channel, sender) pairs already logged as shown nowhere.
+	unshown sync.Map
 
 	// operatorAllow bounds the operator's routing; nil narrows nothing.
 	operatorAllow func(core.Profile) bool

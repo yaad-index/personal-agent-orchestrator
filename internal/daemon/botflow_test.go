@@ -362,3 +362,121 @@ func TestAGateQuestionIsAnsweredByAButtonAndItsButtonsAreClosed(t *testing.T) {
 	assert.Contains(t, svc.calls("answerCallbackQuery")[2]["text"], "no such pending question", "a stale press decides nothing")
 	assert.Len(t, svc.calls("editMessageText"), 1)
 }
+
+func groupUpdate(id, msg, from, chat int, text string) map[string]any {
+	u := chatUpdate(id, msg, from, text)
+	u["message"].(map[string]any)["chat"] = map[string]any{"id": chat, "type": "supergroup"}
+	return u
+}
+
+func groupPress(id, msg, from, chat int, qid, data string) map[string]any {
+	u := pressUpdate(id, msg, from, qid, data)
+	u["callback_query"].(map[string]any)["message"].(map[string]any)["chat"] = map[string]any{"id": chat, "type": "supergroup"}
+	return u
+}
+
+// TestAnAdmittedGroupServesTheOperatorAndNoOneElse runs ADR-0028 on a real node:
+// the operator reaches an agent from an admitted group and its output comes back to
+// the group, not privately; anyone else in the group, a group that is not admitted,
+// and a registration from a group are recorded and answered with nothing; a gate
+// question reaches the group and the operator privately, a press in the group
+// decides it, and the buttons close on both copies.
+func TestAnAdmittedGroupServesTheOperatorAndNoOneElse(t *testing.T) {
+	svc := &service{}
+	ts := httptest.NewServer(http.HandlerFunc(svc.handler))
+	t.Cleanup(ts.Close)
+	t.Setenv("PAO_TEST_BOT_TOKEN", "tok-1")
+	const person, other, stranger, group, unlisted = 4242, 5151, 6161, -700, -800
+
+	n := startNodeWith(t, map[string]string{"bee": ""}, func(_, _ string, cfg *config.Config) {
+		cfg.Orchestrator.Channels = []config.Channel{{ID: 1, Name: "chat", Kind: "bot", CredentialEnv: "PAO_TEST_BOT_TOKEN",
+			Options: map[string]any{"endpoint": ts.URL + "/bot{token}/{method}", "poll_timeout": 0},
+			Groups:  []config.Group{{ID: strconv.Itoa(group), Members: config.MembersOperators}}}}
+	}, func(o *Options) { o.Adapters = builtin.Table() })
+	ctx := context.Background()
+
+	for i, who := range []struct {
+		name string
+		id   int
+	}{{"alice", person}, {"bob", other}} {
+		require.NoError(t, n.client.AddSubject(ctx, who.name))
+		inv, err := n.client.Invite(ctx, who.name, time.Hour)
+		require.NoError(t, err)
+		svc.push(chatUpdate(1+i, 10+i, who.id, "/register "+inv.Secret))
+		lineWith(t, svc, float64(who.id), "registered.")
+	}
+	require.NoError(t, n.client.SetOperator(ctx, "alice", true))
+
+	svc.push(groupUpdate(3, 20, person, group, "/pao agent bee hello group"))
+	out := lineWith(t, svc, group, "hello group")
+	assert.Equal(t, "[bee]: echo: [alice]: hello group", out, "attributed to the operator's subject, answered in the group")
+	assert.Nil(t, svc.sentWith(person, "hello group"), "the output goes to the group, not privately")
+
+	svc.push(groupUpdate(4, 21, person, group, "and again"))
+	assert.Equal(t, "[bee]: echo: [alice]: and again", lineWith(t, svc, group, "and again"), "the address made in the group is kept there")
+
+	inv, err := n.client.Invite(ctx, "bob", time.Hour)
+	require.NoError(t, err)
+	svc.push(groupUpdate(5, 22, other, group, "/pao agent bee from bob"))
+	svc.push(groupUpdate(6, 23, person, unlisted, "/pao agent bee from elsewhere"))
+	svc.push(groupUpdate(7, 24, stranger, group, "/register "+inv.Secret))
+	// The record keeps each sender's latest rejection.
+	want := map[string]string{strconv.Itoa(other): "message/outside access", strconv.Itoa(person): "message/group", strconv.Itoa(stranger): "registration/from a group"}
+	require.Eventually(t, func() bool {
+		rej, err := n.client.Rejected(ctx)
+		if err != nil {
+			return false
+		}
+		got := map[string]string{}
+		for _, e := range rej {
+			got[e.Sender] = string(e.Kind) + "/" + e.Reason
+		}
+		for k, v := range want {
+			if got[k] != v {
+				return false
+			}
+		}
+		return true
+	}, 5*time.Second, 20*time.Millisecond, "each refusal is recorded")
+	assert.Nil(t, svc.sentWith(group, "from bob"), "a member the policy does not admit is not routed")
+	assert.Nil(t, svc.sentWith(unlisted, "elsewhere"), "a group that is not admitted is not served")
+	assert.Empty(t, svc.texts(unlisted), "and nothing is said there")
+	assert.Empty(t, svc.texts(stranger), "a registration from a group is not answered")
+	for _, s := range svc.texts(group) {
+		assert.NotContains(t, s, "registered", "nor answered in the group")
+		assert.NotContains(t, s, "no access", "a refusal is never said in the group")
+	}
+
+	decided := make(chan gate.Decision, 1)
+	go func() {
+		d, _ := gate.Ask(ctx, n.gateSock, gate.Request{Agent: "bee", Tool: "Bash", Input: []byte(`{"command":"echo hi"}`)})
+		decided <- d
+	}()
+	lineWith(t, svc, group, `agent "bee" wants to run Bash`)
+	lineWith(t, svc, person, `agent "bee" wants to run Bash`)
+	inGroup := svc.sentWith(group, `agent "bee" wants to run Bash`)
+	assert.Contains(t, inGroup["reply_markup"].(string), "/pao allow q1", "the question carries its buttons in the group")
+	assert.Nil(t, svc.sentWith(other, "wants to run"), "never to anyone but the operator")
+
+	native := func() int {
+		svc.mu.Lock()
+		defer svc.mu.Unlock()
+		for i, m := range svc.sent {
+			if m["chat_id"].(float64) == group && strings.Contains(m["text"].(string), "wants to run") {
+				return 5001 + i
+			}
+		}
+		return 0
+	}()
+	require.NotZero(t, native)
+	svc.push(groupPress(30, native, person, group, "cb-group", "/pao allow q1"))
+	select {
+	case d := <-decided:
+		assert.Equal(t, gate.Decision{Allow: true, Via: "operator", Reason: "approved by the operator"}, d)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the operator's press in the group did not decide the question")
+	}
+	require.Eventually(t, func() bool { return len(svc.calls("editMessageText")) == 2 }, 5*time.Second, 20*time.Millisecond, "both copies are closed")
+	chats := []float64{svc.calls("editMessageText")[0]["chat_id"].(float64), svc.calls("editMessageText")[1]["chat_id"].(float64)}
+	assert.ElementsMatch(t, []float64{group, person}, chats)
+}

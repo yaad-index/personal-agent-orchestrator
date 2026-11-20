@@ -457,24 +457,24 @@ func (b *Bot) send(ctx context.Context, chat int64, text string, keys models.Rep
 	return m.ID, nil
 }
 
-// Send hands a message to the humans pao's output goes to.
+// Send hands a message to the conversations the layer names.
 func (b *Bot) Send(ctx context.Context, m core.Message) error {
 	_, err := b.SendNative(ctx, m)
 	return err
 }
 
 // SendNative is Send, returning the native id of the first piece sent to each
-// recipient, so a reply to it can be found again. The message's actions are
-// buttons under its last piece.
+// conversation, so a reply to it can be found again. The message's actions are
+// buttons under its last piece, in a group as in a private conversation.
 func (b *Bot) SendNative(ctx context.Context, m core.Message) ([]string, error) {
 	var natives []string
 	var errs []error
 	pieces := split(b.line(m), b.limit)
 	keys := keyboard(m.Actions)
-	for _, to := range b.h.Recipients(b.name) {
+	for _, to := range b.h.Destinations(b.name, m) {
 		chat, err := strconv.ParseInt(to, 10, 64)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("recipient %q is not a chat id", to))
+			errs = append(errs, fmt.Errorf("destination %q is not a chat id", to))
 			continue
 		}
 		for i, p := range pieces {

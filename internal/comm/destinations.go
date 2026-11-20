@@ -1,0 +1,92 @@
+package comm
+
+import (
+	"log/slog"
+	"sort"
+
+	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
+)
+
+// Destinations returns the conversations on a channel that m is shown in, by the
+// platform's id for each: the private conversation of each operator bound on the
+// channel (whose id is the operator's sender id), and the channel's admitted
+// groups.
+//
+// A conversation gets m only if every one of its readers may see it (ADR-0028
+// point 5). A private conversation's one reader is its operator; an admitted
+// group's readers are its members under its policy. Where the channel has an
+// admitted group that may show m, an agent's output goes there and not to the
+// private conversations, and a gate question goes to both (ADR-0028 point 6). A
+// channel with no such group sends to the private conversations, as it did before
+// groups were admitted.
+func (l *Layer) Destinations(channel string, m core.Message) []string {
+	if l.identity == nil {
+		return nil
+	}
+	var groups []string
+	for id, policy := range l.groups[channel] {
+		if id != "" && l.readersMay(policy, m) {
+			groups = append(groups, id)
+		}
+	}
+	sort.Strings(groups)
+	out := groups
+	if len(groups) == 0 || isQuestion(m) {
+		if l.readersMay(PolicyOperators, m) {
+			out = append(out, l.identity.Operators(channel)...)
+		}
+	}
+	if len(out) == 0 {
+		l.warnUnshown(channel, m)
+	}
+	return out
+}
+
+// isQuestion reports whether m is a gate question: pao's own message offering
+// actions (ADR-0027). It is the one message that cannot wait.
+func isQuestion(m core.Message) bool {
+	return m.Kind == core.MessageSystemEvent && len(m.Actions) > 0
+}
+
+// readersMay reports whether every reader a policy admits may see m. A policy the
+// layer does not know shows nothing.
+func (l *Layer) readersMay(policy string, m core.Message) bool {
+	switch policy {
+	case PolicyOperators:
+		return l.operatorMay(m)
+	}
+	return false
+}
+
+// operatorMay reports whether a subject routed as the operator may see m. pao's
+// own messages are the operator's, and a gate question is the operator's to
+// answer (ADR-0023 point 7). An agent's output is the operator's to see only if
+// the operator may reach the agent (ADR-0012); an agent pao cannot name is not.
+func (l *Layer) operatorMay(m core.Message) bool {
+	if m.Kind == core.MessageSystemEvent {
+		return true
+	}
+	if l.operatorAllow == nil {
+		return true
+	}
+	ps, err := l.router.Resolve(core.Target{Kind: core.ByName, Value: m.Sender})
+	if err != nil || len(ps) == 0 {
+		return false
+	}
+	for _, p := range ps {
+		if !l.operatorAllow(p) {
+			return false
+		}
+	}
+	return true
+}
+
+// warnUnshown logs, once per channel and sender, that a message was shown in no
+// conversation, so output held back by access is seen in the log rather than
+// lost without a trace.
+func (l *Layer) warnUnshown(channel string, m core.Message) {
+	if _, seen := l.unshown.LoadOrStore(channel+"\x00"+m.Sender, true); seen {
+		return
+	}
+	slog.Warn("channel output shown in no conversation: no reader may see it, or no one is bound", "channel", channel, "sender", m.Sender)
+}

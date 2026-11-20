@@ -223,15 +223,16 @@ func TestARejectionWithNoRecorderIsStillSilentAndSafe(t *testing.T) {
 	assert.Empty(t, r.routed)
 }
 
-func TestRecipientsAreTheOperatorFlaggedSendersOnTheChannel(t *testing.T) {
+func TestWithNoGroupTheDestinationsAreTheOperatorFlaggedSendersOnTheChannel(t *testing.T) {
 	l, _, id, _ := chanSetup(t)
 	id.bound["other\x00op2"] = "alice"
-	assert.Equal(t, []string{"op"}, l.Recipients("chat"), "bob is bound but not flagged: nothing is sent him")
-	assert.Equal(t, []string{"op2"}, l.Recipients("other"))
-	assert.Empty(t, l.Recipients("none"))
+	notice := core.Message{Sender: "pao", Kind: core.MessageSystemEvent, Text: "hello"}
+	assert.Equal(t, []string{"op"}, l.Destinations("chat", notice), "bob is bound but not flagged: nothing is sent him")
+	assert.Equal(t, []string{"op2"}, l.Destinations("other", notice))
+	assert.Empty(t, l.Destinations("none", notice))
 
 	bare, _, _ := setup(t)
-	assert.Empty(t, bare.Recipients("chat"), "no identity store, no recipients")
+	assert.Empty(t, bare.Destinations("chat", notice), "no identity store, no destinations")
 }
 
 func TestAReplyWithNoAddressGoesToTheAgentThatWroteTheMessage(t *testing.T) {
