@@ -285,6 +285,7 @@ func (l *Layer) Receive(ctx context.Context, in Inbound) (Delivery, error) {
 
 	if len(forwards) == 0 {
 		claims := l.claimOrigin(in, targets)
+		l.mirrorInput(ctx, in, msg, targets)
 		results := l.router.Deliver(ctx, targets, msg)
 		l.settleOrigin(claims, results)
 		return Delivery{Message: msg, Results: results}, nil
@@ -292,6 +293,7 @@ func (l *Layer) Receive(ctx context.Context, in Inbound) (Delivery, error) {
 	// An agent on another node is given the reference its own node resolves, not the
 	// one stored here.
 	claims := l.claimOrigin(in, targets)
+	l.mirrorInput(ctx, in, msg, targets)
 	var results []route.Result
 	for _, t := range targets {
 		m := msg

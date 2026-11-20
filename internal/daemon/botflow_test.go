@@ -20,6 +20,7 @@ import (
 	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/builtin"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/local"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/config"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/gate"
 )
 
@@ -514,4 +515,38 @@ func TestAStandingBindingFollowsTheAgentBesideTheOrigin(t *testing.T) {
 	svc.push(chatUpdate(2, 11, person, "/pao agent bee hello"))
 	assert.Equal(t, "[bee]: echo: [alice]: hello", lineWith(t, svc, person, "hello"), "the origin: privately, named as before")
 	assert.Equal(t, "B: echo: [alice]: hello", lineWith(t, svc, group, "hello"), "the binding: in the group, with its prefix")
+}
+
+// TestALogBindingMirrorsWhatTheAgentIsSent runs the log level on a real node: the
+// group follows the agent at log, so it is shown the operator's private message,
+// named by its sender, and then the agent's answer.
+func TestALogBindingMirrorsWhatTheAgentIsSent(t *testing.T) {
+	svc := &service{}
+	ts := httptest.NewServer(http.HandlerFunc(svc.handler))
+	t.Cleanup(ts.Close)
+	t.Setenv("PAO_TEST_BOT_TOKEN", "tok-1")
+	const person, group = 4242, -700
+
+	n := startNodeWith(t, map[string]string{"bee": ""}, func(_, _ string, cfg *config.Config) {
+		cfg.Orchestrator.Channels = []config.Channel{{ID: 1, Name: "chat", Kind: "bot", CredentialEnv: "PAO_TEST_BOT_TOKEN",
+			Options: map[string]any{"endpoint": ts.URL + "/bot{token}/{method}", "poll_timeout": 0},
+			Groups:  []config.Group{{ID: strconv.Itoa(group), Name: "team", Members: config.MembersOperators}}}}
+		cfg.Orchestrator.Bindings = []config.Binding{{Agent: "bee", Stream: config.StreamStdout, To: "group:team", Level: config.BindingLevel(core.LevelLog)}}
+	}, func(o *Options) { o.Adapters = builtin.Table() })
+	ctx := context.Background()
+
+	require.NoError(t, n.client.AddSubject(ctx, "alice"))
+	inv, err := n.client.Invite(ctx, "alice", time.Hour)
+	require.NoError(t, err)
+	svc.push(chatUpdate(1, 10, person, "/register "+inv.Secret))
+	lineWith(t, svc, float64(person), "registered.")
+	require.NoError(t, n.client.SetOperator(ctx, "alice", true))
+
+	svc.push(chatUpdate(2, 11, person, "/pao agent bee hello"))
+	assert.Equal(t, "[bee]: echo: [alice]: hello", lineWith(t, svc, person, "echo"), "the origin is answered")
+	assert.Equal(t, "[alice]: hello", lineWith(t, svc, group, "[alice]: hello"), "the group is shown what the agent was sent")
+	assert.Equal(t, "[bee]: echo: [alice]: hello", lineWith(t, svc, group, "echo"), "and what it said")
+	for _, s := range svc.texts(person) {
+		assert.NotEqual(t, "[alice]: hello", s, "the sender is not shown their own message")
+	}
 }

@@ -17,6 +17,9 @@ const (
 	toWide
 	// toBinding is a conversation a standing binding names.
 	toBinding
+	// toMirror is a conversation a binding at the log level names, shown a
+	// message delivered to the agent.
+	toMirror
 )
 
 // target is one place an agent's message goes.
@@ -25,6 +28,8 @@ type target struct {
 	at   origin
 	// dest names a binding's destination, for the log.
 	dest string
+	// agent is the agent a mirrored message was delivered to.
+	agent string
 }
 
 // outRoute is where one stored message of an agent's is going, held while the
@@ -210,6 +215,14 @@ func (l *Layer) routed(channel string, m core.Message, r outRoute) []string {
 			}
 			if _, seen := l.unshown.LoadOrStore("held\x00"+m.Sender+"\x00"+t.dest, true); !seen {
 				slog.Warn("binding held back: a reader of its destination may not see the agent's output", "agent", m.Sender, "destination", t.dest)
+			}
+		case toMirror:
+			if l.mirrorMay(t.at, t.agent, m) {
+				add(t.at.conversation)
+				continue
+			}
+			if _, seen := l.unshown.LoadOrStore("mirror\x00"+t.agent+"\x00"+t.dest, true); !seen {
+				slog.Warn("mirrored message held back: a reader of the destination may not see it", "agent", t.agent, "destination", t.dest)
 			}
 		}
 	}

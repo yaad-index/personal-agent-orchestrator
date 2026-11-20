@@ -95,11 +95,32 @@ type Binding struct {
 	// private:<subject>@<channel> or channel:local (ADR-0029 point 1).
 	To string `yaml:"to"`
 	// Level is the verbosity level the destination is shown the stream at, read
-	// against the agent's level map (ADR-0008). Default: the node's level.
-	Level int `yaml:"level"`
+	// against the agent's level map (ADR-0008), or "log": every kind, and the
+	// messages delivered to the agent too. Default: the node's level.
+	Level BindingLevel `yaml:"level"`
 	// Prefix, when set, is put before every message the binding sends, in place
 	// of the agent's name (ADR-0029 point 5). At most MaxPrefix characters.
 	Prefix string `yaml:"prefix"`
+}
+
+// BindingLevel is a binding's level: a number, or "log", which is core.LevelLog.
+type BindingLevel int
+
+// LevelLog is the word for the highest level, core.LevelLog.
+const LevelLog = "log"
+
+// UnmarshalYAML reads a number or "log".
+func (l *BindingLevel) UnmarshalYAML(n *yaml.Node) error {
+	if n.Kind == yaml.ScalarNode && n.Value == LevelLog {
+		*l = BindingLevel(core.LevelLog)
+		return nil
+	}
+	var i int
+	if err := n.Decode(&i); err != nil {
+		return fmt.Errorf("level must be a number or %q", LevelLog)
+	}
+	*l = BindingLevel(i)
+	return nil
 }
 
 // StreamStdout is an agent's output.
@@ -548,7 +569,7 @@ func checkBindings(path string, o *Orchestrator, agents map[string]string) error
 			b.Stream = StreamStdout
 		}
 		if b.Level == 0 {
-			b.Level = o.Level
+			b.Level = BindingLevel(o.Level)
 		}
 		d, err := ParseDestination(b.To)
 		switch {
