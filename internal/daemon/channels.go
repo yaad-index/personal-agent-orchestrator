@@ -56,8 +56,8 @@ func wireChannels(cfg *config.Config, creds map[string]string, table adapter.Tab
 // admittedGroups is each channel's admitted group conversations with their member
 // policy (ADR-0028 points 1 and 2). A policy the layer has no name for is left
 // out, so the group is refused rather than served under a guess.
-func admittedGroups(chs []config.Channel) map[string]map[string]string {
-	out := map[string]map[string]string{}
+func admittedGroups(chs []config.Channel) map[string]map[string]comm.Group {
+	out := map[string]map[string]comm.Group{}
 	for _, c := range chs {
 		for _, g := range c.Groups {
 			var policy string
@@ -68,9 +68,9 @@ func admittedGroups(chs []config.Channel) map[string]map[string]string {
 				continue
 			}
 			if out[c.Name] == nil {
-				out[c.Name] = map[string]string{}
+				out[c.Name] = map[string]comm.Group{}
 			}
-			out[c.Name][g.ID] = policy
+			out[c.Name][g.ID] = comm.Group{Name: g.Name, Policy: policy}
 		}
 	}
 	return out

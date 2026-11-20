@@ -110,16 +110,23 @@ type ChannelInbound struct {
 // routed as the operator (ADR-0028 point 2).
 const PolicyOperators = "operators"
 
-// SetGroups gives the layer the group conversations each channel admits, by
-// channel name and then the platform's conversation id, each with its member
-// policy (ADR-0028 points 1 and 2). A group not given is refused. Call it before
-// the layer starts receiving.
-func (l *Layer) SetGroups(groups map[string]map[string]string) { l.groups = groups }
+// Group is one admitted group conversation (ADR-0028 points 1 and 2): the name
+// the operator knows it by, and its member policy. The platform's id for the
+// conversation is what it is admitted and delivered to.
+type Group struct {
+	Name   string
+	Policy string
+}
 
-// groupPolicy returns the member policy of an admitted group.
-func (l *Layer) groupPolicy(channel, conversation string) (string, bool) {
-	p, ok := l.groups[channel][conversation]
-	return p, ok && conversation != ""
+// SetGroups gives the layer the group conversations each channel admits, by
+// channel name and then the platform's conversation id. A group not given is
+// refused. Call it before the layer starts receiving.
+func (l *Layer) SetGroups(groups map[string]map[string]Group) { l.groups = groups }
+
+// group returns an admitted group.
+func (l *Layer) group(channel, conversation string) (Group, bool) {
+	g, ok := l.groups[channel][conversation]
+	return g, ok && conversation != ""
 }
 
 // admits reports whether a group's member policy lets subject act in it. A policy
@@ -237,14 +244,18 @@ func (l *Layer) ReceiveFromChannel(ctx context.Context, in ChannelInbound) (Chan
 // the answer (ADR-0028 point 2).
 func (l *Layer) receiveFromGroup(ctx context.Context, in ChannelInbound) (ChannelResult, error) {
 	if in.MovedTo != "" {
-		return ChannelResult{}, l.reject(in, RecordMessage, "conversation moved", "from "+in.Conversation+" to "+in.MovedTo)
+		moved := "from " + in.Conversation + " to " + in.MovedTo
+		if g, ok := l.group(in.Channel, in.Conversation); ok {
+			moved = "group " + g.Name + ": " + moved
+		}
+		return ChannelResult{}, l.reject(in, RecordMessage, "conversation moved", moved)
 	}
 	// A secret said in a group is read by everyone in it: it is refused and not
 	// kept, whether or not the group is admitted (ADR-0028 point 3).
 	if in.Registration {
 		return ChannelResult{}, l.reject(in, RecordRegistration, "from a group", "")
 	}
-	policy, ok := l.groupPolicy(in.Channel, in.Conversation)
+	g, ok := l.group(in.Channel, in.Conversation)
 	if !ok {
 		if in.Join {
 			return ChannelResult{}, nil
@@ -258,16 +269,19 @@ func (l *Layer) receiveFromGroup(ctx context.Context, in ChannelInbound) (Channe
 		return ChannelResult{}, l.reject(in, RecordMessage, reason, in.Raw)
 	}
 	subject, bound := l.identity.Resolve(in.Channel, in.Sender)
-	admitted := bound && l.admits(policy, subject)
+	admitted := bound && l.admits(g.Policy, subject)
+	// A refusal in an admitted group is recorded under the group's name, the
+	// handle the operator gave it.
+	where := " in group " + g.Name
 	switch {
 	case in.Join && admitted:
 		return ChannelResult{}, nil
 	case in.Join:
-		return ChannelResult{}, l.reject(in, RecordMessage, "joined outside policy", "conversation "+in.Conversation)
+		return ChannelResult{}, l.reject(in, RecordMessage, "joined outside policy"+where, "")
 	case !bound:
-		return ChannelResult{}, l.reject(in, RecordMessage, "no subject", in.Raw)
+		return ChannelResult{}, l.reject(in, RecordMessage, "no subject"+where, in.Raw)
 	case !admitted:
-		return ChannelResult{}, l.reject(in, RecordMessage, "outside access", in.Raw)
+		return ChannelResult{}, l.reject(in, RecordMessage, "outside access"+where, in.Raw)
 	}
 	return l.receiveAsOperator(ctx, in, subject)
 }

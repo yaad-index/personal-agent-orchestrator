@@ -28,14 +28,14 @@ func TestWithAnAdmittedGroupOutputGoesToTheGroupAndAQuestionToTheGroupAndEachOpe
 
 func TestEveryAdmittedGroupOfTheChannelGetsItInOrder(t *testing.T) {
 	l, _, _, _ := chanSetup(t)
-	l.SetGroups(map[string]map[string]string{"chat": {"-7": PolicyOperators, "-5": PolicyOperators}, "other": {"-9": PolicyOperators}})
+	l.SetGroups(map[string]map[string]Group{"chat": {"-7": {Name: "b", Policy: PolicyOperators}, "-5": {Name: "a", Policy: PolicyOperators}}, "other": {"-9": {Name: "c", Policy: PolicyOperators}}})
 	assert.Equal(t, []string{"-5", "-7"}, l.Destinations("chat", output))
 	assert.Equal(t, []string{"-5", "-7", "op"}, l.Destinations("chat", question))
 }
 
 func TestAChannelWithNoAdmittedGroupSendsPrivatelyAsBefore(t *testing.T) {
 	l, _, _, _ := groupSetup(t)
-	l.SetGroups(map[string]map[string]string{"other": {"-9": PolicyOperators}})
+	l.SetGroups(map[string]map[string]Group{"other": {"-9": {Name: "c", Policy: PolicyOperators}}})
 	for _, m := range []core.Message{output, notice, question} {
 		assert.Equal(t, []string{"op"}, l.Destinations("chat", m), m.Text)
 	}
@@ -43,7 +43,7 @@ func TestAChannelWithNoAdmittedGroupSendsPrivatelyAsBefore(t *testing.T) {
 
 func TestAGroupUnderAPolicyTheLayerDoesNotKnowIsShownNothing(t *testing.T) {
 	l, _, _, _ := chanSetup(t)
-	l.SetGroups(map[string]map[string]string{"chat": {"-5": "everyone", "": PolicyOperators}})
+	l.SetGroups(map[string]map[string]Group{"chat": {"-5": {Name: "odd", Policy: "everyone"}, "": {Name: "none", Policy: PolicyOperators}}})
 	assert.Equal(t, []string{"op"}, l.Destinations("chat", output), "and so the channel sends privately, as with no group")
 	assert.Equal(t, []string{"op"}, l.Destinations("chat", question))
 }
