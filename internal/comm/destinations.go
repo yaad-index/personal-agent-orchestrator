@@ -32,11 +32,14 @@ func (l *Layer) Destinations(channel string, m core.Message) []string {
 //
 // A conversation gets m only if every one of its readers may see it (ADR-0028
 // point 5). A private conversation's one reader is its operator; an admitted
-// group's readers are its members under its policy. Where the channel has an
-// admitted group that may show m, an agent's output goes there and not to the
-// private conversations, and a gate question goes to both. A channel with no such
-// group sends to the private conversations, as it did before groups were admitted.
+// group's readers are its members under its policy. A gate question goes to the
+// private conversations only, as before any group was admitted (ADR-0029 point 4).
+// Anything else goes to the channel's admitted groups that may show it, or, where
+// there is none, to the private conversations.
 func (l *Layer) wide(channel string, m core.Message) []string {
+	if isQuestion(m) {
+		return l.privately(channel, m)
+	}
 	var groups []string
 	for id, g := range l.groups[channel] {
 		if id != "" && l.readersMay(g.Policy, m) {
@@ -44,13 +47,19 @@ func (l *Layer) wide(channel string, m core.Message) []string {
 		}
 	}
 	sort.Strings(groups)
-	out := groups
-	if len(groups) == 0 || isQuestion(m) {
-		if l.readersMay(PolicyOperators, m) {
-			out = append(out, l.identity.Operators(channel)...)
-		}
+	if len(groups) == 0 {
+		return l.privately(channel, m)
 	}
-	return out
+	return groups
+}
+
+// privately returns the private conversation of each operator bound on the
+// channel, if an operator may see m.
+func (l *Layer) privately(channel string, m core.Message) []string {
+	if !l.readersMay(PolicyOperators, m) {
+		return nil
+	}
+	return l.identity.Operators(channel)
 }
 
 // isQuestion reports whether m is a gate question: pao's own message offering
