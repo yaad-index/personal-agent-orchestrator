@@ -278,12 +278,21 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	gateSrv := &http.Server{Handler: (&gate.Server{Gate: gt}).Handler(), ReadHeaderTimeout: 10 * time.Second}
 
 	harvests := harvest.New(filepath.Join(cfg.Orchestrator.StateDir, "harvest"), auth)
+	// A temporary agent's profile comes from a recipe, which may name an account
+	// this node does not have; it is refused at spawn as a profile file naming one
+	// is refused at load.
+	check := func(p core.Profile) error {
+		if err := checkProfile(p); err != nil {
+			return err
+		}
+		return cfg.Orchestrator.CheckAccount(p.Account)
+	}
 	mgr := &temp.Manager{
 		Registry: reg, Plane: plane, Starter: router, Channels: bindings{layer, hook.follow.views, saved},
 		Workdirs: &workdir.Provisioner{Root: filepath.Join(cfg.Orchestrator.StateDir, "temp")},
 		Harvests: harvests, Auth: auth,
 		Recipes: func() (*recipe.Set, error) { return recipe.LoadDir(cfg.Orchestrator.RecipesDir) },
-		Locate:  locate, Check: checkProfile, Gate: gt, Follow: hook.follow,
+		Locate:  locate, Check: check, Gate: gt, Follow: hook.follow,
 		Surface:    surface(layer, router),
 		Thresholds: registry.Thresholds{UnusedAfter: cfg.Orchestrator.Temp.UnusedAfter, IdleAfter: cfg.Orchestrator.Temp.IdleAfter},
 	}
@@ -351,7 +360,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		tempOps.cmds, streamOps.cmds, lifeOps.cmds, decider.cmds = cmds, cmds, cmds, cmds
 		// A temporary agent may not take a name an agent on another node holds.
 		mgr.Check = func(p core.Profile) error {
-			if err := checkProfile(p); err != nil {
+			if err := check(p); err != nil {
 				return err
 			}
 			if dir.Has(p.Name) {
