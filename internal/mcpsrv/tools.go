@@ -13,6 +13,7 @@ import (
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/access"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/gate"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/task"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/upstream"
 )
 
@@ -136,6 +137,8 @@ func GateRules(server string, proxied ...upstream.Tool) []gate.Rule {
 		{Tool: ActionListHarvests, Risk: gate.RiskRead},
 		{Tool: ActionReadHarvest, Risk: gate.RiskRead},
 		{Tool: ActionListChannels, Risk: gate.RiskRead},
+		{Tool: task.ActionList, Risk: gate.RiskRead},
+		{Tool: task.ActionRead, Risk: gate.RiskRead},
 	}
 	for _, t := range proxied {
 		if t.Risk != "" {
@@ -147,6 +150,7 @@ func GateRules(server string, proxied ...upstream.Tool) []gate.Rule {
 		names = append(names, t.Name)
 	}
 	names = append(names, ToolPropose, ToolListChannels)
+	names = append(names, TaskTools...)
 	for _, t := range names {
 		rules = append(rules, gate.Rule{Tool: "mcp__" + server + "__" + t, Effect: gate.EffectAllow})
 	}
