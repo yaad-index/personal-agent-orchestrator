@@ -68,7 +68,7 @@ func TestTheGovernorStartsOnItsFirstRequestAndAfreshForAnotherSubject(t *testing
 	assert.NotEqual(t, first, panePID(t, n, "gov"), "another subject is answered in a new session")
 }
 
-func TestTheGovernorReadsOnlyWhatItsRequesterMaySee(t *testing.T) {
+func TestTheGovernorReadsWhatItsOwnGrantsReach(t *testing.T) {
 	n := startNodeWith(t, map[string]string{"gov": "", "bee": "", "wasp": ""}, func(_, _ string, cfg *config.Config) {
 		cfg.Orchestrator.Governor = config.Governor{Agent: "gov"}
 	})
@@ -93,15 +93,30 @@ func TestTheGovernorReadsOnlyWhatItsRequesterMaySee(t *testing.T) {
 		return got
 	}
 
+	channels := func(cs *mcp.ClientSession) []string {
+		out := mcpCall[struct {
+			Channels []struct {
+				Name string `json:"name"`
+			} `json:"channels"`
+		}](t, cs, "list_channels", nil)
+		var got []string
+		for _, c := range out.Channels {
+			got = append(got, c.Name)
+		}
+		return got
+	}
+
 	require.NoError(t, n.client.AgentAction(ctx, "gov", "start"))
 	cs := mcpSession(t, n, sessionEnv(t, n, "gov", "PAO_AGENT_TOKEN"))
 	assert.Empty(t, names(cs), "serving no request, the governor reads nothing")
+	assert.Empty(t, channels(cs), "not even the channels")
 
 	_, err = n.client.Post(ctx, "alice", "/gpao list my agents", "name", "gov")
 	require.NoError(t, err)
 	assert.Equal(t, "echo: [alice]: list my agents", n.next(t).Text)
 	cs = mcpSession(t, n, sessionEnv(t, n, "gov", "PAO_AGENT_TOKEN"))
-	assert.ElementsMatch(t, []string{"gov", "bee"}, names(cs), "only what the requester may see: not wasp, though the governor's grants reach it")
+	assert.ElementsMatch(t, []string{"gov", "bee", "wasp"}, names(cs), "what its own grants reach: wasp too, though the requester does not reach it")
+	assert.Equal(t, []string{"local"}, channels(cs))
 
 	tools, err := cs.ListTools(ctx, nil)
 	require.NoError(t, err)
@@ -109,7 +124,7 @@ func TestTheGovernorReadsOnlyWhatItsRequesterMaySee(t *testing.T) {
 	for _, tl := range tools.Tools {
 		offered = append(offered, tl.Name)
 	}
-	assert.ElementsMatch(t, []string{"list_agents", "list_recipes"}, offered, "only the tools matching needs: no send, spawn, kill or harvest")
+	assert.ElementsMatch(t, []string{"list_agents", "list_recipes", "list_channels"}, offered, "only the tools matching needs: no send, spawn, kill or harvest")
 	_, err = cs.CallTool(ctx, &mcp.CallToolParams{Name: "send_message", Arguments: map[string]any{"name": "bee", "text": "stop"}})
 	assert.Error(t, err, "the governor sends to no agent, though its grants reach bee")
 }

@@ -37,6 +37,22 @@ type RecipeInfo struct {
 	Tags        []string `json:"tags,omitempty" jsonschema:"the tags an agent spawned from it carries"`
 }
 
+// ChannelInfo is one channel as the governor is told of it. Every field is named
+// here, so nothing of a channel's configuration reaches it unless this lists it:
+// never a credential, the variable that holds one, an adapter option or an
+// endpoint.
+type ChannelInfo struct {
+	Name   string      `json:"name" jsonschema:"the channel's name"`
+	Kind   string      `json:"kind" jsonschema:"what kind of channel it is"`
+	Groups []GroupInfo `json:"groups,omitempty" jsonschema:"the group conversations it serves"`
+}
+
+// GroupInfo is one admitted group, by name and member policy.
+type GroupInfo struct {
+	Name    string `json:"name" jsonschema:"the group's name, as a destination names it: group:<name>"`
+	Members string `json:"members" jsonschema:"who may act in it"`
+}
+
 // KillInfo is what a kill reports.
 type KillInfo struct {
 	HarvestID   string `json:"harvest_id" jsonschema:"the harvest the agent's outputs were written to"`
@@ -76,6 +92,7 @@ const (
 	ActionSpawn        = "pao.spawn"
 	ActionKill         = "pao.kill"
 	ActionPropose      = "pao.propose"
+	ActionListChannels = "pao.list_channels"
 )
 
 // ToolPropose is the tool a governor proposes a command with (ADR-0030). Unlike
@@ -83,6 +100,10 @@ const (
 // (access.ToolResource): no upstream tool can share the name, since every
 // upstream tool's pao-side name holds "__".
 const ToolPropose = "propose_command"
+
+// ToolListChannels is the governor's tool for the node's channels. It is offered
+// to the governor alone.
+const ToolListChannels = "list_channels"
 
 // DefaultServerName is the name a backend gives pao's MCP server: the backend
 // adapter configures it under this name, and the gate's rules for pao's tools
@@ -114,6 +135,7 @@ func GateRules(server string, proxied ...upstream.Tool) []gate.Rule {
 		{Tool: ActionListRecipes, Risk: gate.RiskRead},
 		{Tool: ActionListHarvests, Risk: gate.RiskRead},
 		{Tool: ActionReadHarvest, Risk: gate.RiskRead},
+		{Tool: ActionListChannels, Risk: gate.RiskRead},
 	}
 	for _, t := range proxied {
 		if t.Risk != "" {
@@ -124,7 +146,7 @@ func GateRules(server string, proxied ...upstream.Tool) []gate.Rule {
 	for _, t := range proxied {
 		names = append(names, t.Name)
 	}
-	names = append(names, ToolPropose)
+	names = append(names, ToolPropose, ToolListChannels)
 	for _, t := range names {
 		rules = append(rules, gate.Rule{Tool: "mcp__" + server + "__" + t, Effect: gate.EffectAllow})
 	}
@@ -387,6 +409,31 @@ func (s *Server) listRecipes(ctx context.Context, req *mcp.CallToolRequest, _ no
 	}
 	if err := s.approve(ctx, who, ActionListRecipes, nil); err != nil {
 		return nil, listRecipesOutput{Recipes: []RecipeInfo{}}, err
+	}
+	return nil, out, nil
+}
+
+type listChannelsOutput struct {
+	Channels []ChannelInfo `json:"channels"`
+}
+
+var listChannelsTool = &mcp.Tool{
+	Name:        ToolListChannels,
+	Description: "List the node's channels: each one's name and kind, and the groups it serves with their member policy. A destination names a group as group:<name>.",
+	Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+}
+
+func (s *Server) listChannels(ctx context.Context, req *mcp.CallToolRequest, _ noInput) (*mcp.CallToolResult, listChannelsOutput, error) {
+	who := subject(req)
+	if !s.isGovernor(who) {
+		return nil, listChannelsOutput{Channels: []ChannelInfo{}}, fmt.Errorf("%w: only the governor lists channels", ErrDenied)
+	}
+	if err := s.approve(ctx, who, ActionListChannels, nil); err != nil {
+		return nil, listChannelsOutput{Channels: []ChannelInfo{}}, err
+	}
+	out := listChannelsOutput{Channels: s.channels()}
+	if out.Channels == nil {
+		out.Channels = []ChannelInfo{}
 	}
 	return nil, out, nil
 }
