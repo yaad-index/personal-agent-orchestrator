@@ -121,3 +121,51 @@ func TestTheNodeMayNameAnotherGovernorPrefix(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "usage: /ask <what you want done, in your own words>", res.Reply)
 }
+
+func TestTheGovernorServesOneSubjectWhileTheNodeRuns(t *testing.T) {
+	l, r, chat, _ := governorSetup(t)
+	fromChat(t, l, privately("/gpao pause the coder"))
+	fromChat(t, l, privately("/gpao and the other one"))
+	assert.Len(t, r.routed, 2, "alice holds the governor")
+
+	reply, d, ok, err := l.CommandAsOperator(context.Background(), Inbound{Source: "local", Sender: "human", Text: "/gpao list my agents"})
+	require.NoError(t, err)
+	assert.True(t, ok)
+	assert.Nil(t, d)
+	assert.Equal(t, ReplyGovernorHeld, reply, "another subject is refused")
+	assert.Len(t, r.routed, 2, "and nothing reaches the governor")
+
+	fromChat(t, l, privately("/gpao one more"))
+	assert.Len(t, r.routed, 3, "alice still holds it")
+	assert.Empty(t, chat.take())
+}
+
+func TestARequestThatDoesNotReachTheGovernorDoesNotHoldIt(t *testing.T) {
+	l, r, _, _ := governorSetup(t)
+	res, err := l.ReceiveFromChannel(context.Background(), privately("/gpao"))
+	require.NoError(t, err)
+	assert.Contains(t, res.Reply, "usage")
+	_, d, _, err := l.CommandAsOperator(context.Background(), Inbound{Source: "local", Sender: "human", Text: "/gpao list my agents"})
+	require.NoError(t, err)
+	require.NotNil(t, d, "alice's empty request held nothing, so human holds it now")
+	assert.Len(t, r.routed, 1)
+}
+
+func TestTheGovernorsSubjectIsTheSendersWhereverItWrites(t *testing.T) {
+	l, r, _, _ := governorSetup(t)
+	fromChat(t, l, privately("/gpao pause the coder"))
+	_, d, _, err := l.CommandAsOperator(context.Background(), Inbound{Source: "local", Sender: "alice", Text: "/gpao and from here"})
+	require.NoError(t, err)
+	require.NotNil(t, d, "alice on the local channel is the alice who holds it")
+
+	l2, r2, _, _ := governorSetup(t)
+	_, d, _, err = l2.CommandAsOperator(context.Background(), Inbound{Source: "local", Sender: "human", Text: "/gpao first"})
+	require.NoError(t, err)
+	require.NotNil(t, d)
+	reply, d, _, err := l2.CommandAsOperator(context.Background(), Inbound{Source: "local", Sender: "other", Text: "/gpao second"})
+	require.NoError(t, err)
+	assert.Nil(t, d)
+	assert.Equal(t, ReplyGovernorHeld, reply, "two senders on the local channel are two subjects")
+	assert.Len(t, r.routed, 2)
+	assert.Len(t, r2.routed, 1)
+}

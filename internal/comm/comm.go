@@ -104,6 +104,11 @@ type Layer struct {
 	// governor is the node's governor, by name; empty for none (ADR-0030).
 	// governorPrefix is the first word of a request to it.
 	governor, governorPrefix string
+	// governorHolder is the one subject the governor serves while this node
+	// runs: the first whose request reached it. Until the governor starts a
+	// fresh context for each requester (ADR-0031 point 6), a second subject's
+	// request would be answered in a context holding the first's.
+	governorHolder string
 
 	mu    sync.RWMutex
 	bound map[string]string // agent name to the channel its output goes to

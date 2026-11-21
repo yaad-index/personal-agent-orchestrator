@@ -45,7 +45,8 @@ func (l *Layer) governorRequest(text string) (string, bool) {
 
 // Replies to a request to the governor that does not reach it.
 const (
-	ReplyNoGovernor = "this node has no governor"
+	ReplyNoGovernor   = "this node has no governor"
+	ReplyGovernorHeld = "the governor is serving another operator on this node"
 )
 
 // governorUsage is the answer to a request with nothing in it.
@@ -53,16 +54,19 @@ func governorUsage(prefix string) string {
 	return "usage: " + prefix + " <what you want done, in your own words>"
 }
 
-// toGovernor turns a request to the governor into the message it is sent: to the
-// governor by name, the request as its text. reply is what to answer instead
-// when it does not go.
-func (l *Layer) toGovernor(text string) (target core.Target, request, reply string) {
+// toGovernor turns subject's request to the governor into the message it is
+// sent: to the governor by name, the request as its text. reply is what to answer
+// instead when it does not go. The governor serves one subject while the node
+// runs (governorHolder): a request from any other is refused.
+func (l *Layer) toGovernor(text, subject string) (target core.Target, request, reply string) {
 	request, _ = l.governorRequest(text)
 	switch {
 	case l.governor == "":
 		return core.Target{}, "", ReplyNoGovernor
 	case request == "":
 		return core.Target{}, "", governorUsage(l.governorPrefix)
+	case !l.holdGovernor(subject):
+		return core.Target{}, "", ReplyGovernorHeld
 	}
 	return core.Target{Kind: core.ByName, Value: l.governor}, request, ""
 }
@@ -78,4 +82,15 @@ func (l *Layer) governorTargets(agent string) []target {
 		return nil
 	}
 	return l.subjectTargets(t.at.channel, t.at.conversation == "", t.requester, agent)
+}
+
+// holdGovernor reports whether the governor serves subject: it does when no one
+// holds it yet, and subject then holds it, or when subject already does.
+func (l *Layer) holdGovernor(subject string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.governorHolder == "" {
+		l.governorHolder = subject
+	}
+	return l.governorHolder == subject
 }
