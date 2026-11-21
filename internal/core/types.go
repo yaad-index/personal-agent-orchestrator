@@ -38,6 +38,11 @@ type Profile struct {
 	// only on the profile of an agent the master knows from the mesh directory, never
 	// read from a profile file.
 	Node string `yaml:"-"`
+	// Provisioned marks a temporary agent's profile, whose working directory pao
+	// provisioned from a source rather than the operator (ADR-0006 point 2). Its
+	// backend loads none of the settings in that directory (ADR-0033 point 1). It
+	// is set by pao, never read from a file.
+	Provisioned bool `yaml:"-"`
 	// Levels overrides DefaultLevels per kind (ADR-0008 point 2). Kinds it
 	// leaves out keep their default level.
 	Levels Levels `yaml:"levels"`

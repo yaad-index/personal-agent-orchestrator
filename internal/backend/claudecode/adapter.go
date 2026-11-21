@@ -76,8 +76,9 @@ var trustPrompt = backend.Prompt{
 var _ backend.Prompter = Adapter{}
 
 // Prompts implements backend.Prompter: the question whether to trust the working
-// directory.
-func (Adapter) Prompts() []backend.Prompt { return []backend.Prompt{trustPrompt} }
+// directory. It is safe to answer for a provisioned profile too, since Command
+// shuts out every setting source in a provisioned directory.
+func (Adapter) Prompts(core.Profile) []backend.Prompt { return []backend.Prompt{trustPrompt} }
 
 // Isolates implements backend.Adapter: Claude Code can shut out every category.
 func (Adapter) Isolates() []backend.Category { return backend.Categories }
@@ -133,7 +134,16 @@ func (Adapter) Command(p core.Profile, l backend.Launch) (backend.Start, error) 
 		args = append(args, "--disable-slash-commands")
 		env = append(env, envSyncSkills+"=0")
 	}
-	if !inherits[backend.Settings] {
+	switch {
+	case p.Provisioned && inherits[backend.Settings]:
+		// A provisioned directory's settings are its source's, not the operator's
+		// (ADR-0033 point 1): only the user's own, which the profile inherits.
+		args = append(args, "--setting-sources", "user")
+	case p.Provisioned:
+		// No setting source at all: neither the user's nor any in the directory.
+		args = append(args, "--setting-sources", "")
+		env = append(env, envSyncPlugins+"=0")
+	case !inherits[backend.Settings]:
 		args = append(args, "--setting-sources", "project,local")
 		env = append(env, envSyncPlugins+"=0")
 	}

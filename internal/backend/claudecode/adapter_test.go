@@ -213,10 +213,33 @@ const trustPane = `────────────────────�
 `
 
 func TestTheTrustQuestionIsAnsweredWithYes(t *testing.T) {
-	ps := Adapter{}.Prompts()
+	ps := Adapter{}.Prompts(core.Profile{Name: "a"})
 	require.Len(t, ps, 1)
 	assert.True(t, ps[0].Pattern.MatchString(trustPane), "the question as Claude Code shows it")
 	assert.Equal(t, []string{"Down", "Enter"}, ps[0].Keys, "from No, exit down to Yes, then confirm")
 	assert.False(t, ps[0].Pattern.MatchString("❯ Try \"refactor <filepath>\"\n  ⏵⏵ auto mode on"), "not the ready prompt")
 	assert.False(t, ps[0].Pattern.MatchString("[alice]: Is this a project you created or one you trust?"), "not the question alone, without its answer")
+}
+
+func TestAProvisionedDirectorysSettingsAreNotLoaded(t *testing.T) {
+	p := core.Profile{Name: "tmp", Backend: Name, Workdir: "/srv/agents/tmp", Provisioned: true}
+	args, env := launched(t, p)
+	assert.Equal(t, "", value(t, args, "--setting-sources"), "no setting source at all: nothing from the directory, nothing of the user's")
+	assert.Contains(t, env, "CLAUDE_CODE_SYNC_PLUGINS=0")
+	assert.Equal(t, 1, strings.Count(strings.Join(args, "\x00"), "--setting-sources"), "given once")
+
+	p.Inherit = []string{"settings"}
+	args, env = launched(t, p)
+	assert.Equal(t, "user", value(t, args, "--setting-sources"), "inheriting settings opens the user's own, still nothing from the directory")
+	assert.NotContains(t, env, "CLAUDE_CODE_SYNC_PLUGINS=0")
+
+	ps := Adapter{}.Prompts(core.Profile{Name: "tmp", Provisioned: true})
+	assert.Len(t, ps, 1, "its trust question may be answered: nothing in the directory is loaded")
+}
+
+func TestAConfiguredAgentStillLoadsItsOwnDirectorysSettings(t *testing.T) {
+	args, _ := launched(t, core.Profile{Name: "a", Backend: Name, Workdir: "/srv/agents/a"})
+	assert.Equal(t, "project,local", value(t, args, "--setting-sources"))
+	args, _ = launched(t, core.Profile{Name: "a", Backend: Name, Workdir: "/srv/agents/a", Inherit: []string{"settings"}})
+	assert.NotContains(t, args, "--setting-sources", "inheriting settings opens every source, as before")
 }
