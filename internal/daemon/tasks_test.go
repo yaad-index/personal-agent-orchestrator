@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
 	osexec "os/exec"
 	"path/filepath"
@@ -530,4 +531,25 @@ func TestATranscriptThatKeepsComingBackIsAFailure(t *testing.T) {
 	<-done
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "kept coming back")
+}
+
+func TestATranscriptAlwaysThereStillEndsInAFailureOnTime(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	root := filepath.Join(t.TempDir(), "temp")
+	harness := claudecode.TranscriptDir(home, filepath.Join(root, "tmp-a"))
+	require.NoError(t, os.MkdirAll(harness, 0o700))
+	info, err := os.Lstat(harness)
+	require.NoError(t, err)
+	stats := 0
+	// A backend that has rewritten it before every single look: it is never
+	// seen gone, so only the deadline can end the loop.
+	o := taskOneOffs{mgr: &temp.Manager{Workdirs: &workdir.Provisioner{Root: root}}, quiet: 20 * time.Millisecond, poll: time.Millisecond,
+		statFn: func(string) (fs.FileInfo, error) { stats++; return info, nil }}
+	start := time.Now()
+	err = o.Forget("tmp-a", harness)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "kept coming back")
+	assert.Less(t, time.Since(start), time.Second, "ended by the deadline (80ms here), not by luck")
+	assert.Less(t, stats, 200, "and it sleeps a poll between passes rather than spinning")
 }

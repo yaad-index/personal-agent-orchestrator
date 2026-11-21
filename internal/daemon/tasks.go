@@ -107,6 +107,8 @@ type taskOneOffs struct {
 	// quiet is how long a removed transcript must stay gone, and poll how
 	// often that is checked; zero is 3s and 100ms.
 	quiet, poll time.Duration
+	// statFn replaces os.Lstat in the stay-gone loop, for tests.
+	statFn func(string) (fs.FileInfo, error)
 }
 
 func (o taskOneOffs) Recipes() []task.Recipe {
@@ -197,7 +199,12 @@ func (o taskOneOffs) Forget(agent, transcript string) error {
 	deadline := time.Now().Add(4 * quiet)
 	gone := time.Time{}
 	for {
-		if _, err := os.Lstat(clean); errors.Is(err, fs.ErrNotExist) {
+		// Bounded on every pass, whichever way the last one went, so a backend
+		// that keeps writing cannot keep this going.
+		if time.Now().After(deadline) {
+			return fmt.Errorf("%s kept coming back after removing it", clean)
+		}
+		if _, err := o.stat(clean); errors.Is(err, fs.ErrNotExist) {
 			if gone.IsZero() {
 				gone = time.Now()
 			}
@@ -209,13 +216,17 @@ func (o taskOneOffs) Forget(agent, transcript string) error {
 			if err := os.RemoveAll(clean); err != nil {
 				return err
 			}
-			continue
-		}
-		if time.Now().After(deadline) {
-			return fmt.Errorf("%s kept coming back after removing it", clean)
 		}
 		time.Sleep(poll)
 	}
+}
+
+// stat is os.Lstat unless a test gives another.
+func (o taskOneOffs) stat(path string) (fs.FileInfo, error) {
+	if o.statFn != nil {
+		return o.statFn(path)
+	}
+	return os.Lstat(path)
 }
 
 // oneOffName is a fresh name for an agent from recipe, as the manager would
