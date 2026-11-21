@@ -37,6 +37,7 @@ type CLI struct {
 	Channel  ChannelCmd  `cmd:"" help:"The node's chat channels and their default agents."`
 	Inbound  InboundCmd  `cmd:"" help:"Inbounds the node received but did not act on."`
 	Harvests HarvestsCmd `cmd:"" help:"Outputs harvested from killed temporary agents."`
+	Budget   BudgetCmd   `cmd:"" help:"Each account's budget as the running node last read it."`
 	Hook     HookCmd     `cmd:"" help:"The backend's pre-tool-call hook: ask the node's gate about an action."`
 }
 

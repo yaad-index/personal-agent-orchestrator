@@ -3,6 +3,8 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
+	"slices"
 	"time"
 )
 
@@ -53,6 +55,49 @@ type Profile struct {
 	// the node's configured accounts. The account's credential stays in the
 	// orchestrator config, never here (ADR-0015 point 4).
 	Account string `yaml:"account"`
+	// Budget is how the agent's headroom is judged from its account's figure.
+	Budget BudgetRule `yaml:"budget"`
+}
+
+// The windows of an account's figure a budget rule may weigh.
+const (
+	WindowWeek     = "week"
+	WindowFiveHour = "five_hour"
+)
+
+// BudgetRule is how an agent's headroom is judged from its account's figure
+// (ADR-0035): the windows weighed, and the share each must keep above. Its zero
+// value weighs every window with a floor of 0, so any share left in each is
+// headroom. It has no bearing on an unmetered account.
+type BudgetRule struct {
+	// Windows names the windows weighed; empty weighs them all.
+	Windows []string `yaml:"windows"`
+	// Floor is the share, in percent, each weighed window must keep above.
+	Floor float64 `yaml:"floor"`
+}
+
+// Validate reports whether the rule names known windows, each once, and a floor
+// from 0 up to but not including 100.
+func (r BudgetRule) Validate() error {
+	seen := map[string]bool{}
+	for _, w := range r.Windows {
+		if w != WindowWeek && w != WindowFiveHour {
+			return fmt.Errorf("window %q is not one of %s, %s", w, WindowWeek, WindowFiveHour)
+		}
+		if seen[w] {
+			return fmt.Errorf("window %q is named twice", w)
+		}
+		seen[w] = true
+	}
+	if r.Floor < 0 || r.Floor >= 100 {
+		return fmt.Errorf("floor %v must be at least 0 and below 100", r.Floor)
+	}
+	return nil
+}
+
+// Weighs reports whether the rule weighs window w.
+func (r BudgetRule) Weighs(w string) bool {
+	return len(r.Windows) == 0 || slices.Contains(r.Windows, w)
 }
 
 // Transcript locates and names the format of a backend's transcript.
