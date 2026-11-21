@@ -161,6 +161,16 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	if auth == nil {
 		auth = access.Matrix{Grants: grantStore}
 	}
+	// governorServes is whom the governor is serving, set once the layer exists.
+	var governorServes func() (access.Subject, bool)
+	if g := cfg.Orchestrator.Governor.Agent; g != "" {
+		auth = governorScoped{inner: auth, governor: g, requester: func() (access.Subject, bool) {
+			if governorServes == nil {
+				return access.Subject{}, false
+			}
+			return governorServes()
+		}}
+	}
 
 	var ctlOpts []control.Option
 	if opts.PollInterval > 0 {
@@ -335,6 +345,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	}
 
 	layer.SetGovernor(cfg.Orchestrator.Governor.Agent, cfg.Orchestrator.Governor.Prefix)
+	governorServes = servedBy(layer.GovernorRequester, ids.IsOperator)
 	if g := cfg.Orchestrator.Governor.Agent; g != "" {
 		// A request from another subject than the last starts the governor on a
 		// fresh context (ADR-0031 point 6): its session is stopped, and the

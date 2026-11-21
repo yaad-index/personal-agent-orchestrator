@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/local"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/config"
 )
 
@@ -65,4 +66,45 @@ func TestTheGovernorStartsOnItsFirstRequestAndAfreshForAnotherSubject(t *testing
 	require.NoError(t, err)
 	assert.Equal(t, "echo: [bob]: pause it", n.next(t).Text)
 	assert.NotEqual(t, first, panePID(t, n, "gov"), "another subject is answered in a new session")
+}
+
+func TestTheGovernorReadsOnlyWhatItsRequesterMaySee(t *testing.T) {
+	n := startNodeWith(t, map[string]string{"gov": "", "bee": "", "wasp": ""}, func(_, _ string, cfg *config.Config) {
+		cfg.Orchestrator.Governor = config.Governor{Agent: "gov"}
+	})
+	ctx := context.Background()
+	// The operator reaches gov and bee; the governor's own grants reach all three.
+	for _, g := range []local.GrantJSON{{Subject: "operator", Kind: "agent", Name: "gov"}, {Subject: "operator", Kind: "agent", Name: "bee"}, {Subject: "agent:gov", Kind: "agent", Tag: "team"}} {
+		_, err := n.client.AddGrant(ctx, g)
+		require.NoError(t, err)
+	}
+	_, err := n.client.RemoveGrant(ctx, local.GrantJSON{Subject: "operator", Kind: "agent", Tag: "team"})
+	require.NoError(t, err)
+	names := func(cs *mcp.ClientSession) []string {
+		out := mcpCall[struct {
+			Agents []struct {
+				Name string `json:"name"`
+			} `json:"agents"`
+		}](t, cs, "list_agents", nil)
+		var got []string
+		for _, a := range out.Agents {
+			got = append(got, a.Name)
+		}
+		return got
+	}
+
+	require.NoError(t, n.client.AgentAction(ctx, "gov", "start"))
+	cs := mcpSession(t, n, sessionEnv(t, n, "gov", "PAO_AGENT_TOKEN"))
+	assert.Empty(t, names(cs), "serving no request, the governor reads nothing")
+
+	_, err = n.client.Post(ctx, "alice", "/gpao list my agents", "name", "gov")
+	require.NoError(t, err)
+	assert.Equal(t, "echo: [alice]: list my agents", n.next(t).Text)
+	cs = mcpSession(t, n, sessionEnv(t, n, "gov", "PAO_AGENT_TOKEN"))
+	assert.ElementsMatch(t, []string{"gov", "bee"}, names(cs), "only what the requester may see: not wasp, though the governor's grants reach it")
+
+	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "send_message", Arguments: map[string]any{"name": "bee", "text": "stop"}})
+	require.NoError(t, err)
+	assert.True(t, res.IsError, "the governor sends to no agent, though its grants reach bee")
+	t.Logf("send refusal: %s", toolText(res))
 }

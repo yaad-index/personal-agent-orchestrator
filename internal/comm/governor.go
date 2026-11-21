@@ -111,3 +111,20 @@ func (l *Layer) serve(ctx context.Context, subject string) error {
 	l.governorSubject = subject
 	return nil
 }
+
+// GovernorRequester is the subject the governor is serving, and the channel the
+// request came from: who sent the message that started its current turn. ok is
+// false when the node has no governor or the governor is serving no request,
+// such as before its first or in a turn another agent started.
+func (l *Layer) GovernorRequester() (subject, channel string, ok bool) {
+	if l.governor == "" {
+		return "", "", false
+	}
+	l.mu.RLock()
+	t, has := l.origins[l.governor]
+	l.mu.RUnlock()
+	if !has || t.requester == "" {
+		return "", "", false
+	}
+	return t.requester, t.at.channel, true
+}
