@@ -1,6 +1,6 @@
 # ADR 0037: A task's secret leaves nothing in the harness's record
 
-**Status:** Proposed
+**Status:** Accepted (2026-11-21)
 
 Supersedes ADR-0036 (tasks, the unit of work pao dispatches). Restates its points 1, 2 and 4 to 6 and its deferred list unchanged, and carries over its consequences. Changes point 3, which now also removes the backend's transcript of a run that had a secret. Builds on ADR-0035, ADR-0006, ADR-0003, ADR-0016, ADR-0015 point 4 and ADR-0007, as ADR-0036 does.
 
