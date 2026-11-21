@@ -164,7 +164,7 @@ func TestAPressedProposalsButtonIsClosedOnce(t *testing.T) {
 
 func TestAPressOnAnythingButAnOpenProposalClosesNothing(t *testing.T) {
 	l, ch := pressSetup(t)
-	q, err := l.Notify(context.Background(), core.Message{Sender: "pao", Text: "may I?", Actions: []core.Action{{Label: "ALLOW", Command: "/pao allow q1"}}})
+	q, err := l.notify(context.Background(), core.Message{Sender: "pao", Text: "may I?", Actions: []core.Action{{Label: "ALLOW", Command: "/pao allow q1"}}})
 	require.NoError(t, err)
 	require.NotEmpty(t, q.ID)
 	propose(t, l, "/pao view a pause")

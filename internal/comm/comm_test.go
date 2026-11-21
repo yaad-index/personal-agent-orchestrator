@@ -318,7 +318,7 @@ func TestNotifyReachesTheHumanButNoAgent(t *testing.T) {
 	ch := &fakeChannel{name: "c"}
 	l.AddChannel(ch)
 
-	m, err := l.Notify(context.Background(), core.Message{Sender: "pao", Text: "raw pane: enter your token"})
+	m, err := l.notify(context.Background(), core.Message{Sender: "pao", Text: "raw pane: enter your token"})
 	require.NoError(t, err)
 
 	require.Len(t, ch.got, 1)
@@ -337,7 +337,7 @@ func TestNotifyOnReachesOneChannelAndAnUnknownOneStoresNothing(t *testing.T) {
 	l.AddChannel(one)
 	l.AddChannel(two)
 
-	m, err := l.NotifyOn(context.Background(), "two", core.Message{Sender: "pao", Text: "a replay for the viewer"})
+	m, err := l.notifyOn(context.Background(), "two", core.Message{Sender: "pao", Text: "a replay for the viewer"})
 	require.NoError(t, err)
 	assert.Empty(t, one.got, "only the channel named")
 	require.Len(t, two.got, 1)
@@ -345,7 +345,7 @@ func TestNotifyOnReachesOneChannelAndAnUnknownOneStoresNothing(t *testing.T) {
 	_, err = st.GetScoped("a", m.ID)
 	assert.ErrorIs(t, err, msgstore.ErrNotFound, "no agent can fetch it")
 
-	_, err = l.NotifyOn(context.Background(), "missing", core.Message{Sender: "pao", Text: "lost"})
+	_, err = l.notifyOn(context.Background(), "missing", core.Message{Sender: "pao", Text: "lost"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no channel", "refused before it was stored")
 	_, err = st.Resolve("a", "lost")
@@ -425,7 +425,7 @@ func TestBindNeedsARegisteredChannel(t *testing.T) {
 func TestBindingDoesNotNarrowPaoOwnMessages(t *testing.T) {
 	l, a, b := twoChannelLayer(t)
 	require.NoError(t, l.Bind("tmp", "b"))
-	_, err := l.Notify(context.Background(), core.Message{Sender: "pao", Text: "alert"})
+	_, err := l.notify(context.Background(), core.Message{Sender: "pao", Text: "alert"})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"alert"}, a.texts())
 	assert.Equal(t, []string{"alert"}, b.texts(), "an operator alert reaches every channel whoever is bound where")

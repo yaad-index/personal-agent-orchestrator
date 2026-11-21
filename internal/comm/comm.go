@@ -400,11 +400,14 @@ func (l *Layer) sendTo(ctx context.Context, name string, m core.Message) error {
 	return fmt.Errorf("channel %q is not registered", name)
 }
 
-// Notify sends pao's own message to the human (an alert, a raw pane). Unlike
+// notify sends pao's own message to every conversation of every channel, groups
+// among them. It is unexported so that nothing outside this package can reach a
+// group with a message meant for the operator: that is NotifyOperators, or
+// NotifyAgent for a message about one agent. Unlike
 // Send it is stored in no agent's scope, so an agent can neither quote nor fetch
 // it: what is for the operator alone (ADR-0007 point 2) never reaches an agent
 // through the message map.
-func (l *Layer) Notify(ctx context.Context, m core.Message) (core.Message, error) {
+func (l *Layer) notify(ctx context.Context, m core.Message) (core.Message, error) {
 	m.Kind = core.MessageSystemEvent
 	stored, err := l.store.Add(m)
 	if err != nil {
@@ -413,11 +416,10 @@ func (l *Layer) Notify(ctx context.Context, m core.Message) (core.Message, error
 	return stored, l.fanOut(ctx, stored)
 }
 
-// NotifyOn is Notify to the one channel named, for what is meant for the operator
-// on that channel alone (a replay of an agent's past output for the viewer who
-// asked for it). A channel that is not registered is an error, never a fall back to
+// notifyOn is notify to the one channel named, every conversation on it, groups
+// among them. A channel that is not registered is an error, never a fall back to
 // every channel.
-func (l *Layer) NotifyOn(ctx context.Context, channel string, m core.Message) (core.Message, error) {
+func (l *Layer) notifyOn(ctx context.Context, channel string, m core.Message) (core.Message, error) {
 	if !l.HasChannel(channel) {
 		return core.Message{}, fmt.Errorf("no channel %q", channel)
 	}

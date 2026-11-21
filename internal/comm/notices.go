@@ -103,9 +103,23 @@ func (l *Layer) noticeMay(at origin, m core.Message) bool {
 // stderr binding (ADR-0029 point 4). Never to a group, and never to every
 // conversation as Notify does. Like Notify, it is stored in no agent's scope.
 func (l *Layer) NotifyOperators(ctx context.Context, m core.Message) (core.Message, error) {
+	return l.notifyOperators(ctx, m, l.Channels())
+}
+
+// NotifyOperatorsOn is NotifyOperators on the one channel named: each operator's
+// private conversation there, never a group on it. A channel that is not
+// registered is an error, never a fall back to every channel.
+func (l *Layer) NotifyOperatorsOn(ctx context.Context, channel string, m core.Message) (core.Message, error) {
+	if !l.HasChannel(channel) {
+		return core.Message{}, fmt.Errorf("no channel %q", channel)
+	}
+	return l.notifyOperators(ctx, m, []string{channel})
+}
+
+func (l *Layer) notifyOperators(ctx context.Context, m core.Message, channels []string) (core.Message, error) {
 	m.Kind = core.MessageSystemEvent
 	var targets []target
-	for _, ch := range l.Channels() {
+	for _, ch := range channels {
 		targets = append(targets, target{kind: toPrivate, at: origin{channel: ch}})
 	}
 	stored, err := l.store.Add(m)

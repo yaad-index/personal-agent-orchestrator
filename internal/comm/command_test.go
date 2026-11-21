@@ -161,7 +161,7 @@ func TestSettledActionsAreClosedOnEveryChannelThatShowsButtons(t *testing.T) {
 	l.AddChannel(one)
 	l.AddChannel(two)
 
-	m, err := l.Notify(context.Background(), core.Message{Sender: "pao", Text: "may I?", Actions: []core.Action{{Label: "ALLOW", Command: "/pao allow q1"}}})
+	m, err := l.notify(context.Background(), core.Message{Sender: "pao", Text: "may I?", Actions: []core.Action{{Label: "ALLOW", Command: "/pao allow q1"}}})
 	require.NoError(t, err)
 	for _, c := range []*fakeChannel{plain, &one.fakeChannel, &two.fakeChannel} {
 		require.Len(t, c.got, 1)

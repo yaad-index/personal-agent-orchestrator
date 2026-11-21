@@ -136,7 +136,7 @@ func (o taskOneOffs) Spawn(ctx context.Context, owner access.Subject, recipe, se
 	if err != nil {
 		if p.Name != "" {
 			// Registered but not ready: it cannot take the task, so it goes.
-			_, _ = o.mgr.Kill(ctx, temp.KillRequest{Name: p.Name, Requester: owner})
+			_, _ = o.mgr.Kill(ctx, temp.KillRequest{Name: p.Name, Requester: owner, NoReport: true})
 		}
 		if req.Name != "" {
 			if werr := o.secrets.Wipe(req.Name); werr != nil {
@@ -159,7 +159,8 @@ func oneOffName(recipe string) (string, error) {
 }
 
 func (o taskOneOffs) Kill(ctx context.Context, owner access.Subject, agent string) (string, bool, error) {
-	res, err := o.mgr.Kill(ctx, temp.KillRequest{Name: agent, Requester: owner})
+	// The harvest goes in the task's log, so no one else is told of it.
+	res, err := o.mgr.Kill(ctx, temp.KillRequest{Name: agent, Requester: owner, NoReport: true})
 	if errors.Is(err, temp.ErrNotFound) {
 		if _, ok := o.mgr.Registry.TempOf(agent); !ok {
 			return "", true, nil

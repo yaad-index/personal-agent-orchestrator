@@ -174,7 +174,7 @@ func TestAMessagePaoSendsIsNamedByTheIdThePlatformGaveIt(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "1-out-1", comp)
 
-	_, err = l.NotifyOn(context.Background(), "chat", core.Message{Text: "alert"})
+	_, err = l.notifyOn(context.Background(), "chat", core.Message{Text: "alert"})
 	require.NoError(t, err)
 	assert.Len(t, nc.got, 2, "the targeted path goes through the same delivery")
 }

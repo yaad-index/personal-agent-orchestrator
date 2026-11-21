@@ -276,15 +276,16 @@ func (c *streamControl) takeDropped(agent string) int {
 	return 0
 }
 
-// notice shows the viewer a message of pao's on the channel the agent is bound to,
-// or on every channel when it is not bound.
+// notice shows the viewer a message of pao's: to each operator privately on the
+// channel the agent is bound to, or on every channel when it is not bound. Never
+// to a group, where readers other than the viewer would see it.
 func (c *streamControl) notice(ctx context.Context, agent, text string) error {
 	m := core.Message{Sender: "pao", Text: text}
 	if ch, ok := c.layer.Bound(agent); ok {
-		_, err := c.layer.NotifyOn(ctx, ch, m)
+		_, err := c.layer.NotifyOperatorsOn(ctx, ch, m)
 		return err
 	}
-	_, err := c.layer.Notify(ctx, m)
+	_, err := c.layer.NotifyOperators(ctx, m)
 	return err
 }
 

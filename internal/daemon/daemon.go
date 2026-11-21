@@ -562,13 +562,13 @@ func (h *launchHook) Launch(ctx context.Context, p core.Profile) error {
 	return err
 }
 
-// surface reports what a kill harvested to whoever asked for it: to the
-// operator as an operator-only message, to an agent as a message from pao.
+// surface reports what a kill harvested to whoever asked for it: to each
+// operator privately, never to a group, or to an agent as a message from pao.
 func surface(layer *comm.Layer, router *route.Router) temp.Surface {
 	return func(ctx context.Context, who access.Subject, text string) {
 		switch who.Kind {
 		case access.KindOperator:
-			if _, err := layer.Notify(ctx, core.Message{Sender: "pao", Text: text}); err != nil {
+			if _, err := layer.NotifyOperators(ctx, core.Message{Sender: "pao", Text: text}); err != nil {
 				slog.Warn("could not report a harvest to the operator", "error", err)
 			}
 		case access.KindAgent:
