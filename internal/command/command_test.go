@@ -15,9 +15,10 @@ import (
 
 // fakeOps records each call it is given.
 type fakeOps struct {
-	calls  []string
-	err    error
-	agents []Agent
+	calls    []string
+	err      error
+	agents   []Agent
+	bindings []Binding
 }
 
 func (f *fakeOps) Agents(context.Context) ([]Agent, error) {
@@ -38,6 +39,25 @@ func (f *fakeOps) View(_ context.Context, agent, action string) error {
 func (f *fakeOps) Decide(_ context.Context, id, decision, reason string) error {
 	f.calls = append(f.calls, "decide|"+id+"|"+decision+"|"+reason)
 	return f.err
+}
+
+func (f *fakeOps) Bind(_ context.Context, b Binding) (Binding, error) {
+	f.calls = append(f.calls, strings.Join([]string{"bind", b.Agent, b.Stream, b.To, b.Level, b.Prefix}, "|"))
+	if b.Stream == "" {
+		b.Stream = "stdout"
+	}
+	b.From = "runtime"
+	return b, f.err
+}
+
+func (f *fakeOps) Unbind(_ context.Context, b Binding) (Binding, error) {
+	f.calls = append(f.calls, strings.Join([]string{"unbind", b.Agent, b.Stream, b.To}, "|"))
+	return b, f.err
+}
+
+func (f *fakeOps) Bindings(_ context.Context, agent string) ([]Binding, error) {
+	f.calls = append(f.calls, "bindings|"+agent)
+	return f.bindings, f.err
 }
 
 func itoa(n int) string { return string(rune('0' + n)) }
@@ -209,5 +229,83 @@ func TestOperatorCommandsRefusedAsUnknown(t *testing.T) {
 		got := Run(context.Background(), ops, other, "/pao "+s.word)
 		assert.Empty(t, ops.calls, s.word)
 		assert.Equal(t, strings.ReplaceAll(Run(context.Background(), ops, other, "/pao nosuchword").Reply, "nosuchword", s.word), got.Reply, s.word)
+	}
+}
+
+func TestBind(t *testing.T) {
+	for text, want := range map[string]struct{ call, reply string }{
+		"/pao bind coder group:team":                 {"bind|coder||group:team||", "group:team follows coder's stdout"},
+		"/pao bind coder group:team 2":               {"bind|coder||group:team|2|", "group:team follows coder's stdout at level 2"},
+		"/pao bind coder group:team log":             {"bind|coder||group:team|log|", "group:team follows coder's stdout at level log"},
+		"/pao bind coder group:team 2 TA:":           {"bind|coder||group:team|2|TA:", `group:team follows coder's stdout at level 2, prefix "TA:"`},
+		"/pao bind coder group:team Team A:":         {"bind|coder||group:team||Team A:", `group:team follows coder's stdout, prefix "Team A:"`},
+		"/pao bind coder private:alice stderr":       {"bind|coder|stderr|private:alice||", "private:alice follows coder's stderr"},
+		"/pao bind coder private:alice stdout 3 C:":  {"bind|coder|stdout|private:alice|3|C:", `private:alice follows coder's stdout at level 3, prefix "C:"`},
+		"/pao bind coder private:alice stderr 3":     {"bind|coder|stderr|private:alice|3|", "private:alice follows coder's stderr at level 3"},
+		"  /pao   bind   coder   group:team   2   T": {"bind|coder||group:team|2|T", `group:team follows coder's stdout at level 2, prefix "T"`},
+	} {
+		ops := &fakeOps{}
+		res := Run(context.Background(), ops, operator, text)
+		assert.Equal(t, []string{want.call}, ops.calls, "%q", text)
+		assert.Equal(t, want.reply, res.Reply, "%q", text)
+		assert.Nil(t, res.Address)
+	}
+	for _, text := range []string{"/pao bind", "/pao bind coder"} {
+		ops := &fakeOps{}
+		res := Run(context.Background(), ops, operator, text)
+		assert.Empty(t, ops.calls, "%q", text)
+		assert.True(t, strings.HasPrefix(res.Reply, "usage: /pao bind "), "%q: %q", text, res.Reply)
+	}
+	res := Run(context.Background(), &fakeOps{err: errors.New("no admitted group is named \"x\"")}, operator, "/pao bind coder group:x")
+	assert.Equal(t, `no admitted group is named "x"`, res.Reply, "a refusal is said as the operation says it")
+}
+
+func TestUnbind(t *testing.T) {
+	for text, want := range map[string]struct{ call, reply string }{
+		"/pao unbind coder group:team":           {"unbind|coder||group:team", "group:team no longer follows coder's stdout"},
+		"/pao unbind coder private:alice stderr": {"unbind|coder|stderr|private:alice", "private:alice no longer follows coder's stderr"},
+		"/pao unbind coder group:team stdout":    {"unbind|coder|stdout|group:team", "group:team no longer follows coder's stdout"},
+	} {
+		ops := &fakeOps{}
+		res := Run(context.Background(), ops, operator, text)
+		assert.Equal(t, []string{want.call}, ops.calls, "%q", text)
+		assert.Equal(t, want.reply, res.Reply, "%q", text)
+	}
+	for _, text := range []string{"/pao unbind", "/pao unbind coder", "/pao unbind coder group:team stdin", "/pao unbind coder group:team stderr x"} {
+		ops := &fakeOps{}
+		res := Run(context.Background(), ops, operator, text)
+		assert.Empty(t, ops.calls, "%q", text)
+		assert.True(t, strings.HasPrefix(res.Reply, "usage: /pao unbind "), "%q: %q", text, res.Reply)
+	}
+}
+
+func TestBindings(t *testing.T) {
+	ops := &fakeOps{bindings: []Binding{
+		{Agent: "coder", Stream: "stdout", To: "group:team", Level: "2", From: "config"},
+		{Agent: "coder", Stream: "stderr", To: "private:alice", From: "runtime"},
+		{Agent: "coder", Stream: "stdout", To: "channel:local", Level: "log", Prefix: "C:", From: "runtime"},
+	}}
+	res := Run(context.Background(), ops, operator, "/pao bindings coder")
+	assert.Equal(t, []string{"bindings|coder"}, ops.calls)
+	assert.Equal(t, "standing bindings:\n"+
+		"group:team follows coder's stdout at level 2 (config)\n"+
+		"private:alice follows coder's stderr (runtime)\n"+
+		`channel:local follows coder's stdout at level log, prefix "C:" (runtime)`, res.Reply)
+
+	ops = &fakeOps{}
+	res = Run(context.Background(), ops, operator, "/pao bindings")
+	assert.Equal(t, []string{"bindings|"}, ops.calls)
+	assert.Equal(t, "no standing bindings", res.Reply)
+
+	res = Run(context.Background(), &fakeOps{}, operator, "/pao bindings a b")
+	assert.True(t, strings.HasPrefix(res.Reply, "usage: /pao bindings"), res.Reply)
+}
+
+func TestBindingCommandsAreTheOperatorsOnly(t *testing.T) {
+	for _, text := range []string{"/pao bind coder group:team", "/pao unbind coder group:team", "/pao bindings"} {
+		ops := &fakeOps{}
+		res := Run(context.Background(), ops, other, text)
+		assert.Empty(t, ops.calls, "%q", text)
+		assert.Contains(t, res.Reply, "unknown command", "%q", text)
 	}
 }
