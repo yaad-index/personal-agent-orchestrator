@@ -21,7 +21,7 @@ What an operator may do is already enforced where it counts. A proposal runs onl
 
 5. **One governor per node, shared by its operators; it reads under its own grants.** Replaced.
    - The governor's reads are checked against its own grants alone, whoever it is serving. They are no longer narrowed to what the requester may see.
-   - Channels are listed to it whole. A channel is not an access-matrix resource (ADR-0012), so no grant names one.
+   - Channels are listed to it whole, for now. ADR-0023 point 8 makes a channel a resource in the access matrix, but that point is not built: the matrix has no channel kind, so no grant can name one. Once it is built, the governor reads channels under its own grants, as it reads agents.
    - A read made outside a request still returns nothing. The governor has nothing to match then.
 
 ## How this meets the rules on hiding what exists
