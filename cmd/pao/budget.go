@@ -35,8 +35,14 @@ func (c BudgetCmd) run(w io.Writer) error {
 		switch {
 		case a.State == "readable" && a.Week != nil && a.FiveHour != nil:
 			line = fmt.Sprintf("week %.0f%% left\tfive-hour %.0f%% left\tread %s", a.Week.Left, a.FiveHour.Left, a.ReadAt.Format(time.RFC3339))
+			if a.Retrying != "" {
+				line += fmt.Sprintf(" (last read failed: %s; again at %s)", a.Retrying, a.RetryAt.Format(time.RFC3339))
+			}
 		case a.State == "fault":
 			line = fmt.Sprintf("FAULT since %s\t%s\t", a.Since.Format(time.RFC3339), a.Fault)
+			if !a.RetryAt.IsZero() {
+				line = fmt.Sprintf("FAULT since %s\t%s\tagain at %s", a.Since.Format(time.RFC3339), a.Fault, a.RetryAt.Format(time.RFC3339))
+			}
 		default:
 			line = "no budget\t\t"
 		}

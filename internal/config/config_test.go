@@ -590,7 +590,7 @@ func TestAccountsAreLoadedAndAProfileNamesOne(t *testing.T) {
 	assert.True(t, filepath.IsAbs(creds), "a relative credentials path is resolved against the config's directory")
 	assert.Equal(t, "creds.json", filepath.Base(creds))
 	assert.Equal(t, []Account{{Name: "sub", Metered: &yes, Reader: ReaderClaudeSubscription, Credentials: creds}, {Name: "local", Metered: &no}}, cfg.Orchestrator.Accounts)
-	assert.Equal(t, Budget{Poll: DefaultBudgetPoll}, cfg.Orchestrator.Budget, "budget defaults")
+	assert.Equal(t, Budget{Poll: DefaultBudgetPoll, MaxStale: DefaultBudgetMaxStale}, cfg.Orchestrator.Budget, "budget defaults")
 	assert.Equal(t, "sub", cfg.Profiles[0].Account)
 	a, ok := cfg.Orchestrator.Account("local")
 	require.True(t, ok)
@@ -619,6 +619,7 @@ func TestAccountsRejects(t *testing.T) {
 		"unmetered with creds":   {"accounts:\n  - name: a\n    metered: false\n    credentials: c.json\n", "", "this one is unmetered"},
 		"negative poll":          {"budget:\n  poll: -1s\n", "", "budget.poll must be positive"},
 		"node-wide floor":        {"budget:\n  floor: 10\n", "", "floor"},
+		"stale below poll":       {"budget:\n  poll: 10m\n  max_stale: 5m\n", "", "max_stale must be at least budget.poll"},
 		"unknown account":        {"accounts:\n  - name: a\n    metered: false\n", "account: b\n", `account "b" is not a configured account`},
 		"account with none":      {"", "account: b\n", `account "b" is not a configured account`},
 	} {
@@ -646,4 +647,10 @@ func TestAProfilesBudgetRuleRejects(t *testing.T) {
 		require.Error(t, err, name)
 		assert.Contains(t, err.Error(), c.want, name)
 	}
+}
+
+func TestALongPollRaisesTheDefaultStaleLimitWithIt(t *testing.T) {
+	cfg, err := accountsConfig(t, "budget:\n  poll: 30m\n", "")
+	require.NoError(t, err)
+	assert.Equal(t, Budget{Poll: 30 * time.Minute, MaxStale: 30 * time.Minute}, cfg.Orchestrator.Budget)
 }

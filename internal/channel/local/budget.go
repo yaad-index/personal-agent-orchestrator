@@ -22,7 +22,11 @@ type BudgetJSON struct {
 	FiveHour *BudgetWindowJSON `json:"five_hour,omitempty"`
 	ReadAt   time.Time         `json:"read_at,omitzero"`
 	Fault    string            `json:"fault,omitempty"`
-	Since    time.Time         `json:"since"`
+	// Retrying says why the last read failed for a reason that passes, while
+	// the last good figure is kept; RetryAt is when it is read again.
+	Retrying string    `json:"retrying,omitempty"`
+	RetryAt  time.Time `json:"retry_at,omitzero"`
+	Since    time.Time `json:"since"`
 	// Headroom says whether work may be dispatched to an agent on the account.
 	Headroom bool `json:"headroom"`
 }

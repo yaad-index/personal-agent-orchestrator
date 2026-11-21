@@ -113,14 +113,21 @@ type Account struct {
 
 // Budget is how accounts' figures are kept read.
 type Budget struct {
-	// Poll is how often each metered account is read. Default 60s. How an
+	// Poll is how often each metered account is read. Default 5m. How an
 	// agent's headroom is judged from the figure is the agent's own, in its
 	// profile's budget.
 	Poll time.Duration `yaml:"poll"`
+	// MaxStale is how old the last good figure may grow while reads fail for a
+	// reason that passes (a rate limit, a server error, no connection) before
+	// the account is at fault. Default 15m; never less than Poll.
+	MaxStale time.Duration `yaml:"max_stale"`
 }
 
-// DefaultBudgetPoll is how often an account is read when budget.poll is unset.
-const DefaultBudgetPoll = 60 * time.Second
+// The budget defaults.
+const (
+	DefaultBudgetPoll     = 5 * time.Minute
+	DefaultBudgetMaxStale = 15 * time.Minute
+)
 
 // ReaderClaudeSubscription reads a subscription account of the coding-agent
 // harness: the share left of its weekly and five-hour windows.
@@ -620,6 +627,12 @@ func load(path string, withMesh bool) (*Config, error) {
 	}
 	if o.Budget.Poll < 0 {
 		return nil, fmt.Errorf("%s: budget.poll must be positive", path)
+	}
+	if o.Budget.MaxStale == 0 {
+		o.Budget.MaxStale = max(DefaultBudgetMaxStale, o.Budget.Poll)
+	}
+	if o.Budget.MaxStale < o.Budget.Poll {
+		return nil, fmt.Errorf("%s: budget.max_stale must be at least budget.poll", path)
 	}
 
 	var meshDoc *mesh.Document
