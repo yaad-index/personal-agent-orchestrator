@@ -26,8 +26,9 @@ const (
 	toPrivate
 	// toStderr is a conversation a stderr binding names.
 	toStderr
-	// toProposal is a private conversation of the subject a proposal is for.
-	toProposal
+	// toSubject is a private conversation of one subject: the one a proposal
+	// is for, or the sender of a command a later answer is for.
+	toSubject
 )
 
 // target is one place an agent's message goes.
@@ -247,7 +248,7 @@ func (l *Layer) routed(channel string, m core.Message, r outRoute) []string {
 			for _, c := range l.privately(channel, m) {
 				add(c)
 			}
-		case toStderr, toProposal:
+		case toStderr, toSubject:
 			if l.noticeMay(t.at, m) {
 				add(t.at.conversation)
 			}

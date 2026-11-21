@@ -12,11 +12,12 @@ import (
 )
 
 // chatCommands is what pao's chat commands run (ADR-0026 point 2): the operator
-// surface's own stream, view and gate operations, with the same checks, so a
+// surface's own stream, binding, view, temporary-agent and gate operations, with the same checks, so a
 // command can do nothing from chat that the operator could not do at the node.
 type chatCommands struct {
 	streams  *streamAPI
 	standing *standingAPI
+	temps    *tempAPI
 	decider  *gateDecider
 	// agents is the node's agent list: this node's agents and, on a master, those
 	// in the mesh directory.
@@ -79,4 +80,25 @@ func (c chatCommands) Bindings(ctx context.Context, agent string) ([]command.Bin
 
 func commandBinding(b local.StandingJSON) command.Binding {
 	return command.Binding{Agent: b.Agent, Stream: b.Stream, To: b.To, Level: b.Level, Prefix: b.Prefix, From: b.From}
+}
+
+// Spawn is the operator surface's spawn, on this node.
+func (c chatCommands) Spawn(ctx context.Context, recipe, name, channel string) (string, error) {
+	return c.temps.Spawn(ctx, recipe, name, channel, "", nil)
+}
+
+// Kill is the operator surface's kill: on this node, or on the node of the mesh
+// that holds the agent. The answer carries the harvest report where this node
+// has it: a kill on another node reports only the harvest's id.
+func (c chatCommands) Kill(ctx context.Context, name string) (command.Killed, error) {
+	here := c.temps.dir == nil || c.temps.holds(name)
+	k, err := c.temps.Kill(ctx, name)
+	if err != nil {
+		return command.Killed{}, err
+	}
+	out := command.Killed{Harvest: k.Harvest.ID, WorkdirKept: k.WorkdirKept}
+	if here {
+		out.Report = k.Harvest.Summary()
+	}
+	return out, nil
 }

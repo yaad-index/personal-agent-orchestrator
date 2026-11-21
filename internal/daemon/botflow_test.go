@@ -772,3 +772,52 @@ func TestTheOperatorBindsAnAgentFromChat(t *testing.T) {
 		assert.NotContains(t, s, "standing bindings")
 	}
 }
+
+func TestTheOperatorSpawnsAndKillsATemporaryAgentFromChat(t *testing.T) {
+	svc := &service{}
+	ts := httptest.NewServer(http.HandlerFunc(svc.handler))
+	t.Cleanup(ts.Close)
+	t.Setenv("PAO_TEST_BOT_TOKEN", "tok-1")
+	const person, group = 4242, -700
+
+	n := startNodeWith(t, map[string]string{"bee": ""}, func(dir, script string, cfg *config.Config) {
+		rdir := filepath.Join(dir, "recipes")
+		require.NoError(t, os.MkdirAll(rdir, 0o700))
+		require.NoError(t, os.WriteFile(filepath.Join(rdir, "fake.yaml"), []byte(strings.ReplaceAll(goodRecipe("fake"), "@@SCRIPT@@", script)), 0o600))
+		cfg.Orchestrator.RecipesDir = rdir
+		cfg.Orchestrator.Channels = []config.Channel{{ID: 1, Name: "chat", Kind: "bot", CredentialEnv: "PAO_TEST_BOT_TOKEN",
+			Options: map[string]any{"endpoint": ts.URL + "/bot{token}/{method}", "poll_timeout": 0},
+			Groups:  []config.Group{{ID: strconv.Itoa(group), Name: "team", Members: config.MembersOperators}}}}
+	}, func(o *Options) { o.Adapters = builtin.Table() })
+	ctx := context.Background()
+
+	require.NoError(t, n.client.AddSubject(ctx, "alice"))
+	inv, err := n.client.Invite(ctx, "alice", time.Hour)
+	require.NoError(t, err)
+	svc.push(chatUpdate(1, 10, person, "/register "+inv.Secret))
+	lineWith(t, svc, float64(person), "registered.")
+	require.NoError(t, n.client.SetOperator(ctx, "alice", true))
+
+	svc.push(groupUpdate(2, 11, person, group, "/pao spawn fake scout"))
+	assert.Equal(t, "spawning an agent from recipe fake; you will be told when it is ready", lineWith(t, svc, group, "spawning"))
+	assert.Equal(t, "[pao]: scout is ready, spawned from recipe fake", lineWith(t, svc, person, "scout is ready"), "told privately, though asked in the group")
+	assert.Nil(t, svc.sentWith(group, "scout is ready"))
+	a, ok := agentByName(t, n, "scout")
+	require.True(t, ok)
+	assert.Equal(t, "chat", a.Channel, "its stream is bound to the channel the spawn came from")
+
+	svc.push(chatUpdate(3, 12, person, "/pao agent scout hi"))
+	lineWith(t, svc, person, "echo: [alice]: hi")
+
+	svc.push(chatUpdate(4, 13, person, "/pao kill bee"))
+	assert.Equal(t, "no such temporary agent", lineWith(t, svc, person, "no such temporary agent"), "a configured agent is not killed from chat")
+
+	svc.push(chatUpdate(5, 14, person, "/pao kill scout"))
+	killed := lineWith(t, svc, person, "scout is killed")
+	assert.Regexp(t, `^scout is killed; its outputs are harvested as \S+\nharvested \d+ file\(s\), \d+ bytes, from "scout" as \S+\n`, killed, "with the report, in the one answer")
+	_, ok = agentByName(t, n, "scout")
+	assert.False(t, ok)
+
+	svc.push(chatUpdate(6, 15, person, "/pao spawn nope"))
+	lineWith(t, svc, person, "spawn from recipe nope failed: ")
+}
