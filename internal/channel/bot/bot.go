@@ -25,6 +25,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	api "github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -46,6 +47,9 @@ const (
 	maxPayload = 64
 	// maxPressAnswer is the longest answer to a press, in characters.
 	maxPressAnswer = 200
+	// pressAnsweredPrivately is the answer to a press whose reply was sent to the
+	// presser's private chat instead.
+	pressAnsweredPrivately = "done: the answer is in your private chat with the bot"
 	// maxShown is how many messages' buttons are kept for closing. Past it, the
 	// oldest are forgotten, and a press on one decides nothing anyway.
 	maxShown = 256
@@ -441,6 +445,12 @@ func cutCommand(text, cmd string) (string, bool) {
 	return "", false
 }
 
+// fitsPressAnswer reports whether a reply fits the brief notice a press is
+// answered with: one line of at most maxPressAnswer characters.
+func fitsPressAnswer(s string) bool {
+	return !strings.Contains(s, "\n") && utf8.RuneCountInString(s) <= maxPressAnswer
+}
+
 func (b *Bot) reply(ctx context.Context, chat int64, text string) {
 	if _, err := b.send(ctx, chat, text, nil); err != nil {
 		slog.Warn("channel could not reply", "channel", b.name, "error", err)
@@ -607,9 +617,22 @@ func closed(text, outcome string, limit int) string {
 // press hands a button press to the layer as the command the button carries,
 // from the service's authenticated sender of the press, and answers the press
 // with the layer's reply, which only the presser sees (ADR-0027 points 4 and 5).
+//
+// The answer to a press is a notice the service shows briefly over the chat, one
+// short line. A reply that does not fit one, such as an agent list, is sent in
+// full as a message to the presser's private chat with the bot, and the notice
+// says where it went. A reply that cannot be sent there falls back to the notice,
+// cut short.
 func (b *Bot) press(ctx context.Context, q *models.CallbackQuery) {
 	answer := ""
 	defer func() {
+		if !fitsPressAnswer(answer) {
+			if _, err := b.send(ctx, q.From.ID, answer, nil); err != nil {
+				slog.Warn("channel could not send a press's answer to the presser's private chat", "channel", b.name, "error", err)
+			} else {
+				answer = pressAnsweredPrivately
+			}
+		}
 		if _, err := b.api.AnswerCallbackQuery(ctx, &api.AnswerCallbackQueryParams{
 			CallbackQueryID: q.ID, Text: truncate(answer, maxPressAnswer),
 		}); err != nil {

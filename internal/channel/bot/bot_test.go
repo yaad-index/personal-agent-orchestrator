@@ -880,12 +880,45 @@ func TestAPressReachesTheLayerAsTheCommandFromThePresserAndIsAnsweredToThemAlone
 	assert.Empty(t, s.snapshot(&s.sent), "the answer is the press's own, not a message to the chat")
 }
 
-func TestAPressAnswerIsCutToWhatAPressAnswerHolds(t *testing.T) {
+func TestAReplyThatDoesNotFitAPressAnswerIsSentToThePresserPrivately(t *testing.T) {
+	for name, c := range map[string]struct {
+		reply string
+		chat  int64
+		kind  string
+	}{
+		"long":                 {strings.Repeat("y", 500), 42, "private"},
+		"several lines":        {"agents you may reach:\nbee: stopped", 42, "private"},
+		"pressed in a group":   {"agents you may reach:\nbee: stopped", -500, "group"},
+		"one line at the edge": {strings.Repeat("y", maxPressAnswer+1), 42, "private"},
+	} {
+		s, h := newServer(t), &handler{res: comm.ChannelResult{Reply: c.reply}}
+		start(t, s, h, nil)
+		s.queue(press(1, "cb1", 42, c.chat, c.kind, 101, "/pao agents"))
+		waitFor(t, func() bool { return len(s.snapshot(&s.answers)) == 1 }, "the press is answered")
+		sent := s.snapshot(&s.sent)
+		require.Len(t, sent, 1, name)
+		assert.Equal(t, "42", sent[0]["chat_id"], "%s: the presser's private chat, never the chat pressed in", name)
+		assert.Equal(t, c.reply, sent[0]["text"], "%s: in full", name)
+		assert.Equal(t, pressAnsweredPrivately, s.snapshot(&s.answers)[0]["text"], name)
+	}
+}
+
+func TestAReplyThatFitsStaysThePressAnswer(t *testing.T) {
+	s, h := newServer(t), &handler{res: comm.ChannelResult{Reply: strings.Repeat("y", maxPressAnswer)}}
+	start(t, s, h, nil)
+	s.queue(press(1, "cb1", 42, 42, "private", 101, "/pao allow q1"))
+	waitFor(t, func() bool { return len(s.snapshot(&s.answers)) == 1 }, "the press is answered")
+	assert.Len(t, s.snapshot(&s.answers)[0]["text"], maxPressAnswer)
+	assert.Empty(t, s.snapshot(&s.sent))
+}
+
+func TestAPressAnswerThatCannotReachThePresserIsCutToWhatAPressAnswerHolds(t *testing.T) {
 	s, h := newServer(t), &handler{res: comm.ChannelResult{Reply: strings.Repeat("y", 500)}}
+	s.failSend[42] = true
 	start(t, s, h, nil)
 	s.queue(press(1, "cb1", 42, 42, "private", 101, "/pao help"))
 	waitFor(t, func() bool { return len(s.snapshot(&s.answers)) == 1 }, "the press is answered")
-	assert.Len(t, s.snapshot(&s.answers)[0]["text"], maxPressAnswer)
+	assert.Len(t, s.snapshot(&s.answers)[0]["text"], maxPressAnswer, "the notice, cut short")
 }
 
 func TestAPressInAGroupOrOnNoMessageIsMarkedAGroup(t *testing.T) {

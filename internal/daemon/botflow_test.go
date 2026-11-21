@@ -864,3 +864,28 @@ func TestAGovernorRequestFromChatIsAnsweredToTheRequesterAlone(t *testing.T) {
 		return false
 	}, 10*time.Second, 20*time.Millisecond, "the bind is refused in the operation's words")
 }
+
+func TestAPressOfACommandWithAListIsAnsweredInThePressersPrivateChat(t *testing.T) {
+	svc := &service{}
+	ts := httptest.NewServer(http.HandlerFunc(svc.handler))
+	t.Cleanup(ts.Close)
+	t.Setenv("PAO_TEST_BOT_TOKEN", "tok-1")
+	const person = 4242
+	n := startNodeWith(t, map[string]string{"bee": "", "wasp": ""}, func(_, _ string, cfg *config.Config) {
+		cfg.Orchestrator.Channels = []config.Channel{{ID: 1, Name: "chat", Kind: "bot", CredentialEnv: "PAO_TEST_BOT_TOKEN",
+			Options: map[string]any{"endpoint": ts.URL + "/bot{token}/{method}", "poll_timeout": 0}}}
+	}, func(o *Options) { o.Adapters = builtin.Table() })
+	ctx := context.Background()
+	require.NoError(t, n.client.AddSubject(ctx, "alice"))
+	inv, err := n.client.Invite(ctx, "alice", time.Hour)
+	require.NoError(t, err)
+	svc.push(chatUpdate(1, 10, person, "/register "+inv.Secret))
+	lineWith(t, svc, float64(person), "registered.")
+	require.NoError(t, n.client.SetOperator(ctx, "alice", true))
+
+	svc.push(pressUpdate(2, 77, person, "cb-1", "/pao agents"))
+	assert.Equal(t, "agents you may reach:\nbee: stopped; tags team\nwasp: stopped; tags team", lineWith(t, svc, person, "agents you may reach"),
+		"the command ran as the presser, and its whole answer is a message in the presser's chat")
+	require.Eventually(t, func() bool { return len(svc.calls("answerCallbackQuery")) == 1 }, 5*time.Second, 20*time.Millisecond)
+	assert.Equal(t, "done: the answer is in your private chat with the bot", svc.calls("answerCallbackQuery")[0]["text"])
+}
