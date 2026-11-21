@@ -2,18 +2,24 @@ package daemon
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"time"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/access"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/local"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/config"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/registry"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/route"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/runsecret"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/task"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/temp"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/upstream"
 )
 
 // taskAPI is the task service as the local channel serves it. The channel's
@@ -91,7 +97,10 @@ func (f taskFleet) Deliver(ctx context.Context, agent, text string) error {
 // taskOneOffs spawns and kills the temporary agents pao starts for tasks,
 // through the temporary-agent manager, with the task's owner as requester: the
 // access matrix and the gate judge each as the owner's own spawn or kill.
-type taskOneOffs struct{ mgr *temp.Manager }
+type taskOneOffs struct {
+	mgr     *temp.Manager
+	secrets *runsecret.Store
+}
 
 func (o taskOneOffs) Recipes() []task.Recipe {
 	set, err := o.mgr.Recipes()
@@ -107,18 +116,46 @@ func (o taskOneOffs) Recipes() []task.Recipe {
 	return out
 }
 
-func (o taskOneOffs) Spawn(ctx context.Context, owner access.Subject, recipe string) (string, error) {
+func (o taskOneOffs) Spawn(ctx context.Context, owner access.Subject, recipe, secret string) (string, error) {
+	req := temp.SpawnRequest{Recipe: recipe, Requester: owner, Channel: "local"}
+	if secret != "" {
+		// The agent's name is chosen first, so its secret is in place before
+		// it starts: its environment is made once, at launch.
+		name, err := oneOffName(recipe)
+		if err != nil {
+			return "", err
+		}
+		if _, err := o.secrets.Materialize(name, secret); err != nil {
+			return "", err
+		}
+		req.Name = name
+	}
 	// A task's one-off speaks on the local channel, the operator's own, whatever
 	// other channels the node has.
-	p, err := o.mgr.Spawn(ctx, temp.SpawnRequest{Recipe: recipe, Requester: owner, Channel: "local"})
+	p, err := o.mgr.Spawn(ctx, req)
 	if err != nil {
 		if p.Name != "" {
 			// Registered but not ready: it cannot take the task, so it goes.
 			_, _ = o.mgr.Kill(ctx, temp.KillRequest{Name: p.Name, Requester: owner})
 		}
+		if req.Name != "" {
+			if werr := o.secrets.Wipe(req.Name); werr != nil {
+				slog.Warn("dispatch: could not wipe the secret of a one-off that did not start", "agent", req.Name, "error", werr)
+			}
+		}
 		return "", err
 	}
 	return p.Name, nil
+}
+
+// oneOffName is a fresh name for an agent from recipe, as the manager would
+// choose.
+func oneOffName(recipe string) (string, error) {
+	var b [3]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return recipe + "-" + hex.EncodeToString(b[:]), nil
 }
 
 func (o taskOneOffs) Kill(ctx context.Context, owner access.Subject, agent string) (string, bool, error) {
@@ -154,4 +191,52 @@ func (f taskFleet) Tell(ctx context.Context, agent, text string) error {
 		return nil
 	}
 	return f.Deliver(ctx, agent, text)
+}
+
+// resolveSecret reads a secret's value from where the orchestrator config holds
+// it: a variable's value as read at start, before it was taken out of the
+// environment, or a file's as it is now. Its errors name the secret and where
+// it was looked for, never a value.
+func resolveSecret(o config.Orchestrator, fromEnv map[string]string) func(name string) ([]byte, error) {
+	return func(name string) ([]byte, error) {
+		s, ok := o.Secret(name)
+		switch {
+		case !ok:
+			return nil, fmt.Errorf("no secret named %q is configured", name)
+		case s.Env != "":
+			v := fromEnv[name]
+			if v == "" {
+				return nil, fmt.Errorf("secret %q: variable %s is empty", name, s.Env)
+			}
+			return []byte(v), nil
+		default:
+			b, err := os.ReadFile(s.File)
+			if err != nil {
+				return nil, fmt.Errorf("secret %q: %w", name, err)
+			}
+			return b, nil
+		}
+	}
+}
+
+// taskTools says which tool names are pao's proxied tools, and whether an
+// agent's own access reaches one.
+type taskTools struct {
+	auth  access.Authorizer
+	tools map[string][]string
+}
+
+func newTaskTools(auth access.Authorizer, ups []config.MCPUpstream) taskTools {
+	t := taskTools{auth: auth, tools: map[string][]string{}}
+	for _, u := range upstream.Offered(ups) {
+		t.tools[u.Name] = u.Tags
+	}
+	return t
+}
+
+func (t taskTools) Proxied(tool string) bool { _, ok := t.tools[tool]; return ok }
+
+func (t taskTools) Reaches(agent, tool string) bool {
+	tags, ok := t.tools[tool]
+	return ok && access.Allowed(t.auth, access.Agent(agent), access.CallTool, access.ToolResource(tool, tags))
 }

@@ -44,7 +44,8 @@ var at = time.Date(2026, 11, 21, 18, 30, 0, 0, time.UTC)
 func service(t *testing.T, g grants) (*Service, *fakeGate) {
 	t.Helper()
 	fg := &fakeGate{}
-	return &Service{Store: &Store{Root: filepath.Join(t.TempDir(), "tasks")}, Auth: access.Matrix{Grants: g}, Gate: fg, Now: func() time.Time { return at }}, fg
+	return &Service{Store: &Store{Root: filepath.Join(t.TempDir(), "tasks")}, Auth: access.Matrix{Grants: g}, Gate: fg, Now: func() time.Time { return at },
+		HasSecret: func(name string) bool { return name == "report-api" }}, fg
 }
 
 func newTask(tags ...string) New {
@@ -325,4 +326,17 @@ func TestABrokenFileIsNotFoundToAnyoneButTheOperator(t *testing.T) {
 		require.Error(t, err, name)
 		assert.NotErrorIs(t, err, ErrNotFound, "%s: the operator is told the file is broken", name)
 	}
+}
+
+func TestATaskNamingASecretTheConfigDoesNotHoldIsRefused(t *testing.T) {
+	s, _ := service(t, grants{"operator": {tagGrant("operator", "r")}})
+	n := newTask("r")
+	n.Attachments.Secret = "unknown"
+	_, err := s.Create(context.Background(), access.Operator, n)
+	require.ErrorIs(t, err, ErrBadRequest)
+	assert.Contains(t, err.Error(), `no secret named "unknown" is configured`)
+	s.HasSecret = nil
+	n.Attachments.Secret = "report-api"
+	_, err = s.Create(context.Background(), access.Operator, n)
+	assert.ErrorIs(t, err, ErrBadRequest, "a node with no secrets holds none")
 }

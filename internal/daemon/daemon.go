@@ -46,6 +46,7 @@ import (
 	"github.com/yaad-index/personal-agent-orchestrator/internal/registry"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/rejected"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/route"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/runsecret"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/task"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/temp"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/tmux"
@@ -115,6 +116,20 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	for _, u := range cfg.Orchestrator.MCPUpstreams {
 		if u.CredentialEnv != "" {
 			_ = os.Unsetenv(u.CredentialEnv)
+		}
+	}
+	// A task's secret held in a variable likewise: read once and taken out of
+	// the environment, so no agent inherits it; only the run that names it is
+	// given it, as a file (ADR-0036 point 3).
+	secretValues := map[string]string{}
+	for _, sec := range cfg.Orchestrator.Secrets {
+		if sec.Env != "" {
+			secretValues[sec.Name] = os.Getenv(sec.Env)
+		}
+	}
+	for _, sec := range cfg.Orchestrator.Secrets {
+		if sec.Env != "" {
+			_ = os.Unsetenv(sec.Env)
 		}
 	}
 	proxy := upstream.NewCatalog(upstreams...)
@@ -204,13 +219,20 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 			s.Forget(access.Agent(agent))
 		}
 	}
+	// A task's secret is put in place for the one run that needs it, and gone
+	// when that agent's session ends; at start no run is under way, so whatever
+	// is left is swept (ADR-0036 point 3).
+	secrets := &runsecret.Store{Dir: filepath.Join(cfg.Orchestrator.StateDir, "run-secrets"), Resolve: resolveSecret(cfg.Orchestrator, secretValues)}
+	if err := secrets.Sweep(); err != nil {
+		return fmt.Errorf("sweep run secrets: %w", err)
+	}
 	ctlOpts = append(ctlOpts,
 		control.WithEnv(func(agent string) []string {
 			env := []string{"PAO_AGENT=" + agent, "PAO_GATE_SOCKET=" + gateSock, backend.EnvAgentToken + "=" + tokens.Mint(agent)}
 			if u := mcpURL.Load(); u != nil {
 				env = append(env, backend.EnvMCPURL+"="+*u)
 			}
-			return env
+			return append(env, secrets.Env(agent)...)
 		}),
 		control.WithCommand(func(p core.Profile) (string, []string, error) {
 			s, err := backends.Table().Command(p, launch)
@@ -234,6 +256,9 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		control.WithOnStop(func(agent string) {
 			tokens.Revoke(agent)
 			forgetMCP(agent)
+			if err := secrets.Wipe(agent); err != nil {
+				slog.Warn("could not wipe an agent's run secrets", "agent", agent, "error", err)
+			}
 		}))
 	plane := control.New(tmux.New(tmux.WithSocket(cfg.Orchestrator.TmuxSocket)), ctlOpts...)
 
@@ -323,7 +348,8 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 			return plane.Alive(ctx, agent)
 		}},
 	}
-	tasks := &task.Service{Store: &task.Store{Root: filepath.Join(cfg.Orchestrator.StateDir, "tasks")}, Auth: auth, Gate: gt}
+	tasks := &task.Service{Store: &task.Store{Root: filepath.Join(cfg.Orchestrator.StateDir, "tasks")}, Auth: auth, Gate: gt,
+		HasSecret: func(name string) bool { _, ok := cfg.Orchestrator.Secret(name); return ok }}
 	mcpServer := mcpsrv.New(ops, resolver, mcpsrv.WithAuthorizer(auth), mcpsrv.WithGate(gt), mcpsrv.WithProxy(proxy), mcpsrv.WithGovernor(cfg.Orchestrator.Governor.Agent),
 		mcpsrv.WithChannels(governorChannels(cfg.Orchestrator.Channels, governorServing)), mcpsrv.WithTasks(tasks))
 	mcpServers.Store(mcpServer)
@@ -395,7 +421,10 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	// Set before any surface serves, so no create can race the hook.
 	fleet := taskFleet{reg: reg, router: router, governor: cfg.Orchestrator.Governor.Agent}
 	dispatcher := task.NewDispatcher(tasks, fleet, book)
-	dispatcher.OneOffs = taskOneOffs{mgr: mgr}
+	dispatcher.OneOffs = taskOneOffs{mgr: mgr, secrets: secrets}
+	taskToolReach := newTaskTools(auth, cfg.Orchestrator.MCPUpstreams)
+	dispatcher.Tools = taskToolReach
+	tasks.Proxied = taskToolReach.Proxied
 	dispatcher.Liveness = taskLiveness{reg: reg, thresholds: mgr.Thresholds}
 	tasks.Changed, tasks.Tell = dispatcher.Kick, fleet.Tell
 	localOpts = append(localOpts, local.WithBudget(budgetJSON(book)))

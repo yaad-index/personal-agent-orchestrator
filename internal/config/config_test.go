@@ -654,3 +654,34 @@ func TestALongPollRaisesTheDefaultStaleLimitWithIt(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, Budget{Poll: 30 * time.Minute, MaxStale: 30 * time.Minute}, cfg.Orchestrator.Budget)
 }
+
+func TestSecretsAreLoadedByNameWithWhereTheirValueIs(t *testing.T) {
+	cfg, err := accountsConfig(t, "secrets:\n  - name: report-api\n    env: PAO_SECRET_REPORT\n  - name: deploy-key\n    file: keys/deploy\n", "")
+	require.NoError(t, err)
+	require.Len(t, cfg.Orchestrator.Secrets, 2)
+	assert.Equal(t, Secret{Name: "report-api", Env: "PAO_SECRET_REPORT"}, cfg.Orchestrator.Secrets[0])
+	f := cfg.Orchestrator.Secrets[1].File
+	assert.True(t, filepath.IsAbs(f), "a relative file is resolved against the config's directory")
+	assert.Equal(t, filepath.Join("keys", "deploy"), filepath.Join(filepath.Base(filepath.Dir(f)), filepath.Base(f)))
+	s, ok := cfg.Orchestrator.Secret("report-api")
+	require.True(t, ok)
+	assert.Equal(t, "PAO_SECRET_REPORT", s.Env)
+	_, ok = cfg.Orchestrator.Secret("nope")
+	assert.False(t, ok)
+}
+
+func TestSecretsRejects(t *testing.T) {
+	for name, c := range map[string]struct{ body, want string }{
+		"no name":        {"secrets:\n  - env: X\n", "name"},
+		"bad name":       {"secrets:\n  - name: A b\n    env: X\n", "name"},
+		"duplicate":      {"secrets:\n  - name: a\n    env: X\n  - name: a\n    env: Y\n", `name "a" is already used`},
+		"neither":        {"secrets:\n  - name: a\n", "exactly one of env and file"},
+		"both":           {"secrets:\n  - name: a\n    env: X\n    file: f\n", "exactly one of env and file"},
+		"bad env":        {"secrets:\n  - name: a\n    env: \"has space\"\n", "env must name"},
+		"value in place": {"secrets:\n  - name: a\n    value: hunter2\n", "value"},
+	} {
+		_, err := accountsConfig(t, c.body, "")
+		require.Error(t, err, name)
+		assert.Contains(t, err.Error(), c.want, name)
+	}
+}

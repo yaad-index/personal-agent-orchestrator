@@ -27,7 +27,8 @@ type Recipe struct {
 type OneOffs interface {
 	Recipes() []Recipe
 	// Spawn starts an agent from recipe and returns its name once it is ready.
-	Spawn(ctx context.Context, owner access.Subject, recipe string) (string, error)
+	// A secret, when named, is materialized for that agent's run alone.
+	Spawn(ctx context.Context, owner access.Subject, recipe, secret string) (string, error)
 	// Kill tears agent down, harvesting first, and returns the harvest's id.
 	// gone says there was no such agent to kill.
 	Kill(ctx context.Context, owner access.Subject, agent string) (harvest string, gone bool, err error)
@@ -38,13 +39,24 @@ type Liveness interface {
 	Stalled(agent string) bool
 }
 
-// retryRemoval is how long after a failed kill it is tried again, so a refused
-// kill is not asked about on every pass.
-const retryRemoval = 5 * time.Minute
+// retryRemoval is how long after a failed kill it is tried again, and
+// retrySpawn after a failed spawn, so a refused one is not asked about on
+// every pass.
+const (
+	retryRemoval = 5 * time.Minute
+	retrySpawn   = 5 * time.Minute
+)
 
 // pickRecipe chooses the recipe to spawn a one-off from for t, or says why
 // there is none.
 func (d *Dispatcher) pickRecipe(t Task) (string, string) {
+	for _, tool := range t.Attachments.Tools {
+		if d.Tools != nil && d.Tools.Proxied(tool) {
+			// A new agent holds no grant by name, so no proxied tool is in its
+			// reach: such a task can only go to an agent that already exists.
+			return "", fmt.Sprintf("a new agent could not reach the attached tool %s", tool)
+		}
+	}
 	var carriers []Recipe
 	for _, r := range d.OneOffs.Recipes() {
 		if carries(r.Tags, t.Tags) {
@@ -89,16 +101,22 @@ func (d *Dispatcher) inFlight(set map[string]bool, id string) bool {
 // spawnFor starts a one-off agent from recipe for the task and assigns the task
 // to it. A spawn takes as long as the agent takes to be ready, and as long as
 // the gate takes to answer, so it runs beside the pass, never in it.
-func (d *Dispatcher) spawnFor(ctx context.Context, id, recipe string, owner access.Subject) {
+func (d *Dispatcher) spawnFor(ctx context.Context, id, recipe, secret string, owner access.Subject) {
 	defer func() {
 		d.end(d.spawning, id)
 		d.Kick()
 	}()
-	name, err := d.OneOffs.Spawn(ctx, owner, recipe)
+	name, err := d.OneOffs.Spawn(ctx, owner, recipe, secret)
 	if err != nil {
+		d.mu.Lock()
+		d.spawnAt[id] = d.Svc.now().Add(retrySpawn)
+		d.mu.Unlock()
 		d.wait(id, fmt.Sprintf("a one-off from recipe %s could not be started: %v", recipe, err))
 		return
 	}
+	d.mu.Lock()
+	delete(d.spawnAt, id)
+	d.mu.Unlock()
 	d.Svc.mu.Lock()
 	t, _, err := d.Svc.Store.Get(id)
 	if err != nil || t.Status != Open || t.Assignee != "" {
