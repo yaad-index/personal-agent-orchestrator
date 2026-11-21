@@ -79,6 +79,10 @@ type Task struct {
 	OneOff bool `yaml:"one_off,omitempty" json:"one_off,omitempty"`
 	// Removed says that one-off agent has been killed.
 	Removed bool `yaml:"removed,omitempty" json:"removed,omitempty"`
+	// Transcript is where the backend keeps the one-off's transcript, recorded
+	// for a task with a secret so it can be removed with the agent (ADR-0037
+	// point 3). It names a path, not anything in it.
+	Transcript string `yaml:"transcript,omitempty" json:"transcript,omitempty"`
 	// Created and Updated are when it was made and last changed.
 	Created time.Time `yaml:"created" json:"created"`
 	Updated time.Time `yaml:"updated" json:"updated"`

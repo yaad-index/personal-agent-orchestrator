@@ -14,12 +14,15 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/access"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/backend/claudecode"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/local"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/config"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/mcpsrv"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/registry"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/task"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/temp"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/workdir"
 )
 
 func TestTheOperatorCreatesListsAndReadsTasksOnTheNode(t *testing.T) {
@@ -293,6 +296,7 @@ func TestATasksSecretIsAFileForItsOneOffAloneAndGoneWithIt(t *testing.T) {
 		return err == nil && got.Removed
 	}, 15*time.Second, 50*time.Millisecond)
 	assert.NoFileExists(t, path, "gone with the agent")
+	assert.Contains(t, got.Log[len(got.Log)-1].Text, "its transcript was removed", "and so is its transcript")
 	assert.NoDirExists(t, filepath.Join(n.stateDir, "run-secrets", one))
 	hs, err := n.client.Harvests(ctx, "")
 	require.NoError(t, err)
@@ -410,4 +414,120 @@ func TestAOneOffThatNeverBecomesReadyIsKilledWithNoReport(t *testing.T) {
 		}
 		break
 	}
+}
+
+func TestForgetRemovesOnlyTheAgentsOwnTranscriptAndConfirmsIt(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	root := filepath.Join(t.TempDir(), "temp")
+	o := taskOneOffs{mgr: &temp.Manager{Workdirs: &workdir.Provisioner{Root: root}}, quiet: 30 * time.Millisecond, poll: 5 * time.Millisecond}
+	workdirOf := filepath.Join(root, "tmp-a")
+	harness := claudecode.TranscriptDir(home, workdirOf)
+
+	require.NoError(t, os.MkdirAll(harness, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(harness, "s.jsonl"), []byte("the value"), 0o600))
+	require.NoError(t, o.Forget("tmp-a", harness))
+	assert.NoDirExists(t, harness, "the harness's directory for the agent is removed")
+
+	err := o.Forget("tmp-a", harness)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no transcript at", "one that is not where its backend keeps it is a failure, said aloud")
+
+	other := filepath.Join(home, "notes")
+	require.NoError(t, os.WriteFile(other, []byte("keep"), 0o600))
+	err = o.Forget("tmp-a", other)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "is not the agent's own transcript")
+	assert.FileExists(t, other, "a path that is not the agent's own is never removed")
+	assert.Error(t, o.Forget("tmp-a", claudecode.TranscriptDir(home, filepath.Join(root, "tmp-b"))), "nor another agent's")
+	assert.Error(t, o.Forget("tmp-a", ""))
+
+	require.NoError(t, os.MkdirAll(workdirOf, 0o700))
+	inside := filepath.Join(workdirOf, "t.jsonl")
+	require.NoError(t, os.WriteFile(inside, []byte("the value"), 0o600))
+	require.NoError(t, o.Forget("tmp-a", inside))
+	assert.NoFileExists(t, inside)
+	require.NoError(t, o.Forget("tmp-a", inside), "kept in the working directory, it went with it")
+}
+
+func TestATranscriptThatIsNotThereIsToldToTheOperator(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("PAO_TEST_REPORT_SECRET", "sk-TRANSCRIPT-CHECK")
+	no := false
+	n := startNodeWith(t, map[string]string{"a": ""}, func(dir, script string, cfg *config.Config) {
+		rdir := filepath.Join(dir, "recipes")
+		require.NoError(t, os.MkdirAll(rdir, 0o700))
+		// No transcript path: the node locates it where the harness keeps one,
+		// under the home directory, where the fake agent never writes.
+		body := strings.Replace(goodRecipe("fake"), "  backend: claude-code\n", "  backend: claude-code\n  account: local\n", 1)
+		body = strings.Replace(body, "    path: \"{workdir}/t.jsonl\"\n", "", 1)
+		require.NoError(t, os.WriteFile(filepath.Join(rdir, "fake.yaml"), []byte(strings.ReplaceAll(body, "@@SCRIPT@@", script)), 0o600))
+		cfg.Orchestrator.RecipesDir = rdir
+		cfg.Orchestrator.Accounts = []config.Account{{Name: "local", Metered: &no}}
+		cfg.Orchestrator.Secrets = []config.Secret{{Name: "report-api", Env: "PAO_TEST_REPORT_SECRET"}}
+	}, func(o *Options) { o.DispatchEvery = 50 * time.Millisecond })
+	ctx := context.Background()
+	created, err := n.client.CreateTask(ctx, local.NewTaskJSON{Title: "x", Description: "y", Done: "z", Tags: []string{"temp"}, Attachments: task.Attachments{Secret: "report-api"}})
+	require.NoError(t, err)
+	var got local.TaskJSON
+	require.Eventually(t, func() bool { got, err = n.client.Task(ctx, created.ID); return err == nil && got.Assignee != "" }, 15*time.Second, 50*time.Millisecond)
+	_, err = n.client.CancelTask(ctx, created.ID, "")
+	require.NoError(t, err)
+	require.Eventually(t, func() bool { got, err = n.client.Task(ctx, created.ID); return err == nil && got.Removed }, 15*time.Second, 50*time.Millisecond)
+	assert.Contains(t, got.Log[len(got.Log)-1].Text, "its transcript could NOT be removed: no transcript at")
+	for m := n.next(t); !strings.Contains(m.Text, "could not be removed"); m = n.next(t) {
+	}
+}
+
+func TestATranscriptWrittenAgainAfterTheKillIsRemovedAgain(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	root := filepath.Join(t.TempDir(), "temp")
+	o := taskOneOffs{mgr: &temp.Manager{Workdirs: &workdir.Provisioner{Root: root}}, quiet: 60 * time.Millisecond, poll: 5 * time.Millisecond}
+	harness := claudecode.TranscriptDir(home, filepath.Join(root, "tmp-a"))
+	require.NoError(t, os.MkdirAll(harness, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(harness, "s.jsonl"), []byte("the value"), 0o600))
+	// The harness writes its last record as it exits, just after the removal.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		// Twice, 40ms then 30ms apart: the quiet time starts over at each
+		// return, so the second, after a quiet time counted from the first
+		// removal would have ended, is caught too.
+		for _, at := range []time.Duration{40 * time.Millisecond, 30 * time.Millisecond} {
+			time.Sleep(at)
+			_ = os.MkdirAll(harness, 0o700)
+			_ = os.WriteFile(filepath.Join(harness, "last.jsonl"), []byte("summary"), 0o600)
+		}
+	}()
+	require.NoError(t, o.Forget("tmp-a", harness))
+	<-done
+	assert.NoDirExists(t, harness, "removed again when it came back, and gone at the end")
+}
+
+func TestATranscriptThatKeepsComingBackIsAFailure(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	root := filepath.Join(t.TempDir(), "temp")
+	o := taskOneOffs{mgr: &temp.Manager{Workdirs: &workdir.Provisioner{Root: root}}, quiet: 30 * time.Millisecond, poll: 2 * time.Millisecond}
+	harness := claudecode.TranscriptDir(home, filepath.Join(root, "tmp-a"))
+	require.NoError(t, os.MkdirAll(harness, 0o700))
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-stop:
+				return
+			case <-time.After(3 * time.Millisecond):
+				_ = os.MkdirAll(harness, 0o700)
+			}
+		}
+	}()
+	err := o.Forget("tmp-a", harness)
+	close(stop)
+	<-done
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "kept coming back")
 }

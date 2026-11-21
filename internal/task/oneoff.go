@@ -26,12 +26,16 @@ type Recipe struct {
 // kill (ADR-0006 points 2 and 3).
 type OneOffs interface {
 	Recipes() []Recipe
-	// Spawn starts an agent from recipe and returns its name once it is ready.
-	// A secret, when named, is materialized for that agent's run alone.
-	Spawn(ctx context.Context, owner access.Subject, recipe, secret string) (string, error)
+	// Spawn starts an agent from recipe and returns its name, and where its
+	// backend keeps its transcript, once it is ready. A secret, when named, is
+	// materialized for that agent's run alone.
+	Spawn(ctx context.Context, owner access.Subject, recipe, secret string) (name, transcript string, err error)
 	// Kill tears agent down, harvesting first, and returns the harvest's id.
 	// gone says there was no such agent to kill.
 	Kill(ctx context.Context, owner access.Subject, agent string) (harvest string, gone bool, err error)
+	// Forget removes a killed agent's transcript and confirms it is gone. A
+	// transcript it cannot find, or cannot remove, is an error.
+	Forget(agent, transcript string) error
 }
 
 // Liveness says whether an agent has gone quiet (ADR-0007 point 5).
@@ -106,7 +110,7 @@ func (d *Dispatcher) spawnFor(ctx context.Context, id, recipe, secret string, ow
 		d.end(d.spawning, id)
 		d.Kick()
 	}()
-	name, err := d.OneOffs.Spawn(ctx, owner, recipe, secret)
+	name, transcript, err := d.OneOffs.Spawn(ctx, owner, recipe, secret)
 	if err != nil {
 		d.mu.Lock()
 		d.spawnAt[id] = d.Svc.now().Add(retrySpawn)
@@ -126,6 +130,9 @@ func (d *Dispatcher) spawnFor(ctx context.Context, id, recipe, secret string, ow
 		return
 	}
 	t.Assignee, t.Status, t.OneOff = name, Assigned, true
+	if secret != "" {
+		t.Transcript = transcript
+	}
 	t.add(LogEntry{At: d.Svc.now(), By: Pao, Kind: EntryStatus, Status: Assigned, Text: fmt.Sprintf("assigned to %s, a one-off from recipe %s", name, recipe)})
 	err = d.Svc.Store.Put(FolderOpen, t)
 	d.Svc.mu.Unlock()
@@ -176,6 +183,19 @@ func (d *Dispatcher) remove(ctx context.Context, id string) {
 	text := fmt.Sprintf("one-off %s removed; its outputs are in harvest %s", t.Assignee, harvest)
 	if gone {
 		text = fmt.Sprintf("one-off %s was already gone", t.Assignee)
+	}
+	if t.Attachments.Secret != "" {
+		// The backend's transcript of a run with a secret holds what its tools
+		// returned, the value among them: it goes with the agent, after the
+		// harvest (ADR-0037 point 3).
+		if ferr := d.OneOffs.Forget(t.Assignee, t.Transcript); ferr != nil {
+			text += fmt.Sprintf("; its transcript could NOT be removed: %v", ferr)
+			if d.Warn != nil {
+				d.Warn(fmt.Sprintf("task %s: the transcript of one-off %s, which ran with a secret, could not be removed: %v. The secret's value may still be in it.", id, t.Assignee, ferr))
+			}
+		} else {
+			text += "; its transcript was removed"
+		}
 	}
 	d.Svc.mu.Lock()
 	defer d.Svc.mu.Unlock()

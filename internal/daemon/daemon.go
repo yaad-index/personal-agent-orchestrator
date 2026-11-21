@@ -429,6 +429,11 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	dispatcher := task.NewDispatcher(tasks, fleet, book)
 	dispatcher.OneOffs = taskOneOffs{mgr: mgr, secrets: secrets}
 	dispatcher.SecretPath = secrets.Path
+	dispatcher.Warn = func(text string) {
+		if _, err := layer.NotifyOperators(budgetCtx, core.Message{Sender: "pao", Text: text}); err != nil {
+			slog.Warn("could not warn the operator", "error", err)
+		}
+	}
 	taskToolReach := newTaskTools(auth, cfg.Orchestrator.MCPUpstreams)
 	dispatcher.Tools = taskToolReach
 	tasks.Proxied = taskToolReach.Proxied

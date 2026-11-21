@@ -6,11 +6,15 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/access"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/backend/claudecode"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/local"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/config"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
@@ -100,6 +104,9 @@ func (f taskFleet) Deliver(ctx context.Context, agent, text string) error {
 type taskOneOffs struct {
 	mgr     *temp.Manager
 	secrets *runsecret.Store
+	// quiet is how long a removed transcript must stay gone, and poll how
+	// often that is checked; zero is 3s and 100ms.
+	quiet, poll time.Duration
 }
 
 func (o taskOneOffs) Recipes() []task.Recipe {
@@ -116,17 +123,17 @@ func (o taskOneOffs) Recipes() []task.Recipe {
 	return out
 }
 
-func (o taskOneOffs) Spawn(ctx context.Context, owner access.Subject, recipe, secret string) (string, error) {
+func (o taskOneOffs) Spawn(ctx context.Context, owner access.Subject, recipe, secret string) (string, string, error) {
 	req := temp.SpawnRequest{Recipe: recipe, Requester: owner, Channel: "local"}
 	if secret != "" {
 		// The agent's name is chosen first, so its secret is in place before
 		// it starts: its environment is made once, at launch.
 		name, err := oneOffName(recipe)
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
 		if _, err := o.secrets.Materialize(name, secret); err != nil {
-			return "", err
+			return "", "", err
 		}
 		req.Name = name
 	}
@@ -143,9 +150,72 @@ func (o taskOneOffs) Spawn(ctx context.Context, owner access.Subject, recipe, se
 				slog.Warn("dispatch: could not wipe the secret of a one-off that did not start", "agent", req.Name, "error", werr)
 			}
 		}
-		return "", err
+		return "", "", err
 	}
-	return p.Name, nil
+	return p.Name, p.Transcript.Path, nil
+}
+
+// Forget removes a killed one-off's transcript, the backend's record of its
+// session, and confirms it is gone (ADR-0037 point 3). It removes only a path
+// that is the agent's own: its working directory or something in it, or the
+// directory the coding-agent harness keeps for sessions started there. A path
+// it will not remove, a transcript that is not there, or one still there after
+// removal, is an error, never passed over.
+func (o taskOneOffs) Forget(agent, transcript string) error {
+	if transcript == "" {
+		return errors.New("no transcript path was recorded for it")
+	}
+	workdir := o.mgr.Workdirs.Dir(agent)
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("the node user's home: %w", err)
+	}
+	clean := filepath.Clean(transcript)
+	inWorkdir := strings.HasPrefix(clean, filepath.Clean(workdir)+string(filepath.Separator))
+	if clean != claudecode.TranscriptDir(home, workdir) && !inWorkdir {
+		return fmt.Errorf("%s is not the agent's own transcript (neither %s nor under its working directory), so it is not removed", clean, claudecode.TranscriptDir(home, workdir))
+	}
+	if _, err := os.Lstat(clean); errors.Is(err, fs.ErrNotExist) {
+		if inWorkdir {
+			// Kept in the working directory, it went when the kill removed that.
+			return nil
+		}
+		return fmt.Errorf("no transcript at %s, where its backend keeps one", clean)
+	} else if err != nil {
+		return err
+	}
+	// The harness may write its session's last record as it exits, just after
+	// the kill, which would bring the directory back: it is removed again
+	// whenever it comes back, until it has stayed gone for a while.
+	quiet, poll := o.quiet, o.poll
+	if quiet <= 0 {
+		quiet = 3 * time.Second
+	}
+	if poll <= 0 {
+		poll = 100 * time.Millisecond
+	}
+	deadline := time.Now().Add(4 * quiet)
+	gone := time.Time{}
+	for {
+		if _, err := os.Lstat(clean); errors.Is(err, fs.ErrNotExist) {
+			if gone.IsZero() {
+				gone = time.Now()
+			}
+			if time.Since(gone) >= quiet {
+				return nil
+			}
+		} else {
+			gone = time.Time{}
+			if err := os.RemoveAll(clean); err != nil {
+				return err
+			}
+			continue
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("%s kept coming back after removing it", clean)
+		}
+		time.Sleep(poll)
+	}
 }
 
 // oneOffName is a fresh name for an agent from recipe, as the manager would

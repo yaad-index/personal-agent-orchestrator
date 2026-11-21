@@ -14,26 +14,28 @@ import (
 )
 
 type fakeOneOffs struct {
-	mu       sync.Mutex
-	recipes  []Recipe
-	spawned  []string // "owner recipe -> name"
-	killed   []string // "owner name"
-	spawnErr error
-	killErr  error
-	gone     bool
-	block    chan struct{}
-	n        int
+	mu        sync.Mutex
+	recipes   []Recipe
+	spawned   []string // "owner recipe -> name"
+	killed    []string // "owner name"
+	spawnErr  error
+	killErr   error
+	gone      bool
+	forgot    []string
+	forgetErr error
+	block     chan struct{}
+	n         int
 }
 
 func (f *fakeOneOffs) Recipes() []Recipe { return f.recipes }
-func (f *fakeOneOffs) Spawn(_ context.Context, owner access.Subject, recipe, secret string) (string, error) {
+func (f *fakeOneOffs) Spawn(_ context.Context, owner access.Subject, recipe, secret string) (string, string, error) {
 	if f.block != nil {
 		<-f.block
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.spawnErr != nil {
-		return "", f.spawnErr
+		return "", "", f.spawnErr
 	}
 	f.n++
 	name := recipe + "-" + string(rune('a'+f.n-1))
@@ -42,7 +44,14 @@ func (f *fakeOneOffs) Spawn(_ context.Context, owner access.Subject, recipe, sec
 		entry += " with " + secret
 	}
 	f.spawned = append(f.spawned, entry)
-	return name, nil
+	return name, "/transcripts/" + name, nil
+}
+
+func (f *fakeOneOffs) Forget(agent, transcript string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.forgot = append(f.forgot, agent+" "+transcript)
+	return f.forgetErr
 }
 func (f *fakeOneOffs) Kill(_ context.Context, owner access.Subject, agent string) (string, bool, error) {
 	f.mu.Lock()
@@ -395,7 +404,7 @@ type countingOneOffs struct {
 	spawns int
 }
 
-func (c *countingOneOffs) Spawn(ctx context.Context, owner access.Subject, recipe, secret string) (string, error) {
+func (c *countingOneOffs) Spawn(ctx context.Context, owner access.Subject, recipe, secret string) (string, string, error) {
 	c.mu.Lock()
 	c.spawns++
 	c.mu.Unlock()

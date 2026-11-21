@@ -65,6 +65,10 @@ type Dispatcher struct {
 	// can name the file as well as the variable: an agent with no shell cannot
 	// read a variable. The path is not the secret (ADR-0036 point 3).
 	SecretPath func(agent, secret string) (string, error)
+	// Warn, when set, tells the operator of something pao could not do that
+	// leaves a risk behind, such as a transcript of a run with a secret it
+	// could not remove.
+	Warn func(text string)
 	// Tools, when set, says which attached tools are pao's proxied tools and
 	// who reaches them. An attachment grants nothing; such a tool only narrows
 	// the agents a task can go to (ADR-0036 point 2).
