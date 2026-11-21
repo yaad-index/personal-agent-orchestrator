@@ -104,6 +104,9 @@ type Server struct {
 	gate     Gate
 	ops      Operations
 	proxy    Proxy
+	// governor is the node's governor, offered only the tools matching needs;
+	// empty for none.
+	governor string
 
 	mu       sync.Mutex
 	subjects map[access.Subject]*offer
@@ -134,6 +137,15 @@ func WithProxy(p Proxy) Option { return func(s *Server) { s.proxy = p } }
 
 // Option tunes a Server.
 type Option func(*Server)
+
+// WithGovernor names the node's governor (ADR-0031). Of pao's own tools it is
+// offered only those matching a request needs, list_agents and list_recipes,
+// besides the proposal tool its grant gives it. Every other call is refused it
+// anyway; a tool it cannot use is not shown, so its model is not invited to try.
+func WithGovernor(agent string) Option { return func(s *Server) { s.governor = agent } }
+
+// governorTools are pao's own tools the governor is offered.
+var governorTools = map[string]bool{"list_agents": true, "list_recipes": true}
 
 // WithAuthorizer sets the access seam. The default is operator-only.
 func WithAuthorizer(a access.Authorizer) Option { return func(s *Server) { s.auth = a } }
@@ -195,6 +207,9 @@ func (s *Server) offerFor(who access.Subject) *offer {
 	if !ok {
 		srv := mcp.NewServer(&mcp.Implementation{Name: "pao", Version: "0"}, nil)
 		s.addTools(srv)
+		if s.governor != "" && who.Kind == access.KindAgent && who.Name == s.governor {
+			srv.RemoveTools(s.notGovernorTools()...)
+		}
 		o = &offer{srv: srv, proxied: map[string]upstream.Tool{}}
 		s.subjects[who] = o
 	}

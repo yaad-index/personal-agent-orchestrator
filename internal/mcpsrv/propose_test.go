@@ -3,6 +3,8 @@ package mcpsrv
 import (
 	"context"
 	"errors"
+	"maps"
+	"slices"
 	"sync"
 	"testing"
 
@@ -93,4 +95,11 @@ func TestTheGateAllowsAProposalAndTheHookCallOfTheTool(t *testing.T) {
 	}
 	assert.Contains(t, allowed, "mcp__pao__"+ToolPropose)
 	assert.Contains(t, allowed, ActionPropose)
+}
+
+func TestTheGovernorIsOfferedOnlyTheToolsMatchingNeeds(t *testing.T) {
+	url := serve(t, sampleOps, staticResolver{"g": access.Agent("governor"), "b": access.Agent("boss")},
+		WithAuthorizer(access.Matrix{Grants: grantList{governorMayPropose}}), WithGate(recordingGate{allow: true, asked: &[]gate.Request{}}), WithGovernor("governor"))
+	assert.ElementsMatch(t, []string{"list_agents", "list_recipes", ToolPropose}, slices.Collect(maps.Keys(listed(t, connect(t, url, "g")))))
+	assert.ElementsMatch(t, ownTools, slices.Collect(maps.Keys(listed(t, connect(t, url, "b")))), "another agent is offered every one of pao's own tools, and ownTools names them all")
 }
