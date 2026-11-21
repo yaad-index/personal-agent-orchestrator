@@ -2,6 +2,8 @@
 
 **Status:** Accepted (2026-11-18)
 
+**Superseded-by:** ADR-0033 (a provisioned working directory's settings are not loaded, and trust is answered)
+
 Extends ADR-0011 (pluggable backends), ADR-0015 (profile inheritance).
 
 ## Context
