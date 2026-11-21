@@ -2,9 +2,13 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/access"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/local"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/registry"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/route"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/task"
 )
 
@@ -45,4 +49,37 @@ func (a taskAPI) Cancel(ctx context.Context, id, reason string) (local.TaskJSON,
 		return local.TaskJSON{}, err
 	}
 	return local.TaskJSON{Task: t, Folder: task.FolderArchive}, nil
+}
+
+// taskFleet is the node's agents as dispatch sees them: this node's agents, but
+// never the governor, which translates commands and runs no work.
+type taskFleet struct {
+	reg      *registry.Registry
+	router   *route.Router
+	governor string
+}
+
+func (f taskFleet) Candidates() []task.Candidate {
+	var out []task.Candidate
+	for _, a := range f.reg.All() {
+		p := a.Profile
+		if p.Node != "" || (f.governor != "" && p.Name == f.governor) {
+			continue
+		}
+		out = append(out, task.Candidate{Name: p.Name, Tags: p.Tags, Account: p.Account, Budget: p.Budget, Running: a.State == core.Running})
+	}
+	return out
+}
+
+func (f taskFleet) Deliver(ctx context.Context, agent, text string) error {
+	p, _, ok := f.reg.Lookup(agent)
+	if !ok {
+		return fmt.Errorf("agent %q is not registered", agent)
+	}
+	for _, r := range f.router.Deliver(ctx, []core.Profile{p}, core.Message{Sender: task.Pao, Text: text}) {
+		if r.Err != nil {
+			return r.Err
+		}
+	}
+	return nil
 }
