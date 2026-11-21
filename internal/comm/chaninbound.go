@@ -90,6 +90,9 @@ type ChannelInbound struct {
 	// button carries, and Sender the platform's authenticated sender of the press.
 	// A press is only ever a command; one that is not is refused and never routed.
 	Press bool
+	// Pressed is the platform's own id for the message whose button was pressed,
+	// when the platform says so.
+	Pressed string
 	// Group marks a message from a group conversation, and Conversation is the
 	// platform's id for that conversation. A group the channel does not admit is
 	// denied whoever the sender is (ADR-0019 point 6, ADR-0028 point 1): the layer
@@ -294,6 +297,10 @@ func (l *Layer) receiveFromGroup(ctx context.Context, in ChannelInbound) (Channe
 func (l *Layer) receiveAsOperator(ctx context.Context, in ChannelInbound, subject string) (ChannelResult, error) {
 	if in.Press && !command.Is(in.Text) {
 		return ChannelResult{Reply: ReplyNotACommand}, l.reject(in, RecordMessage, "press not a command", in.Raw)
+	}
+
+	if in.Press {
+		defer l.closeProposal(in.Channel, in.Pressed)
 	}
 
 	// A /pao command is pao's, whatever the target the adapter brings (ADR-0026

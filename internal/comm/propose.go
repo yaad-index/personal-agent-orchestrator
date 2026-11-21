@@ -3,6 +3,9 @@ package comm
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"sync"
+	"time"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
 )
@@ -42,5 +45,74 @@ func (l *Layer) Propose(ctx context.Context, agent string, m core.Message) (core
 	if err != nil {
 		return core.Message{}, err
 	}
+	l.proposals.add(stored.ID)
 	return stored, l.sendRouted(ctx, stored, outRoute{targets: targets})
+}
+
+// closeTimeout bounds closing a pressed proposal's button.
+const closeTimeout = 30 * time.Second
+
+// OutcomePressed is what a proposal's copy shows once its button was pressed.
+const OutcomePressed = "pressed"
+
+// closeProposal closes the button of the proposal whose copy on channel has the
+// platform id native, once the operator pressed it: the command ran, and a second
+// press would run it again. It runs in the background, so the press's answer does
+// not wait on the platform. A press on anything else, such as a gate question,
+// which the gate closes itself, is left alone.
+func (l *Layer) closeProposal(channel, native string) {
+	if native == "" {
+		return
+	}
+	n, ok := l.channelIDs[channel]
+	if !ok {
+		return
+	}
+	id, ok := l.composites.id(FormatComposite(n, native))
+	if !ok || !l.proposals.take(id) {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), closeTimeout)
+		defer cancel()
+		if err := l.CloseActions(ctx, id, OutcomePressed); err != nil {
+			slog.Warn("a pressed proposal's button could not be closed", "message", id, "error", err)
+		}
+	}()
+}
+
+// maxProposals is how many open proposals are kept for closing. Past it the
+// oldest is forgotten; its button then stays, as a typed command would.
+const maxProposals = 256
+
+// proposalSet is the ids of proposals whose button is still open.
+type proposalSet struct {
+	mu    sync.Mutex
+	open  map[string]bool
+	order []string
+}
+
+func (s *proposalSet) add(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.open == nil {
+		s.open = map[string]bool{}
+	}
+	s.open[id] = true
+	s.order = append(s.order, id)
+	for len(s.order) > maxProposals {
+		delete(s.open, s.order[0])
+		s.order = s.order[1:]
+	}
+}
+
+// take reports whether id is an open proposal, and closes it in the set.
+func (s *proposalSet) take(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.open[id] {
+		return false
+	}
+	delete(s.open, id)
+	return true
 }

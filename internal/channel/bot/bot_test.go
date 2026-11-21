@@ -872,8 +872,8 @@ func TestAPressReachesTheLayerAsTheCommandFromThePresserAndIsAnsweredToThemAlone
 	waitFor(t, func() bool { return len(s.snapshot(&s.answers)) == 1 }, "the press is answered")
 	in := h.inbound()
 	require.Len(t, in, 1)
-	assert.Equal(t, comm.ChannelInbound{Channel: "chat", Sender: "42", Text: "/pao allow q1", Raw: "/pao allow q1", Press: true}, in[0],
-		"the press is the command, from the service's sender of the press, with no target and no sticky address")
+	assert.Equal(t, comm.ChannelInbound{Channel: "chat", Sender: "42", Text: "/pao allow q1", Raw: "/pao allow q1", Press: true, Pressed: native(42, 101)}, in[0],
+		"the press is the command, from the service's sender of the press, with no target and no sticky address, naming the message pressed")
 	a := s.snapshot(&s.answers)[0]
 	assert.Equal(t, "cb1", a["callback_query_id"])
 	assert.Equal(t, "q1: allow", a["text"])
@@ -901,7 +901,10 @@ func TestAPressInAGroupOrOnNoMessageIsMarkedAGroup(t *testing.T) {
 	require.Len(t, in, 4)
 	assert.True(t, in[0].Group && in[0].Press, "a press under a group's message")
 	assert.Equal(t, "-500", in[0].Conversation)
+	assert.Equal(t, native(-500, 101), in[0].Pressed)
 	assert.True(t, in[1].Group && in[1].Press, "a press on no message")
+	assert.Empty(t, in[1].Pressed)
+	assert.Empty(t, in[2].Pressed, "a message the bot can no longer reach is not named")
 	assert.Empty(t, in[1].Conversation, "one that names no conversation, which no group admits")
 	assert.True(t, in[2].Group && in[2].Press, "a press under a group's message the bot can no longer reach")
 	assert.Equal(t, "-500", in[2].Conversation)

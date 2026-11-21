@@ -632,6 +632,9 @@ func (b *Bot) press(ctx context.Context, q *models.CallbackQuery) {
 	}
 	switch {
 	case where != nil:
+		if q.Message.Message != nil {
+			in.Pressed = native(where.ID, q.Message.Message.ID)
+		}
 		if where.Type != models.ChatTypePrivate {
 			in.Group, in.Conversation = true, strconv.FormatInt(where.ID, 10)
 		}
