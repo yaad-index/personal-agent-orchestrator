@@ -42,6 +42,16 @@ func (c *cmdOps) Agents(context.Context) ([]command.Agent, error) {
 	return []command.Agent{{Name: "a", State: "running"}}, nil
 }
 
+func (c *cmdOps) Spawn(_ context.Context, recipe, name, channel string) (string, error) {
+	c.calls = append(c.calls, "spawn "+recipe+" "+channel)
+	return recipe + "-1", nil
+}
+
+func (c *cmdOps) Kill(_ context.Context, name string) (command.Killed, error) {
+	c.calls = append(c.calls, "kill "+name)
+	return command.Killed{Harvest: "h1"}, nil
+}
+
 func (c *cmdOps) Decide(_ context.Context, id, decision, _ string) error {
 	c.calls = append(c.calls, decision+" "+id)
 	return nil

@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -19,6 +20,15 @@ type fakeOps struct {
 	err      error
 	agents   []Agent
 	bindings []Binding
+	// spawned is the name Spawn returns.
+	spawned string
+	killed  Killed
+	// hold, when set, keeps Spawn waiting until it is closed; spawnCtx is its
+	// context's error then.
+	hold     chan struct{}
+	spawnCtx error
+	// untilDone keeps Spawn waiting until its context ends.
+	untilDone bool
 }
 
 func (f *fakeOps) Agents(context.Context) ([]Agent, error) {
@@ -58,6 +68,23 @@ func (f *fakeOps) Unbind(_ context.Context, b Binding) (Binding, error) {
 func (f *fakeOps) Bindings(_ context.Context, agent string) ([]Binding, error) {
 	f.calls = append(f.calls, "bindings|"+agent)
 	return f.bindings, f.err
+}
+
+func (f *fakeOps) Spawn(ctx context.Context, recipe, name, channel string) (string, error) {
+	f.calls = append(f.calls, strings.Join([]string{"spawn", recipe, name, channel}, "|"))
+	if f.hold != nil {
+		<-f.hold
+		f.spawnCtx = ctx.Err()
+	}
+	if f.untilDone {
+		<-ctx.Done()
+	}
+	return f.spawned, f.err
+}
+
+func (f *fakeOps) Kill(_ context.Context, name string) (Killed, error) {
+	f.calls = append(f.calls, "kill|"+name)
+	return f.killed, f.err
 }
 
 func itoa(n int) string { return string(rune('0' + n)) }
@@ -310,6 +337,111 @@ func TestBindingCommandsAreTheOperatorsOnly(t *testing.T) {
 	}
 }
 
+// laterCaller is the operator, with a later answer that lands on the channel
+// returned.
+func laterCaller() (Caller, <-chan string) {
+	got := make(chan string, 1)
+	c := operator
+	c.Later = func(_ context.Context, text string) { got <- text }
+	return c, got
+}
+
+func TestSpawnIsAnsweredAtOnceAndToldItsOutcomeLater(t *testing.T) {
+	for name, c := range map[string]struct {
+		text    string
+		spawned string
+		err     error
+		call    string
+		later   string
+	}{
+		"ready": {"/pao spawn helper", "helper-1", nil, "spawn|helper||tg",
+			"helper-1 is ready, spawned from recipe helper"},
+		"named": {"/pao spawn helper scout", "scout", nil, "spawn|helper|scout|tg",
+			"scout is ready, spawned from recipe helper"},
+		"not ready": {"/pao spawn helper", "helper-1", errors.New("no prompt after 60s"), "spawn|helper||tg",
+			"helper-1 was created from recipe helper but is not ready: no prompt after 60s\nkill it with /pao kill helper-1"},
+		"failed": {"/pao spawn nope", "", errors.New(`no recipe "nope"`), "spawn|nope||tg",
+			`spawn from recipe nope failed: no recipe "nope"`},
+	} {
+		ops := &fakeOps{spawned: c.spawned, err: c.err}
+		caller, later := laterCaller()
+		res := Run(context.Background(), ops, caller, c.text)
+		assert.Contains(t, res.Reply, "spawning an agent from recipe", name)
+		select {
+		case got := <-later:
+			assert.Equal(t, c.later, got, name)
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s: no later answer", name)
+		}
+		assert.Equal(t, []string{c.call}, ops.calls, "%s: spawned on the caller's channel", name)
+	}
+}
+
+func TestSpawnRunsAfterTheCommandsContextEnds(t *testing.T) {
+	ops := &fakeOps{spawned: "helper-1", hold: make(chan struct{})}
+	caller, later := laterCaller()
+	ctx, cancel := context.WithCancel(context.Background())
+	Run(ctx, ops, caller, "/pao spawn helper")
+	cancel()
+	close(ops.hold)
+	assert.Equal(t, "helper-1 is ready, spawned from recipe helper", <-later)
+	assert.NoError(t, ops.spawnCtx, "the spawn's context outlives the command's")
+}
+
+func TestASpawnThatRunsOutItsTimeIsStillTold(t *testing.T) {
+	defer func(d time.Duration) { spawnTimeout = d }(spawnTimeout)
+	spawnTimeout = 50 * time.Millisecond
+	ops := &fakeOps{spawned: "helper-1", err: context.DeadlineExceeded, untilDone: true}
+	caller, _ := laterCaller()
+	told := make(chan error, 1)
+	caller.Later = func(ctx context.Context, _ string) { told <- ctx.Err() }
+	Run(context.Background(), ops, caller, "/pao spawn helper")
+	select {
+	case err := <-told:
+		assert.NoError(t, err, "the outcome is sent on a context the spawn's bound did not end")
+	case <-time.After(5 * time.Second):
+		t.Fatal("no later answer")
+	}
+}
+
+func TestSpawnAndKillUsage(t *testing.T) {
+	caller, _ := laterCaller()
+	for _, text := range []string{"/pao spawn", "/pao spawn a b c", "/pao kill", "/pao kill a b"} {
+		ops := &fakeOps{}
+		res := Run(context.Background(), ops, caller, text)
+		assert.True(t, strings.HasPrefix(res.Reply, "usage: "), "%q: %s", text, res.Reply)
+		assert.Empty(t, ops.calls, "%q", text)
+	}
+	ops := &fakeOps{}
+	res := Run(context.Background(), ops, operator, "/pao spawn helper")
+	assert.Equal(t, "spawn is not available on this channel", res.Reply, "no later answer, no spawn")
+	assert.Empty(t, ops.calls)
+}
+
+func TestKill(t *testing.T) {
+	ops := &fakeOps{killed: Killed{Harvest: "h1"}}
+	assert.Equal(t, "scout is killed; its outputs are harvested as h1", Run(context.Background(), ops, operator, "/pao kill scout").Reply)
+	assert.Equal(t, []string{"kill|scout"}, ops.calls)
+
+	ops = &fakeOps{killed: Killed{Harvest: "h2", Report: "harvested 1 file(s)", WorkdirKept: true}}
+	assert.Equal(t, "scout is killed; its outputs are harvested as h2\nharvested 1 file(s)\nthe workdir was kept",
+		Run(context.Background(), ops, operator, "/pao kill scout").Reply)
+
+	ops = &fakeOps{err: errors.New(`"coder" is not a temporary agent`)}
+	assert.Equal(t, `"coder" is not a temporary agent`, Run(context.Background(), ops, operator, "/pao kill coder").Reply)
+}
+
+func TestSpawnAndKillAreTheOperatorsOnly(t *testing.T) {
+	for _, text := range []string{"/pao spawn helper", "/pao kill scout"} {
+		ops := &fakeOps{}
+		c := other
+		c.Later = func(context.Context, string) { t.Errorf("%q told a non-operator", text) }
+		res := Run(context.Background(), ops, c, text)
+		assert.Empty(t, ops.calls, "%q", text)
+		assert.Contains(t, res.Reply, "unknown command", "%q", text)
+	}
+}
+
 func TestProposable(t *testing.T) {
 	for _, text := range []string{
 		"/pao bind coder group:team 2 TA:",
@@ -318,6 +450,8 @@ func TestProposable(t *testing.T) {
 		"/pao view coder pause",
 		"/pao unbind coder group:team",
 		"/pao agents",
+		"/pao spawn helper scout",
+		"/pao kill scout",
 	} {
 		got, err := Proposable(text)
 		require.NoError(t, err, "%q", text)

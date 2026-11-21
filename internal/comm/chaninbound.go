@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/command"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
@@ -307,7 +308,7 @@ func (l *Layer) receiveAsOperator(ctx context.Context, in ChannelInbound, subjec
 	// point 1). One that addresses an agent or a tag routes its message there.
 	var addressed *core.Target
 	if command.Is(in.Text) {
-		res := command.Run(ctx, l.commandOps(), command.Caller{Channel: in.Channel, Operator: true}, in.Text)
+		res := command.Run(ctx, l.commandOps(), command.Caller{Channel: in.Channel, Operator: true, Later: l.later(in.Channel, subject)}, in.Text)
 		if res.Address == nil {
 			return ChannelResult{Reply: res.Reply}, nil
 		}
@@ -385,6 +386,22 @@ func (noCommands) Unbind(context.Context, command.Binding) (command.Binding, err
 func (noCommands) Bindings(context.Context, string) ([]command.Binding, error) {
 	return nil, errNoCommands
 }
+func (noCommands) Spawn(context.Context, string, string, string) (string, error) {
+	return "", errNoCommands
+}
+func (noCommands) Kill(context.Context, string) (command.Killed, error) {
+	return command.Killed{}, errNoCommands
+}
+
+// later is how a command's later answer reaches its sender: told to subject alone
+// on channel, or to the channel's one conversation when subject is empty.
+func (l *Layer) later(channel, subject string) func(context.Context, string) {
+	return func(ctx context.Context, text string) {
+		if _, err := l.Tell(ctx, channel, subject, core.Message{Sender: "pao", Text: text}); err != nil {
+			slog.Warn("a command's later answer could not be sent", "channel", channel, "subject", subject, "error", err)
+		}
+	}
+}
 
 // CommandAsOperator runs a /pao command from the operator at a channel that
 // routes as the operator without an identity binding, such as the node's local
@@ -395,7 +412,7 @@ func (l *Layer) CommandAsOperator(ctx context.Context, in Inbound) (reply string
 	if !command.Is(in.Text) {
 		return "", nil, false, nil
 	}
-	res := command.Run(ctx, l.commandOps(), command.Caller{Channel: in.Source, Operator: true}, in.Text)
+	res := command.Run(ctx, l.commandOps(), command.Caller{Channel: in.Source, Operator: true, Later: l.later(in.Source, "")}, in.Text)
 	if res.Address == nil {
 		return res.Reply, nil, true, nil
 	}

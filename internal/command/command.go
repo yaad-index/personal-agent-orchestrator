@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
 )
@@ -39,6 +40,25 @@ type Ops interface {
 	// Bindings lists the standing bindings of the agents the operator may
 	// reach, of one agent when agent is not empty.
 	Bindings(ctx context.Context, agent string) ([]Binding, error)
+	// Spawn starts a temporary agent from recipe (ADR-0006 point 2), its stream
+	// bound to channel, and returns its name. An empty name is generated from the
+	// recipe. On an agent created that did not become ready it returns the name
+	// with the error.
+	Spawn(ctx context.Context, recipe, name, channel string) (string, error)
+	// Kill harvests a temporary agent's outputs and then removes it (ADR-0006
+	// point 4).
+	Kill(ctx context.Context, name string) (Killed, error)
+}
+
+// Killed is what a kill reports.
+type Killed struct {
+	// Harvest is the id of what was harvested.
+	Harvest string
+	// Report is what was harvested, file by file, where the node has it; empty
+	// for a kill on another node of the mesh.
+	Report string
+	// WorkdirKept is whether the workdir was kept.
+	WorkdirKept bool
 }
 
 // Binding is one standing binding as the commands show it: a destination, by
@@ -70,6 +90,10 @@ type Caller struct {
 	Channel string
 	// Operator is whether the caller's subject is routed as the operator.
 	Operator bool
+	// Later sends the caller alone a later answer, for a command whose outcome
+	// comes after its reply, such as a spawn. Nil where no later answer can be
+	// sent: such a command is then not available.
+	Later func(ctx context.Context, text string)
 }
 
 // Result is what a command came to. A command that addresses an agent or a tag
@@ -101,6 +125,8 @@ var table = []spec{
 	{word: "bind", args: "<agent> <destination> [stderr] [level|log] [prefix]", about: "make a destination (group:<name>, private:<subject>, channel:local) follow an agent's output, or with stderr its gate questions and notices", operator: true, run: runBind},
 	{word: "unbind", args: "<agent> <destination> [stderr]", about: "remove a binding set with bind", operator: true, run: runUnbind},
 	{word: "bindings", args: "[agent]", about: "list the standing bindings, and where each was set", operator: true, run: runBindings},
+	{word: "spawn", args: "<recipe> [name]", about: "start a temporary agent from a recipe, its output on this channel; you are told when it is ready", operator: true, run: runSpawn},
+	{word: "kill", args: "<agent>", about: "harvest a temporary agent's outputs, then remove it", operator: true, run: runKill},
 	{word: "view", args: "<agent> pause|resume", about: "hold an agent's output back, or send what was held and let it through again", operator: true, run: runView},
 	{word: "allow", args: "<question>", about: "allow what a gate question asks, once", operator: true, run: decide("allow")},
 	{word: "always", args: "<question>", about: "allow what a gate question asks, and remember it", operator: true, run: decide("always")},
@@ -307,6 +333,72 @@ func decide(decision string) func(context.Context, Ops, Caller, []string, string
 		}
 		return Result{Reply: fmt.Sprintf("%s: %s", args[0], decision)}, true
 	}
+}
+
+// spawnTimeout bounds a spawn run after its command was answered: provisioning
+// the workdir and waiting for the agent to be ready. laterTimeout bounds sending
+// its outcome, on a context of its own, so a spawn that ran out its time is still
+// told. Variables for the tests.
+var (
+	spawnTimeout = 15 * time.Minute
+	laterTimeout = 30 * time.Second
+)
+
+// runSpawn reads /pao spawn <recipe> [name]. A spawn provisions a workdir and
+// waits for the agent to become ready, which can take minutes, and a channel
+// handles its messages one at a time. So the command is answered at once, the
+// spawn runs in the background, and its outcome is sent to the caller later.
+func runSpawn(ctx context.Context, ops Ops, c Caller, args []string, _ string) (Result, bool) {
+	if len(args) < 1 || len(args) > 2 {
+		return Result{}, false
+	}
+	if c.Later == nil {
+		return Result{Reply: "spawn is not available on this channel"}, true
+	}
+	recipe, name := args[0], ""
+	if len(args) == 2 {
+		name = args[1]
+	}
+	detached := context.WithoutCancel(ctx)
+	bg, cancel := context.WithTimeout(detached, spawnTimeout)
+	go func() {
+		got, err := ops.Spawn(bg, recipe, name, c.Channel)
+		cancel()
+		tell, done := context.WithTimeout(detached, laterTimeout)
+		defer done()
+		c.Later(tell, spawned(recipe, got, err))
+	}()
+	return Result{Reply: fmt.Sprintf("spawning an agent from recipe %s; you will be told when it is ready", recipe)}, true
+}
+
+// spawned is the later answer to a spawn.
+func spawned(recipe, name string, err error) string {
+	switch {
+	case err == nil:
+		return fmt.Sprintf("%s is ready, spawned from recipe %s", name, recipe)
+	case name != "":
+		return fmt.Sprintf("%s was created from recipe %s but is not ready: %v\nkill it with /pao kill %s", name, recipe, err, name)
+	default:
+		return fmt.Sprintf("spawn from recipe %s failed: %v", recipe, err)
+	}
+}
+
+func runKill(ctx context.Context, ops Ops, _ Caller, args []string, _ string) (Result, bool) {
+	if len(args) != 1 {
+		return Result{}, false
+	}
+	k, err := ops.Kill(ctx, args[0])
+	if err != nil {
+		return Result{Reply: err.Error()}, true
+	}
+	reply := fmt.Sprintf("%s is killed; its outputs are harvested as %s", args[0], k.Harvest)
+	if k.Report != "" {
+		reply += "\n" + k.Report
+	}
+	if k.WorkdirKept {
+		reply += "\nthe workdir was kept"
+	}
+	return Result{Reply: reply}, true
 }
 
 // Streams a binding follows.

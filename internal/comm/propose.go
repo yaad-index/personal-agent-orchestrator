@@ -27,17 +27,7 @@ func (l *Layer) Propose(ctx context.Context, agent string, m core.Message) (core
 	if !ok || t.requester == "" {
 		return core.Message{}, fmt.Errorf("agent %q: its turn was not started from a channel, so there is no one to propose to", agent)
 	}
-	var targets []target
-	if t.at.conversation == "" {
-		targets = append(targets, target{kind: toProposal, at: t.at, agent: agent})
-	} else if l.identity != nil {
-		for _, s := range l.identity.Senders(t.requester, t.at.channel) {
-			at := origin{channel: t.at.channel, conversation: s}
-			if l.noticeMay(at, m) {
-				targets = append(targets, target{kind: toProposal, at: at, agent: agent})
-			}
-		}
-	}
+	targets := l.toSubject(t.at.channel, t.at.conversation == "", t.requester, agent, m)
 	if len(targets) == 0 {
 		return core.Message{}, fmt.Errorf("agent %q: %s has no private conversation an operator reads on %s", agent, t.requester, t.at.channel)
 	}
@@ -46,6 +36,45 @@ func (l *Layer) Propose(ctx context.Context, agent string, m core.Message) (core
 		return core.Message{}, err
 	}
 	l.proposals.add(stored.ID)
+	return stored, l.sendRouted(ctx, stored, outRoute{targets: targets})
+}
+
+// toSubject is where a message for subject alone goes on channel: the subject's
+// private conversations there that pass the reader rule, or, on a channel of one
+// conversation such as the local channel, that conversation.
+func (l *Layer) toSubject(channel string, one bool, subject, agent string, m core.Message) []target {
+	if one {
+		return []target{{kind: toSubject, at: origin{channel: channel}, agent: agent}}
+	}
+	if l.identity == nil {
+		return nil
+	}
+	var out []target
+	for _, s := range l.identity.Senders(subject, channel) {
+		c := origin{channel: channel, conversation: s}
+		if l.noticeMay(c, m) {
+			out = append(out, target{kind: toSubject, at: c, agent: agent})
+		}
+	}
+	return out
+}
+
+// Tell sends pao's message m to subject alone, on channel: the later answer to a
+// command the subject sent there (ADR-0026 point 5), such as the outcome of a
+// spawn. It goes to the subject's private conversations on the channel, never to
+// a group, even when the command was sent in one. On a channel of one
+// conversation, such as the local channel, subject is empty and m goes to that
+// conversation. Like Notify, m is stored in no agent's scope.
+func (l *Layer) Tell(ctx context.Context, channel, subject string, m core.Message) (core.Message, error) {
+	m.Kind = core.MessageSystemEvent
+	targets := l.toSubject(channel, subject == "", subject, "", m)
+	if len(targets) == 0 {
+		return core.Message{}, fmt.Errorf("%s has no private conversation an operator reads on %s", subject, channel)
+	}
+	stored, err := l.store.Add(m)
+	if err != nil {
+		return core.Message{}, err
+	}
 	return stored, l.sendRouted(ctx, stored, outRoute{targets: targets})
 }
 
