@@ -3,6 +3,7 @@ package task
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -36,6 +37,20 @@ func TestATaskWithASecretRunsOnlyOnAOneOffStartedWithIt(t *testing.T) {
 	spawned, _ := o.snapshot()
 	assert.Equal(t, []string{"operator writer -> writer-a with report-api"}, spawned)
 	assert.Empty(t, fleet.sent("bee"))
+}
+
+func TestAOneOffsBriefNamesTheFileItsSecretIsIn(t *testing.T) {
+	fleet := &fakeFleet{}
+	o := &fakeOneOffs{recipes: []Recipe{{Name: "writer", Tags: []string{"r"}, Account: "sub"}}}
+	d, s := oneOffDispatcher(t, opGrants("r"), fleet, headroomOf{"sub": true}, o)
+	d.SecretPath = func(agent, secret string) (string, error) { return "/run-secrets/" + agent + "/" + secret, nil }
+	n := newTask("r")
+	n.Attachments.Secret = "report-api"
+	tk, err := s.Create(context.Background(), access.Operator, n)
+	require.NoError(t, err)
+	passUntil(t, d, func() bool { return get(t, s, tk.ID).Assignee != "" })
+	require.Eventually(t, func() bool { return len(fleet.sent("writer-a")) == 1 }, 5*time.Second, 10*time.Millisecond)
+	assert.Contains(t, fleet.sent("writer-a")[0], "the file /run-secrets/writer-a/report-api")
 }
 
 func TestASecretTaskWithNoRecipeWaitsAndSaysWhy(t *testing.T) {

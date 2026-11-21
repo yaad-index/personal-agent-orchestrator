@@ -61,6 +61,10 @@ type Dispatcher struct {
 	OneOffs OneOffs
 	// Liveness, when set, says whether an assignee has gone quiet.
 	Liveness Liveness
+	// SecretPath, when set, says where a one-off's secret is put, so its brief
+	// can name the file as well as the variable: an agent with no shell cannot
+	// read a variable. The path is not the secret (ADR-0036 point 3).
+	SecretPath func(agent, secret string) (string, error)
 	// Tools, when set, says which attached tools are pao's proxied tools and
 	// who reaches them. An attachment grants nothing; such a tool only narrows
 	// the agents a task can go to (ADR-0036 point 2).
@@ -332,7 +336,11 @@ func (d *Dispatcher) unassign(id, agent string, why error) {
 }
 
 // Brief is the message an agent is given its task in.
-func Brief(t Task) string {
+func Brief(t Task) string { return BriefWith(t, "") }
+
+// BriefWith is Brief naming secretPath, the file the task's secret is in for
+// this run, beside the variable that holds it.
+func BriefWith(t Task, secretPath string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "You are assigned task %s: %s\n\n%s\n\nDone when: %s\n", t.ID, t.Title, t.Description, t.Done)
 	if t.How != "" {
@@ -347,7 +355,11 @@ func Brief(t Task) string {
 	if sec := t.Attachments.Secret; sec != "" {
 		// The name and where to find it: a secret's value never crosses a
 		// channel (ADR-0036 point 3).
-		fmt.Fprintf(&b, "Secret: %s. Its value is in the file whose path is in $%s, for this run only. Never print, log, commit or copy the value anywhere.\n", sec, runsecret.EnvName(sec))
+		where := fmt.Sprintf("the file whose path is in $%s", runsecret.EnvName(sec))
+		if secretPath != "" {
+			where = fmt.Sprintf("the file %s (its path is also in $%s)", secretPath, runsecret.EnvName(sec))
+		}
+		fmt.Fprintf(&b, "Secret: %s. Its value is in %s, for this run only. Read it with a file-reading tool. Never print, log, commit or copy the value anywhere.\n", sec, where)
 	}
 	if t.Parent != "" {
 		fmt.Fprintf(&b, "Created from task: %s\n", t.Parent)

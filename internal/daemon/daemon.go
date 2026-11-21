@@ -422,6 +422,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	fleet := taskFleet{reg: reg, router: router, governor: cfg.Orchestrator.Governor.Agent}
 	dispatcher := task.NewDispatcher(tasks, fleet, book)
 	dispatcher.OneOffs = taskOneOffs{mgr: mgr, secrets: secrets}
+	dispatcher.SecretPath = secrets.Path
 	taskToolReach := newTaskTools(auth, cfg.Orchestrator.MCPUpstreams)
 	dispatcher.Tools = taskToolReach
 	tasks.Proxied = taskToolReach.Proxied

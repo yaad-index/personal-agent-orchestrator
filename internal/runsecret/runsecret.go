@@ -86,6 +86,19 @@ func (s *Store) Materialize(agent, secret string) (string, error) {
 	return path, nil
 }
 
+// Path is where agent's secret is put for its run. It names a path only: the
+// path is not the secret, and may be told to the agent.
+func (s *Store) Path(agent, secret string) (string, error) {
+	if !namePattern.MatchString(secret) {
+		return "", fmt.Errorf("secret name %q", secret)
+	}
+	dir, err := s.agentDir(agent)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, secret), nil
+}
+
 // Env returns the variables naming agent's secret files, one per secret.
 func (s *Store) Env(agent string) []string {
 	dir, err := s.agentDir(agent)
