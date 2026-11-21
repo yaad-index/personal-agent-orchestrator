@@ -52,3 +52,29 @@ func TestTasksCreateSendsTheTask(t *testing.T) {
 	assert.JSONEq(t, `{"title":"Weekly report","description":"Write it.","done":"Posted.","tags":["reports","team"],"attachments":{"tools":["Read"],"secret":"report-api"}}`, s.body)
 	assert.Equal(t, sampleTask.ID+"\n", out.String())
 }
+
+func TestTasksCancelSendsTheReason(t *testing.T) {
+	canceled := sampleTask
+	canceled.Status, canceled.Folder = task.Canceled, "archive"
+	s := newStubNode(t, func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, 200, canceled) })
+	var out bytes.Buffer
+	require.NoError(t, TasksCancelCmd{NodeFlags: s.flags(t), ID: sampleTask.ID, Reason: "not needed"}.run(&out))
+	assert.Equal(t, "POST /v1/tasks/"+sampleTask.ID+"/cancel", s.path)
+	assert.JSONEq(t, `{"reason":"not needed"}`, s.body)
+	assert.Equal(t, sampleTask.ID+" canceled\n", out.String())
+}
+
+func TestTasksShowPrintsTheLog(t *testing.T) {
+	withLog := sampleTask
+	withLog.Dropped = 2
+	withLog.Log = []task.LogEntry{
+		{At: sampleTask.Created, By: "agent:bee", Kind: task.EntryComment, Text: "starting"},
+		{At: sampleTask.Created, By: "agent:bee", Kind: task.EntryStatus, Status: task.Done},
+	}
+	s := newStubNode(t, func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, 200, withLog) })
+	var out bytes.Buffer
+	require.NoError(t, TasksShowCmd{NodeFlags: s.flags(t), ID: sampleTask.ID}.run(&out))
+	assert.Contains(t, out.String(), "(2 earlier entries let go)")
+	assert.Contains(t, out.String(), "2026-11-21T18:30:00Z  agent:bee  comment: starting")
+	assert.Contains(t, out.String(), "2026-11-21T18:30:00Z  agent:bee  status done\n")
+}

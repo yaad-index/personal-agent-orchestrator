@@ -16,6 +16,8 @@ type Tasks interface {
 	Create(ctx context.Context, who access.Subject, n task.New) (task.Task, error)
 	List(ctx context.Context, who access.Subject) ([]task.Entry, error)
 	Get(ctx context.Context, who access.Subject, id string) (task.Entry, error)
+	Report(ctx context.Context, who access.Subject, id string, r task.Report) (task.Task, error)
+	Cancel(ctx context.Context, who access.Subject, id, reason string) (task.Task, error)
 }
 
 // WithTasks offers the task tools to every subject but the governor, which
@@ -27,10 +29,12 @@ const (
 	ToolCreateTask = "create_task"
 	ToolListTasks  = "list_tasks"
 	ToolGetTask    = "get_task"
+	ToolReportTask = "report_task"
+	ToolCancelTask = "cancel_task"
 )
 
 // TaskTools are the names of the task tools.
-var TaskTools = []string{ToolCreateTask, ToolListTasks, ToolGetTask}
+var TaskTools = []string{ToolCreateTask, ToolListTasks, ToolGetTask, ToolReportTask, ToolCancelTask}
 
 // TaskInfo is a task as a tool reports it.
 type TaskInfo struct {
@@ -62,6 +66,18 @@ type getTaskInput struct {
 	ID string `json:"id" jsonschema:"the task's id"`
 }
 
+type reportTaskInput struct {
+	ID      string `json:"id" jsonschema:"the task's id"`
+	Status  string `json:"status,omitempty" jsonschema:"running, blocked, done or failed; done says the definition of done is met"`
+	Comment string `json:"comment,omitempty" jsonschema:"a comment on the task"`
+	Log     string `json:"log,omitempty" jsonschema:"a line for the task's log"`
+}
+
+type cancelTaskInput struct {
+	ID     string `json:"id" jsonschema:"the task's id"`
+	Reason string `json:"reason,omitempty" jsonschema:"why it is canceled"`
+}
+
 func (s *Server) addTaskTools(srv *mcp.Server) {
 	notDestructive := false
 	mcp.AddTool(srv, &mcp.Tool{
@@ -79,6 +95,47 @@ func (s *Server) addTaskTools(srv *mcp.Server) {
 		Description: "Read one task by its id.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 	}, s.getTask)
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        ToolReportTask,
+		Description: "Report on a task you are working: set its status (running, blocked, done or failed), add a comment, add a log line, or several at once. Only the agent the task is assigned to may report. Reporting done is your word that its definition of done is met; the task then goes to the archive and takes no more reports.",
+		Annotations: &mcp.ToolAnnotations{DestructiveHint: &notDestructive},
+	}, s.reportTask)
+	destructive := true
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        ToolCancelTask,
+		Description: "Cancel a task you own that is not over. It goes to the archive with the reason. Canceling is gated: you may be asked to wait for the operator.",
+		Annotations: &mcp.ToolAnnotations{DestructiveHint: &destructive},
+	}, s.cancelTask)
+}
+
+func (s *Server) reportTask(ctx context.Context, req *mcp.CallToolRequest, in reportTaskInput) (*mcp.CallToolResult, taskOutput, error) {
+	if in.ID == "" {
+		return nil, taskOutput{}, errors.New("an id is required")
+	}
+	t, err := s.tasks.Report(ctx, subject(req), in.ID, task.Report{Status: task.Status(in.Status), Comment: in.Comment, Log: in.Log})
+	if err != nil {
+		return nil, taskOutput{}, taskError(err)
+	}
+	return nil, taskOutput{Task: TaskInfo{Task: t, Folder: folderOf(t)}}, nil
+}
+
+func (s *Server) cancelTask(ctx context.Context, req *mcp.CallToolRequest, in cancelTaskInput) (*mcp.CallToolResult, taskOutput, error) {
+	if in.ID == "" {
+		return nil, taskOutput{}, errors.New("an id is required")
+	}
+	t, err := s.tasks.Cancel(ctx, subject(req), in.ID, in.Reason)
+	if err != nil {
+		return nil, taskOutput{}, taskError(err)
+	}
+	return nil, taskOutput{Task: TaskInfo{Task: t, Folder: folderOf(t)}}, nil
+}
+
+// folderOf is the folder a task just written is kept in.
+func folderOf(t task.Task) string {
+	if t.Status.Terminal() {
+		return task.FolderArchive
+	}
+	return task.FolderOpen
 }
 
 func (s *Server) createTask(ctx context.Context, req *mcp.CallToolRequest, in createTaskInput) (*mcp.CallToolResult, taskOutput, error) {

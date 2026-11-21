@@ -63,3 +63,24 @@ func TestTheOperatorCreatesListsAndReadsTasksOnTheNode(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, strings.Contains(string(b), "secret: report-api"))
 }
+
+func TestTheOperatorCancelsATaskWhichGoesToTheArchive(t *testing.T) {
+	n := startNode(t, map[string]string{"a": ""})
+	ctx := context.Background()
+	created, err := n.client.CreateTask(ctx, local.NewTaskJSON{Title: "x", Description: "y", Done: "z", Tags: []string{"team"}})
+	require.NoError(t, err)
+
+	got, err := n.client.CancelTask(ctx, created.ID, "not needed")
+	require.NoError(t, err)
+	assert.Equal(t, task.Canceled, got.Status)
+	assert.Equal(t, task.FolderArchive, got.Folder)
+	assert.FileExists(t, filepath.Join(n.stateDir, "tasks", "archive", created.ID+".yaml"))
+	assert.NoFileExists(t, filepath.Join(n.stateDir, "tasks", "open", created.ID+".yaml"))
+	require.NotEmpty(t, got.Log)
+	assert.Equal(t, "not needed", got.Log[len(got.Log)-1].Text)
+
+	_, err = n.client.CancelTask(ctx, created.ID, "")
+	assert.ErrorContains(t, err, "400", "already over")
+	_, err = n.client.CancelTask(ctx, "t-20991231-000000-000000", "")
+	assert.ErrorContains(t, err, "404")
+}

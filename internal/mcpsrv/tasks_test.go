@@ -43,6 +43,22 @@ func (f fakeTasks) Get(_ context.Context, who access.Subject, id string) (task.E
 	return task.Entry{Task: task.Task{ID: id, Title: "x"}, Folder: task.FolderOpen}, nil
 }
 
+func (f fakeTasks) Report(_ context.Context, who access.Subject, id string, r task.Report) (task.Task, error) {
+	*f.calls = append(*f.calls, "report "+who.String()+" "+id+" "+string(r.Status)+" "+r.Comment+" "+r.Log)
+	if f.err != nil {
+		return task.Task{}, f.err
+	}
+	return task.Task{ID: id, Status: r.Status}, nil
+}
+
+func (f fakeTasks) Cancel(_ context.Context, who access.Subject, id, reason string) (task.Task, error) {
+	*f.calls = append(*f.calls, "cancel "+who.String()+" "+id+" "+reason)
+	if f.err != nil {
+		return task.Task{}, f.err
+	}
+	return task.Task{ID: id, Status: task.Canceled}, nil
+}
+
 func newFakeTasks() fakeTasks { return fakeTasks{calls: &[]string{}, news: &[]task.New{}} }
 
 func TestTheTaskToolsAreOfferedWithTasksToEveryoneButTheGovernor(t *testing.T) {
@@ -108,5 +124,38 @@ func TestTheGateRulesReadTaskReadsAsLowRiskAndLetTheTaskToolsThroughTheHook(t *t
 	}
 	for _, name := range TaskTools {
 		assert.Contains(t, rules, gate.Rule{Tool: "mcp__pao__" + name, Effect: gate.EffectAllow}, name)
+	}
+}
+
+func TestReportAndCancelCallTheServiceAndSayWhereTheTaskIsKept(t *testing.T) {
+	ft := newFakeTasks()
+	url := serve(t, sampleOps, staticResolver{"b": access.Agent("boss")}, WithTasks(ft))
+	cs := connect(t, url, "b")
+	id := "t-20261121-183000-abcdef"
+
+	running := structured[taskOutput](t, cs, ToolReportTask, map[string]any{"id": id, "status": "running", "comment": "on it", "log": "step 1"})
+	assert.Equal(t, task.FolderOpen, running.Task.Folder)
+	done := structured[taskOutput](t, cs, ToolReportTask, map[string]any{"id": id, "status": "done"})
+	assert.Equal(t, task.FolderArchive, done.Task.Folder, "a task that is over is in the archive")
+	canceled := structured[taskOutput](t, cs, ToolCancelTask, map[string]any{"id": id, "reason": "not needed"})
+	assert.Equal(t, task.FolderArchive, canceled.Task.Folder)
+	assert.Equal(t, []string{
+		"report agent:boss " + id + " running on it step 1",
+		"report agent:boss " + id + " done  ",
+		"cancel agent:boss " + id + " not needed",
+	}, *ft.calls)
+
+	for _, tool := range []string{ToolReportTask, ToolCancelTask} {
+		isErr, text := toolText(t, cs, tool, map[string]any{"id": ""})
+		assert.True(t, isErr, tool)
+		assert.Contains(t, text, "an id is required", tool)
+	}
+}
+
+func TestAReportNeedsNoQuestionButACancelIsAsked(t *testing.T) {
+	rules := GateRules(DefaultServerName)
+	assert.Contains(t, rules, gate.Rule{Tool: task.ActionReport, Effect: gate.EffectAllow})
+	for _, r := range rules {
+		assert.NotEqual(t, task.ActionCancel, r.Tool, "canceling is not classified, so it is asked")
 	}
 }
