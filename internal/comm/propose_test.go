@@ -25,7 +25,7 @@ func propose(t *testing.T, l *Layer, cmd string) core.Message {
 	return m
 }
 
-func TestAProposalGoesToTheRequesterPrivatelyWhereverTheTurnBegan(t *testing.T) {
+func TestAProposalGoesBackWhereTheTurnBegan(t *testing.T) {
 	l, _, chat, local := originSetup(t)
 	fromChat(t, l, privately("bind it"))
 	propose(t, l, "/pao agents")
@@ -33,7 +33,7 @@ func TestAProposalGoesToTheRequesterPrivatelyWhereverTheTurnBegan(t *testing.T) 
 
 	fromChat(t, l, inGroup("-5", "op", "bind it"))
 	propose(t, l, "/pao view a pause")
-	assert.Equal(t, map[string][]string{"op": {"/pao view a pause"}}, chat.take(), "asked in the group, proposed privately: never to the group")
+	assert.Equal(t, map[string][]string{"-5": {"/pao view a pause"}}, chat.take(), "asked in the group, proposed in the group, and not privately")
 	assert.Empty(t, local.texts())
 }
 

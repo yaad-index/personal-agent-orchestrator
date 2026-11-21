@@ -566,7 +566,7 @@ func TestTheGovernorRejects(t *testing.T) {
 		"two words":        {"governor:\n  agent: a\n  prefix: \"/ask me\"\n", `governor.prefix "/ask me" must be`},
 		"unknown field":    {"governor:\n  agent: a\n  model: small\n", "model"},
 		"bound": {"level: 2\nchannels:\n  - id: 1\n    name: chat\n    kind: bot\n    credential_env: PAO_BOT\n    groups:\n      - id: \"-5\"\n        name: team\n        members: operators\n" +
-			"governor:\n  agent: a\nbindings:\n  - agent: a\n    to: group:team\n", `agent "a" is the governor: what it says goes only to whoever asked it`},
+			"governor:\n  agent: a\nbindings:\n  - agent: a\n    to: group:team\n", `agent "a" is the governor: what it says goes only where it was asked`},
 	} {
 		_, err := channelsConfig(t, c.body)
 		require.Error(t, err, name)

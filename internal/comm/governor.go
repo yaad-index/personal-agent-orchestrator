@@ -77,9 +77,10 @@ func (l *Layer) toGovernor(ctx context.Context, text, subject string) (target co
 	return core.Target{Kind: core.ByName, Value: l.governor}, request, ""
 }
 
-// governorTargets is where what the governor says goes: to the subject who sent
-// the request that started its current turn, alone and privately, wherever the
-// request was sent. With no such turn it goes nowhere.
+// governorTargets is where what the governor says goes: back to the conversation
+// the request that started its current turn came from (ADR-0034 point 4), under
+// the narrowest-reader rule like any reply, and nowhere else. With no request in
+// hand it goes nowhere.
 func (l *Layer) governorTargets(agent string) []target {
 	l.mu.RLock()
 	t, ok := l.origins[agent]
@@ -87,7 +88,7 @@ func (l *Layer) governorTargets(agent string) []target {
 	if !ok || t.requester == "" {
 		return nil
 	}
-	return l.subjectTargets(t.at.channel, t.at.conversation == "", t.requester, agent)
+	return []target{{kind: toOrigin, at: t.at, agent: agent}}
 }
 
 // serve makes the governor's context subject's (ADR-0031 point 6): when the

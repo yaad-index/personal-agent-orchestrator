@@ -21,6 +21,7 @@ func TestTheInstructionsListEveryProposableCommandAndNoOther(t *testing.T) {
 	assert.Contains(t, got, "an operator sent with `/gpao`")
 	assert.NotContains(t, got, "{")
 	assert.Contains(t, got, "do not answer the question yourself", "a question is translated too, not answered")
+	assert.Contains(t, got, "or in the group they wrote in, to everyone there", "it is told its answer may be read by a whole group")
 }
 
 func TestTheInstructionsFollowTheNodesPrefixAndNarrowerSet(t *testing.T) {

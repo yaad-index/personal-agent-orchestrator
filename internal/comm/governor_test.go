@@ -34,19 +34,19 @@ func TestAGovernorRequestGoesToTheGovernorAloneAsTheSendersMessage(t *testing.T)
 	}
 }
 
-func TestWhatTheGovernorSaysGoesToTheRequesterAlone(t *testing.T) {
+func TestWhatTheGovernorSaysGoesBackWhereItWasAsked(t *testing.T) {
 	l, _, chat, local := governorSetup(t)
 	l.SetBindings([]Binding{{Agent: "a", Stream: StreamStdout, To: Dest{Kind: "group", Name: "team"}, Level: 1}})
 	require.NoError(t, l.Bind("a", "local"))
 
 	fromChat(t, l, privately("/gpao pause the coder"))
 	say(t, l, "use the acme folder?")
-	assert.Equal(t, map[string][]string{"op": {"use the acme folder?"}}, chat.take(), "privately, to the requester: no binding, no group")
+	assert.Equal(t, map[string][]string{"op": {"use the acme folder?"}}, chat.take(), "asked privately, answered privately: no binding, no group")
 	assert.Empty(t, local.texts(), "nor the channel it is bound to")
 
 	fromChat(t, l, inGroup("-5", "op", "/gpao pause the coder"))
 	say(t, l, "use the acme folder?")
-	assert.Equal(t, map[string][]string{"op": {"use the acme folder?"}}, chat.take(), "asked in the group, answered privately")
+	assert.Equal(t, map[string][]string{"-5": {"use the acme folder?"}}, chat.take(), "asked in the group, answered in the group, and not privately")
 	assert.Empty(t, local.texts())
 }
 
@@ -219,4 +219,17 @@ func TestARequesterWithNoPrivateConversationIsToldNothingAboutTheGovernor(t *tes
 	assert.Contains(t, err.Error(), "nobody has no private conversation")
 	assert.Empty(t, chat.take())
 	assert.Empty(t, local.texts())
+}
+
+func TestAGovernorReplyAGroupMayNotSeeIsHeldBackAndNotRedirected(t *testing.T) {
+	l, _, chat, local := governorSetup(t)
+	fromChat(t, l, inGroup("-5", "op", "/gpao pause the coder"))
+	l.SetOperatorAccess(func(p core.Profile) bool { return p.Name != "a" })
+	say(t, l, "use the acme folder?")
+	assert.Empty(t, chat.take(), "the group's readers may not reach the governor: not there, and not to the requester privately either")
+	assert.Empty(t, local.texts())
+
+	_, err := l.Propose(context.Background(), "a", proposal("/pao agents"))
+	assert.NoError(t, err, "pao's own message: the operators' to see")
+	assert.Equal(t, map[string][]string{"-5": {"/pao agents"}}, chat.take())
 }
