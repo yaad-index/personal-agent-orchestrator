@@ -2,7 +2,7 @@
 
 **Status:** Accepted (2026-11-21)
 
-**Superseded-by:** ADR-0032 (the governor's questions and notices go to its requester), on its acceptance
+**Superseded-by:** ADR-0032 (the governor's questions and notices go to its requester)
 
 Supersedes ADR-0030 (the governor). Keeps its points 2 and 3, and the role and bounded grants of its point 1. Changes point 1's "always-on", point 4's rule for whose view the governor reads under, and point 5's "always-on". Settles four of the points it left open: how the governor is invoked, one governor per node or per operator, which commands it may translate, and what is configurable. Extends ADR-0006 (temporary agents), ADR-0026 (operator commands from chat), ADR-0029 (output routing).
 
