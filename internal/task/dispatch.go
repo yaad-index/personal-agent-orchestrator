@@ -12,6 +12,7 @@ import (
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/access"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/runsecret"
 )
 
 // Candidate is an agent a task could be dispatched to.
@@ -34,6 +35,13 @@ type Fleet interface {
 	Deliver(ctx context.Context, agent, text string) error
 }
 
+// Tools says which tool names are tools pao offers on behalf of an upstream
+// server, and whether an agent's own access reaches one.
+type Tools interface {
+	Proxied(tool string) bool
+	Reaches(agent, tool string) bool
+}
+
 // Headroom answers whether an agent on account, judged by its rule, may be
 // given work (ADR-0035).
 type Headroom interface {
@@ -53,6 +61,10 @@ type Dispatcher struct {
 	OneOffs OneOffs
 	// Liveness, when set, says whether an assignee has gone quiet.
 	Liveness Liveness
+	// Tools, when set, says which attached tools are pao's proxied tools and
+	// who reaches them. An attachment grants nothing; such a tool only narrows
+	// the agents a task can go to (ADR-0036 point 2).
+	Tools Tools
 
 	kick chan struct{}
 
@@ -60,6 +72,8 @@ type Dispatcher struct {
 	spawning map[string]bool
 	removing map[string]bool
 	retryAt  map[string]time.Time
+	// spawnAt is when a task whose one-off failed to start may be tried again.
+	spawnAt map[string]time.Time
 }
 
 // Pao is the name pao's own log entries are made under.
@@ -97,7 +111,7 @@ func (d *Dispatcher) Run(ctx context.Context, every time.Duration) {
 // NewDispatcher returns a dispatcher whose Kick wakes its Run.
 func NewDispatcher(svc *Service, fleet Fleet, budget Headroom) *Dispatcher {
 	return &Dispatcher{Svc: svc, Fleet: fleet, Budget: budget, kick: make(chan struct{}, 1),
-		spawning: map[string]bool{}, removing: map[string]bool{}, retryAt: map[string]time.Time{}}
+		spawning: map[string]bool{}, removing: map[string]bool{}, retryAt: map[string]time.Time{}, spawnAt: map[string]time.Time{}}
 }
 
 // Pass dispatches the open tasks once, the oldest first.
@@ -137,9 +151,14 @@ func (d *Dispatcher) Pass(ctx context.Context) {
 		agent, why := d.pick(t, candidates, busy)
 		if agent == "" && d.OneOffs != nil {
 			recipe, rwhy := d.pickRecipe(t)
+			if recipe != "" && d.spawnHeld(t.ID) {
+				// Its last one-off failed to start: it waits out the retry,
+				// so a refused spawn is not asked about on every pass.
+				continue
+			}
 			if recipe != "" {
 				if owner, err := access.ParseSubject(t.Owner); err == nil && d.begin(d.spawning, t.ID) {
-					go d.spawnFor(ctx, t.ID, recipe, owner)
+					go d.spawnFor(ctx, t.ID, recipe, t.Attachments.Secret, owner)
 				}
 				continue
 			}
@@ -153,6 +172,15 @@ func (d *Dispatcher) Pass(ctx context.Context) {
 			busy[agent] = true
 		}
 	}
+}
+
+// spawnHeld reports whether a task's last one-off failed to start too recently
+// to try again.
+func (d *Dispatcher) spawnHeld(id string) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	at, ok := d.spawnAt[id]
+	return ok && d.Svc.now().Before(at)
 }
 
 // startRemoval kills a finished task's one-off beside the pass, unless a kill
@@ -178,10 +206,15 @@ func (d *Dispatcher) pick(t Task, candidates []Candidate, busy map[string]bool) 
 	if err != nil {
 		return "", fmt.Sprintf("its owner %q is not a subject", t.Owner)
 	}
+	if t.Attachments.Secret != "" {
+		// A running agent's environment cannot be made for one run alone, so a
+		// task with a secret runs on a one-off started for it (ADR-0036 point 3).
+		return "", "it names a secret, so it runs only on an agent started for it"
+	}
 	var free, withHeadroom []Candidate
 	carriers := 0
 	for _, c := range candidates {
-		if !carries(c.Tags, t.Tags) || !access.Allowed(d.Svc.Auth, owner, access.Route, access.AgentResource(c.Name, c.Tags)) {
+		if !carries(c.Tags, t.Tags) || !access.Allowed(d.Svc.Auth, owner, access.Route, access.AgentResource(c.Name, c.Tags)) || !d.reachesTools(c.Name, t) {
 			continue
 		}
 		carriers++
@@ -195,7 +228,7 @@ func (d *Dispatcher) pick(t Task, candidates []Candidate, busy map[string]bool) 
 	}
 	switch {
 	case carriers == 0:
-		return "", fmt.Sprintf("no agent its owner may reach carries every tag of %s", strings.Join(t.Tags, ", "))
+		return "", fmt.Sprintf("no agent its owner may reach, and that reaches its tools, carries every tag of %s", strings.Join(t.Tags, ", "))
 	case len(free) == 0:
 		return "", "every agent that could run it holds another task"
 	case len(withHeadroom) == 0:
@@ -208,6 +241,20 @@ func (d *Dispatcher) pick(t Task, candidates []Candidate, busy map[string]bool) 
 		return withHeadroom[i].Name < withHeadroom[j].Name
 	})
 	return withHeadroom[0].Name, ""
+}
+
+// reachesTools reports whether agent's own access reaches every attached tool
+// that is one of pao's proxied tools.
+func (d *Dispatcher) reachesTools(agent string, t Task) bool {
+	if d.Tools == nil {
+		return true
+	}
+	for _, tool := range t.Attachments.Tools {
+		if d.Tools.Proxied(tool) && !d.Tools.Reaches(agent, tool) {
+			return false
+		}
+	}
+	return true
 }
 
 // carries reports whether have holds every tag in want.
@@ -297,10 +344,10 @@ func Brief(t Task) string {
 	if len(t.Attachments.Scripts) > 0 {
 		fmt.Fprintf(&b, "Scripts: %s\n", strings.Join(t.Attachments.Scripts, ", "))
 	}
-	if t.Attachments.Secret != "" {
-		// The name alone: a secret's value never crosses a channel (ADR-0036
-		// point 3).
-		fmt.Fprintf(&b, "Secret: %s (by name only)\n", t.Attachments.Secret)
+	if sec := t.Attachments.Secret; sec != "" {
+		// The name and where to find it: a secret's value never crosses a
+		// channel (ADR-0036 point 3).
+		fmt.Fprintf(&b, "Secret: %s. Its value is in the file whose path is in $%s, for this run only. Never print, log, commit or copy the value anywhere.\n", sec, runsecret.EnvName(sec))
 	}
 	if t.Parent != "" {
 		fmt.Fprintf(&b, "Created from task: %s\n", t.Parent)

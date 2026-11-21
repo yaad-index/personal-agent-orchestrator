@@ -48,6 +48,11 @@ type Service struct {
 	// Tell hands text to an agent as a message from pao: a canceled task's
 	// assignee is told to stop. It may be nil.
 	Tell func(ctx context.Context, agent, text string) error
+	// HasSecret says whether the orchestrator config holds a secret of that
+	// name. A task naming one it does not is refused. Nil holds none.
+	HasSecret func(name string) bool
+	// Proxied says whether a tool is one of pao's proxied tools. It may be nil.
+	Proxied func(tool string) bool
 
 	// mu serialises read-modify-write of one task file.
 	mu sync.Mutex
@@ -85,6 +90,18 @@ func (s *Service) Create(ctx context.Context, who access.Subject, n New) (Task, 
 	}
 	if err := t.Validate(); err != nil {
 		return Task{}, fmt.Errorf("%w: %v", ErrBadRequest, err)
+	}
+	if sec := t.Attachments.Secret; sec != "" && (s.HasSecret == nil || !s.HasSecret(sec)) {
+		return Task{}, fmt.Errorf("%w: no secret named %q is configured", ErrBadRequest, sec)
+	}
+	if t.Attachments.Secret != "" && s.Proxied != nil {
+		for _, tool := range t.Attachments.Tools {
+			if s.Proxied(tool) {
+				// A secret runs only on an agent started for the task, and a
+				// new agent reaches no proxied tool: such a task could never run.
+				return Task{}, fmt.Errorf("%w: a task with a secret runs only on an agent started for it, which cannot reach the proxied tool %s; split it into two tasks", ErrBadRequest, tool)
+			}
+		}
 	}
 	for _, tag := range t.Tags {
 		// By tag alone: a grant of one agent's name says nothing of the work

@@ -117,7 +117,7 @@ func TestAnAgentMustCarryEveryTagAndBeReachableByTheOwner(t *testing.T) {
 	d.Pass(context.Background())
 	got := get(t, s, tk.ID)
 	assert.Equal(t, Open, got.Status)
-	assert.Contains(t, got.Log[len(got.Log)-1].Text, "no agent its owner may reach carries every tag of r")
+	assert.Contains(t, got.Log[len(got.Log)-1].Text, "no agent its owner may reach, and that reaches its tools, carries every tag of r")
 }
 
 func TestAnAgentHoldsOneTaskAtATime(t *testing.T) {
@@ -245,7 +245,7 @@ func TestTheBriefNamesTheSecretButNeverItsValue(t *testing.T) {
 	tk := Task{ID: "t-20261121-183000-abcdef", Title: "T", Description: "D", Done: "X", How: "skill: s", Parent: "t-20261121-000000-000000",
 		Attachments: Attachments{Tools: []string{"Read"}, Scripts: []string{"run.sh"}, Secret: "report-api"}}
 	b := Brief(tk)
-	for _, want := range []string{"How: skill: s", "Tools: Read", "Scripts: run.sh", "Secret: report-api (by name only)", "Created from task: t-20261121-000000-000000"} {
+	for _, want := range []string{"How: skill: s", "Tools: Read", "Scripts: run.sh", "Secret: report-api. Its value is in the file whose path is in $PAO_SECRET_REPORT_API, for this run only. Never print, log, commit or copy the value anywhere.", "Created from task: t-20261121-000000-000000"} {
 		assert.Contains(t, b, want)
 	}
 	assert.False(t, strings.Contains(Brief(Task{ID: tk.ID}), "Secret:"), "no secret, no line")

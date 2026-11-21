@@ -90,6 +90,31 @@ type Orchestrator struct {
 	Accounts []Account `yaml:"accounts"`
 	// Budget is how the accounts' figures are kept read.
 	Budget Budget `yaml:"budget"`
+	// Secrets are the secrets a task may name, each held orchestrator-side and
+	// resolved only at run (ADR-0036 point 3, extending ADR-0015 point 4).
+	Secrets []Secret `yaml:"secrets"`
+}
+
+// Secret is one secret a task may name. Its value is in the daemon's
+// environment or in a file, never in this config.
+type Secret struct {
+	// Name is how a task names it.
+	Name string `yaml:"name"`
+	// Env names the variable in the daemon's environment that holds it.
+	Env string `yaml:"env"`
+	// File is the path of a file that holds it. A relative path is resolved
+	// against the config file's directory.
+	File string `yaml:"file"`
+}
+
+// Secret returns the secret named name.
+func (o Orchestrator) Secret(name string) (Secret, bool) {
+	for _, s := range o.Secrets {
+		if s.Name == name {
+			return s, true
+		}
+	}
+	return Secret{}, false
 }
 
 // Account is one account agents draw on. Whether it is metered is a
@@ -479,6 +504,27 @@ func checkAccounts(path string, as []Account) error {
 	return nil
 }
 
+func checkSecrets(path string, ss []Secret) error {
+	names := map[string]bool{}
+	for i, s := range ss {
+		at := fmt.Sprintf("%s: secrets[%d]", path, i)
+		if !namePattern.MatchString(s.Name) {
+			return fmt.Errorf("%s: name %q must be lowercase letters, digits, '-' or '_'", at, s.Name)
+		}
+		if names[s.Name] {
+			return fmt.Errorf("%s: name %q is already used", at, s.Name)
+		}
+		names[s.Name] = true
+		switch {
+		case (s.Env == "") == (s.File == ""):
+			return fmt.Errorf("%s: give exactly one of env and file", at)
+		case s.Env != "" && !envNamePattern.MatchString(s.Env):
+			return fmt.Errorf("%s: env must name an environment variable", at)
+		}
+	}
+	return nil
+}
+
 // Temp is the temporary-agent settings.
 type Temp struct {
 	// UnusedAfter is how long after spawning an agent that never received a
@@ -620,6 +666,14 @@ func load(path string, withMesh bool) (*Config, error) {
 	for i := range o.Accounts {
 		if c := o.Accounts[i].Credentials; c != "" && !filepath.IsAbs(c) {
 			o.Accounts[i].Credentials = filepath.Join(filepath.Dir(path), c)
+		}
+	}
+	if err := checkSecrets(path, o.Secrets); err != nil {
+		return nil, err
+	}
+	for i := range o.Secrets {
+		if f := o.Secrets[i].File; f != "" && !filepath.IsAbs(f) {
+			o.Secrets[i].File = filepath.Join(filepath.Dir(path), f)
 		}
 	}
 	if o.Budget.Poll == 0 {

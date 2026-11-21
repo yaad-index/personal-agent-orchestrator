@@ -2,7 +2,9 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"os"
+	osexec "os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -11,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/yaad-index/personal-agent-orchestrator/internal/access"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/local"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/config"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
@@ -20,7 +23,9 @@ import (
 )
 
 func TestTheOperatorCreatesListsAndReadsTasksOnTheNode(t *testing.T) {
-	n := startNode(t, map[string]string{"a": ""})
+	n := startNodeWith(t, map[string]string{"a": ""}, func(_, _ string, cfg *config.Config) {
+		cfg.Orchestrator.Secrets = []config.Secret{{Name: "report-api", Env: "PAO_TEST_REPORT_SECRET"}}
+	})
 	ctx := context.Background()
 
 	created, err := n.client.CreateTask(ctx, local.NewTaskJSON{
@@ -199,4 +204,164 @@ func TestAOneOffIsSpawnedForTheOwnerAndNotForPao(t *testing.T) {
 	got, err := n.client.Task(context.Background(), id)
 	require.NoError(t, err)
 	assert.Empty(t, got.Assignee)
+}
+
+func paneEnv(t *testing.T, n *node, agent string) string {
+	t.Helper()
+	out, err := osexec.Command("tmux", "-L", n.sock, "display-message", "-p", "-t", "=pao-"+agent+":", "#{pane_pid}").Output()
+	require.NoError(t, err)
+	b, err := os.ReadFile("/proc/" + strings.TrimSpace(string(out)) + "/environ")
+	require.NoError(t, err)
+	return strings.ReplaceAll(string(b), "\x00", "\n")
+}
+
+func TestATasksSecretIsAFileForItsOneOffAloneAndGoneWithIt(t *testing.T) {
+	const value = "sk-TEST-SECRET-VALUE-0451"
+	t.Setenv("PAO_TEST_REPORT_SECRET", value)
+	no := false
+	n := startNodeWith(t, map[string]string{"a": ""}, func(dir, script string, cfg *config.Config) {
+		rdir := filepath.Join(dir, "recipes")
+		require.NoError(t, os.MkdirAll(rdir, 0o700))
+		// The recipe carries "team", as the configured agent does: the secret
+		// is what sends the task to a one-off.
+		body := strings.Replace(goodRecipe("fake"), "  backend: claude-code\n", "  backend: claude-code\n  account: local\n", 1)
+		body = strings.Replace(body, "  tags: [temp]\n", "  tags: [temp, team]\n", 1)
+		require.NoError(t, os.WriteFile(filepath.Join(rdir, "fake.yaml"), []byte(strings.ReplaceAll(body, "@@SCRIPT@@", script)), 0o600))
+		cfg.Orchestrator.RecipesDir = rdir
+		cfg.Orchestrator.Accounts = []config.Account{{Name: "local", Metered: &no}}
+		cfg.Orchestrator.Secrets = []config.Secret{{Name: "report-api", Env: "PAO_TEST_REPORT_SECRET"}}
+		for i := range cfg.Profiles {
+			cfg.Profiles[i].Account = "local"
+		}
+	}, func(o *Options) { o.DispatchEvery = 50 * time.Millisecond })
+	ctx := context.Background()
+	// The configured agent is up and free, and would be preferred to a one-off.
+	_, err := n.client.Post(ctx, "human", "hello", "name", "a")
+	require.NoError(t, err)
+	for m := n.next(t); m.Sender != "a"; m = n.next(t) {
+	}
+
+	created, err := n.client.CreateTask(ctx, local.NewTaskJSON{Title: "Post the report", Description: "Post it.", Done: "Posted.", Tags: []string{"team"},
+		Attachments: task.Attachments{Secret: "report-api"}})
+	require.NoError(t, err)
+	var got local.TaskJSON
+	require.Eventually(t, func() bool {
+		got, err = n.client.Task(ctx, created.ID)
+		return err == nil && got.Assignee != ""
+	}, 15*time.Second, 50*time.Millisecond)
+	one := got.Assignee
+	assert.True(t, strings.HasPrefix(one, "fake-"), "not the configured agent a, though it carries team and is free: %s", one)
+
+	path := filepath.Join(n.stateDir, "run-secrets", one, "report-api")
+	b, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, value, string(b))
+	env := paneEnv(t, n, one)
+	assert.Contains(t, env, "PAO_SECRET_REPORT_API="+path+"\n", "the agent is given the path")
+	assert.NotContains(t, env, value, "never the value")
+	assert.NotContains(t, paneEnv(t, n, "a"), "PAO_SECRET_", "and no other agent is given anything")
+	assert.NotContains(t, paneEnv(t, n, "a"), value, "nor inherits the variable the node read it from")
+
+	// The value is in no task file, and in nothing the operator or a channel saw.
+	files, err := filepath.Glob(filepath.Join(n.stateDir, "tasks", "*", "*.yaml"))
+	require.NoError(t, err)
+	for _, f := range files {
+		fb, err := os.ReadFile(f)
+		require.NoError(t, err)
+		assert.NotContains(t, string(fb), value, f)
+	}
+
+	_, err = n.client.CancelTask(ctx, created.ID, "")
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		got, err = n.client.Task(ctx, created.ID)
+		return err == nil && got.Removed
+	}, 15*time.Second, 50*time.Millisecond)
+	assert.NoFileExists(t, path, "gone with the agent")
+	assert.NoDirExists(t, filepath.Join(n.stateDir, "run-secrets", one))
+	hs, err := n.client.Harvests(ctx, "")
+	require.NoError(t, err)
+	require.Len(t, hs, 1)
+	assert.NotContains(t, fmt.Sprint(hs[0]), value)
+}
+
+func TestLeftoverRunSecretsAreSweptAtStart(t *testing.T) {
+	var leftover string
+	n := startNodeWith(t, map[string]string{"a": ""}, func(dir, _ string, cfg *config.Config) {
+		leftover = filepath.Join(cfg.Orchestrator.StateDir, "run-secrets", "tmp-gone", "report-api")
+		require.NoError(t, os.MkdirAll(filepath.Dir(leftover), 0o700))
+		require.NoError(t, os.WriteFile(leftover, []byte("old value"), 0o600))
+	})
+	_ = n
+	assert.NoFileExists(t, leftover)
+}
+
+func TestASecretIsResolvedFromWhatWasReadAtStartOrFromItsFile(t *testing.T) {
+	dir := t.TempDir()
+	f := filepath.Join(dir, "deploy")
+	require.NoError(t, os.WriteFile(f, []byte("file-value"), 0o600))
+	o := config.Orchestrator{Secrets: []config.Secret{{Name: "api", Env: "X_API"}, {Name: "empty", Env: "X_EMPTY"}, {Name: "deploy", File: f}, {Name: "gone", File: filepath.Join(dir, "missing")}}}
+	t.Setenv("X_API", "not-this")
+	resolve := resolveSecret(o, map[string]string{"api": "env-value"})
+	v, err := resolve("api")
+	require.NoError(t, err)
+	assert.Equal(t, "env-value", string(v), "the value read at start, not the environment as it is now")
+	v, err = resolve("deploy")
+	require.NoError(t, err)
+	assert.Equal(t, "file-value", string(v))
+	for name, want := range map[string]string{"empty": "variable X_EMPTY is empty", "gone": `secret "gone"`, "nope": `no secret named "nope"`} {
+		_, err := resolve(name)
+		require.Error(t, err, name)
+		assert.Contains(t, err.Error(), want, name)
+	}
+}
+
+func TestASecretIsWipedWhenItsOneOffFailsToStart(t *testing.T) {
+	t.Setenv("PAO_TEST_REPORT_SECRET", "sk-WIPED-WHEN-SPAWN-FAILS")
+	no := false
+	n := startNodeWith(t, map[string]string{"a": ""}, func(dir, script string, cfg *config.Config) {
+		rdir := filepath.Join(dir, "recipes")
+		require.NoError(t, os.MkdirAll(rdir, 0o700))
+		// A transcript format the node has no reader for: the spawn is refused
+		// after the secret was put in place.
+		body := strings.Replace(tempRecipe("@@SCRIPT@@", "broken", "READY>", "no-such-format"), "  backend: claude-code\n", "  backend: claude-code\n  account: local\n", 1)
+		body = strings.Replace(body, "  tags: [temp]\n", "  tags: [temp, team]\n", 1)
+		require.NoError(t, os.WriteFile(filepath.Join(rdir, "broken.yaml"), []byte(strings.ReplaceAll(body, "@@SCRIPT@@", script)), 0o600))
+		cfg.Orchestrator.RecipesDir = rdir
+		cfg.Orchestrator.Accounts = []config.Account{{Name: "local", Metered: &no}}
+		cfg.Orchestrator.Secrets = []config.Secret{{Name: "report-api", Env: "PAO_TEST_REPORT_SECRET"}}
+	}, func(o *Options) { o.DispatchEvery = 50 * time.Millisecond })
+	ctx := context.Background()
+	created, err := n.client.CreateTask(ctx, local.NewTaskJSON{Title: "x", Description: "y", Done: "z", Tags: []string{"team"}, Attachments: task.Attachments{Secret: "report-api"}})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		got, err := n.client.Task(ctx, created.ID)
+		return err == nil && len(got.Log) > 0 && strings.Contains(got.Log[len(got.Log)-1].Text, "a one-off from recipe broken could not be started")
+	}, 15*time.Second, 50*time.Millisecond)
+	left, err := os.ReadDir(filepath.Join(n.stateDir, "run-secrets"))
+	require.NoError(t, err)
+	assert.Empty(t, left, "nothing of the secret is left behind")
+}
+
+func TestTaskToolsKnowPaosProxiedToolsAndWhoReachesThem(t *testing.T) {
+	ups := []config.MCPUpstream{{Name: "search", URL: "https://x/mcp", Tools: map[string]config.UpstreamTool{"query": {Tags: []string{"research"}}}}}
+	g := toolGrants{access.Grant{Subject: access.Agent("bee"), Kind: access.ResourceTool, Tag: "research"}}
+	tt := newTaskTools(access.Matrix{Grants: g}, ups)
+	assert.True(t, tt.Proxied("search__query"))
+	assert.False(t, tt.Proxied("Read"))
+	assert.True(t, tt.Reaches("bee", "search__query"))
+	assert.False(t, tt.Reaches("wasp", "search__query"), "an agent without the tool's tag")
+	assert.False(t, tt.Reaches("bee", "Read"), "a tool pao does not proxy is reached by no grant")
+}
+
+type toolGrants []access.Grant
+
+func (g toolGrants) Of(s access.Subject) []access.Grant {
+	var out []access.Grant
+	for _, x := range g {
+		if x.Subject == s {
+			out = append(out, x)
+		}
+	}
+	return out
 }

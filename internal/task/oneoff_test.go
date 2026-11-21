@@ -26,7 +26,7 @@ type fakeOneOffs struct {
 }
 
 func (f *fakeOneOffs) Recipes() []Recipe { return f.recipes }
-func (f *fakeOneOffs) Spawn(_ context.Context, owner access.Subject, recipe string) (string, error) {
+func (f *fakeOneOffs) Spawn(_ context.Context, owner access.Subject, recipe, secret string) (string, error) {
 	if f.block != nil {
 		<-f.block
 	}
@@ -37,7 +37,11 @@ func (f *fakeOneOffs) Spawn(_ context.Context, owner access.Subject, recipe stri
 	}
 	f.n++
 	name := recipe + "-" + string(rune('a'+f.n-1))
-	f.spawned = append(f.spawned, owner.String()+" "+recipe+" -> "+name)
+	entry := owner.String() + " " + recipe + " -> " + name
+	if secret != "" {
+		entry += " with " + secret
+	}
+	f.spawned = append(f.spawned, entry)
 	return name, nil
 }
 func (f *fakeOneOffs) Kill(_ context.Context, owner access.Subject, agent string) (string, bool, error) {
@@ -360,3 +364,42 @@ func TestWhileAOneOffStartsTheTaskWaitsForIt(t *testing.T) {
 	passUntil(t, d, func() bool { return get(t, s, tk.ID).Assignee != "" })
 	assert.Equal(t, "writer-a", get(t, s, tk.ID).Assignee)
 }
+
+func TestAFailedSpawnIsNotTriedAgainBeforeTheWaitIsOver(t *testing.T) {
+	fleet := &fakeFleet{}
+	o := &fakeOneOffs{recipes: []Recipe{{Name: "writer", Tags: []string{"r"}, Account: "sub"}}, spawnErr: errors.New("request denied")}
+	d, s := oneOffDispatcher(t, opGrants("r"), fleet, headroomOf{"sub": true}, o)
+	tk := create(t, s, access.Operator, "r")
+	var attempts int
+	o2 := &countingOneOffs{fakeOneOffs: o}
+	d.OneOffs = o2
+	passUntil(t, d, func() bool { l := get(t, s, tk.ID).Log; return len(l) > 0 && l[len(l)-1].By == Pao })
+	for range 5 {
+		d.Pass(context.Background())
+	}
+	time.Sleep(50 * time.Millisecond)
+	attempts = o2.count()
+	assert.Equal(t, 1, attempts, "a refused spawn is not asked again on every pass")
+
+	o.mu.Lock()
+	o.spawnErr = nil
+	o.mu.Unlock()
+	s.Now = func() time.Time { return at.Add(retrySpawn + time.Second) }
+	passUntil(t, d, func() bool { return get(t, s, tk.ID).Assignee != "" })
+	assert.Equal(t, 2, o2.count())
+}
+
+type countingOneOffs struct {
+	*fakeOneOffs
+	mu     sync.Mutex
+	spawns int
+}
+
+func (c *countingOneOffs) Spawn(ctx context.Context, owner access.Subject, recipe, secret string) (string, error) {
+	c.mu.Lock()
+	c.spawns++
+	c.mu.Unlock()
+	return c.fakeOneOffs.Spawn(ctx, owner, recipe, secret)
+}
+
+func (c *countingOneOffs) count() int { c.mu.Lock(); defer c.mu.Unlock(); return c.spawns }
