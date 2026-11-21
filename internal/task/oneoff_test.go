@@ -86,8 +86,8 @@ func TestWithNoAgentFreeAOneOffIsSpawnedForTheOwnerAndAssigned(t *testing.T) {
 	assert.Equal(t, "assigned to writer-a, a one-off from recipe writer", got.Log[len(got.Log)-1].Text)
 	spawned, _ := o.snapshot()
 	assert.Equal(t, []string{"operator writer -> writer-a"}, spawned, "spawned with the owner as requester")
-	require.Len(t, fleet.delivered["writer-a"], 1)
-	assert.Contains(t, fleet.delivered["writer-a"][0], "You are assigned task "+tk.ID)
+	require.Eventually(t, func() bool { return len(fleet.sent("writer-a")) == 1 }, 5*time.Second, 10*time.Millisecond, "the brief is delivered just after the assignment is written")
+	assert.Contains(t, fleet.sent("writer-a")[0], "You are assigned task "+tk.ID)
 }
 
 func TestAnExistingAgentIsPreferredToAOneOff(t *testing.T) {
@@ -303,8 +303,8 @@ func TestACanceledTasksAssigneeIsToldToStop(t *testing.T) {
 	d.Pass(context.Background())
 	_, err := s.Cancel(context.Background(), access.Operator, tk.ID, "not needed")
 	require.NoError(t, err)
-	require.Len(t, fleet.delivered["bee"], 2)
-	assert.Equal(t, "Task "+tk.ID+" (Weekly report) was canceled by operator. Stop working on it. Reason: not needed", fleet.delivered["bee"][1])
+	require.Len(t, fleet.sent("bee"), 2)
+	assert.Equal(t, "Task "+tk.ID+" (Weekly report) was canceled by operator. Stop working on it. Reason: not needed", fleet.sent("bee")[1])
 }
 
 func TestRemoveKillsOnlyAFinishedOneOff(t *testing.T) {

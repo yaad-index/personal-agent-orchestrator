@@ -22,6 +22,14 @@ type fakeFleet struct {
 	fail       map[string]error
 }
 
+// sent is what agent has been delivered, read under the fleet's lock: a
+// one-off is told of its task beside the pass.
+func (f *fakeFleet) sent(agent string) []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.delivered[agent]...)
+}
+
 func (f *fakeFleet) Candidates() []Candidate { f.mu.Lock(); defer f.mu.Unlock(); return f.candidates }
 func (f *fakeFleet) Deliver(_ context.Context, agent, text string) error {
 	f.mu.Lock()
@@ -82,14 +90,14 @@ func TestAnOpenTaskGoesToAFreeAgentCarryingItsTagsWithHeadroom(t *testing.T) {
 	assert.Equal(t, Assigned, got.Status)
 	assert.Equal(t, "bee", got.Assignee)
 	assert.Equal(t, LogEntry{At: at, By: Pao, Kind: EntryStatus, Status: Assigned, Text: "assigned to bee"}, got.Log[len(got.Log)-1])
-	require.Len(t, fleet.delivered["bee"], 1)
-	brief := fleet.delivered["bee"][0]
+	require.Len(t, fleet.sent("bee"), 1)
+	brief := fleet.sent("bee")[0]
 	assert.Contains(t, brief, "You are assigned task "+tk.ID+": Weekly report")
 	assert.Contains(t, brief, "Done when: The report is posted.")
 	assert.Contains(t, brief, "report_task tool, id "+tk.ID)
 
 	d.Pass(context.Background())
-	assert.Len(t, fleet.delivered["bee"], 1, "an assigned task is not dispatched again")
+	assert.Len(t, fleet.sent("bee"), 1, "an assigned task is not dispatched again")
 }
 
 func TestAnAgentMustCarryEveryTagAndBeReachableByTheOwner(t *testing.T) {
@@ -196,7 +204,9 @@ func TestAFailedDeliveryTakesTheAssignmentBack(t *testing.T) {
 	assert.Equal(t, Open, last.Status)
 	assert.Equal(t, "bee could not be told of it: not ready", last.Text)
 
+	fleet.mu.Lock()
 	fleet.fail = nil
+	fleet.mu.Unlock()
 	d.Pass(context.Background())
 	assert.Equal(t, "bee", get(t, s, tk.ID).Assignee, "the next pass tries again")
 }
@@ -238,7 +248,7 @@ func TestATaskTakenMeanwhileIsNotAssignedAgain(t *testing.T) {
 	require.NoError(t, s.Store.Put(FolderOpen, taken))
 	assert.False(t, d.assign(context.Background(), tk.ID, "bee"))
 	assert.Equal(t, "wasp", get(t, s, tk.ID).Assignee)
-	assert.Empty(t, fleet.delivered["bee"])
+	assert.Empty(t, fleet.sent("bee"))
 }
 
 func TestTheBriefNamesTheSecretButNeverItsValue(t *testing.T) {

@@ -35,7 +35,7 @@ func TestATaskWithASecretRunsOnlyOnAOneOffStartedWithIt(t *testing.T) {
 	assert.Equal(t, "writer-a", get(t, s, tk.ID).Assignee, "the free running agent is passed over")
 	spawned, _ := o.snapshot()
 	assert.Equal(t, []string{"operator writer -> writer-a with report-api"}, spawned)
-	assert.Empty(t, fleet.delivered["bee"])
+	assert.Empty(t, fleet.sent("bee"))
 }
 
 func TestASecretTaskWithNoRecipeWaitsAndSaysWhy(t *testing.T) {
