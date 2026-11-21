@@ -28,6 +28,7 @@ The supersession is in full, as the index requires. What is kept is said below.
    - A command that changes anything is always proposed and committed. Examples: a spawn, a kill, a bind, a view change.
 
 4. **It is invoked as `/gpao <text>`.**
+   - `/gpao` is the default. A node's configuration may name another prefix in its place, as long as it is not pao's command prefix. Below, `/gpao` stands for whichever prefix the node uses.
    - Like `/pao` (ADR-0026 point 1), `/gpao` is pao's and never reaches an ordinary agent. The text after it goes to the governor alone, as a request from the sender.
    - `/gpao` is never another spelling of a `/pao` command. A command typed after `/gpao` is a request to translate, not a command.
    - A reply to the governor's clarifying question is sent with `/gpao` too. Plain text keeps its ADR-0023 routing.
