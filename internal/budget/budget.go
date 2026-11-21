@@ -167,6 +167,7 @@ func (b *Book) Poll(ctx context.Context) {
 	}
 	sort.Strings(names)
 	for _, n := range names {
+		b.expire(n)
 		b.mu.Lock()
 		due := !b.now().Before(b.nextRead[n])
 		b.mu.Unlock()
@@ -279,12 +280,45 @@ func (b *Book) Status(account string) Status {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if s, ok := b.statuses[account]; ok {
-		return s
+		return b.aged(s)
 	}
 	if account == "" {
 		return Status{State: Fault, Fault: "the agent names no account"}
 	}
 	return Status{Account: account, State: Fault, Fault: fmt.Sprintf("account %q is not configured", account)}
+}
+
+// aged is s as of now: a figure kept through transient failures that has grown
+// older than the stale limit is a fault from that moment, whether or not a read
+// has been tried since (ADR-0035 point 3). The caller holds b.mu.
+func (b *Book) aged(s Status) Status {
+	if s.State != Readable || s.Retrying == "" {
+		return s
+	}
+	expires := s.ReadAt.Add(b.maxStale)
+	if !b.now().After(expires) {
+		return s
+	}
+	return Status{Account: s.Account, State: Fault, Since: expires, RetryAt: s.RetryAt,
+		Fault: fmt.Sprintf("the last good figure, read %s, is older than %s, and reads still fail: %s", s.ReadAt.Format(time.RFC3339), b.maxStale, s.Retrying)}
+}
+
+// expire makes the fault of a kept figure past the stale limit the stored
+// state, and tells of it, without waiting for the next read.
+func (b *Book) expire(name string) {
+	b.mu.Lock()
+	prev := b.statuses[name]
+	next := b.aged(prev)
+	if next.State == prev.State {
+		b.mu.Unlock()
+		return
+	}
+	b.statuses[name] = next
+	b.mu.Unlock()
+	slog.Warn("budget: account figure unreadable", "account", name, "why", next.Fault)
+	if b.onFault != nil {
+		b.onFault(next)
+	}
 }
 
 // All returns every account's status, by name.
@@ -293,7 +327,7 @@ func (b *Book) All() []Status {
 	defer b.mu.Unlock()
 	out := make([]Status, 0, len(b.statuses))
 	for _, s := range b.statuses {
-		out = append(out, s)
+		out = append(out, b.aged(s))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Account < out[j].Account })
 	return out

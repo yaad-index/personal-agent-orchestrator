@@ -123,21 +123,57 @@ func TestATransientFailureKeepsTheLastFigureAndTellsNoOne(t *testing.T) {
 	assert.Empty(t, n.clears, "and there was no fault to clear")
 }
 
-func TestAKeptFigureOlderThanTheLimitIsAFault(t *testing.T) {
+func TestAKeptFigureOlderThanTheLimitIsAFaultTheMomentItIs(t *testing.T) {
+	r := &countingReader{fakeReader: fakeReader{f: fig(80, 60)}}
+	b, n, c := transientBook(t, r)
+	ctx := context.Background()
+	b.Poll(ctx) // good, at t0
+	// A server error that asks for an hour: no read is due again until t0+1h.
+	r.set(Figure{}, &TransientError{Err: errors.New("usage endpoint answered HTTP 503"), RetryAfter: time.Hour})
+	c.add(time.Minute)
+	b.Poll(ctx)
+	require.Equal(t, Readable, b.Status("sub").State)
+
+	c.add(14 * time.Minute) // t0+15m: at the limit, still kept
+	assert.Equal(t, Readable, b.Status("sub").State)
+	assert.True(t, b.Headroom("sub", core.BudgetRule{}))
+
+	c.add(time.Second) // past it, with no read since
+	s := b.Status("sub")
+	assert.Equal(t, Fault, s.State, "a figure older than the limit is no longer the budget")
+	assert.Equal(t, "the last good figure, read 2026-11-21T19:00:00Z, is older than 15m0s, and reads still fail: usage endpoint answered HTTP 503", s.Fault)
+	assert.Equal(t, c.Now().Add(-time.Second), s.Since, "a fault since the moment the figure expired")
+	assert.False(t, b.Headroom("sub", core.BudgetRule{}), "and grants no headroom, read or no read")
+	assert.Empty(t, n.faults, "told at the next poll")
+
+	reads := r.reads
+	b.Poll(ctx)
+	assert.Equal(t, reads, r.reads, "the endpoint's hour is still honoured")
+	assert.Equal(t, []string{"sub: " + s.Fault}, n.faults, "the poll tells of it without waiting for a read")
+	b.Poll(ctx)
+	assert.Len(t, n.faults, 1, "once")
+
+	r.set(fig(70, 50), nil)
+	c.add(time.Hour)
+	b.Poll(ctx)
+	assert.Equal(t, Readable, b.Status("sub").State)
+	assert.Equal(t, []string{"sub"}, n.clears, "and the clear is told when it reads again")
+}
+
+func TestAKeptFigureFaultsByTheLimitEvenWhenReadsKeepFailing(t *testing.T) {
 	r := &countingReader{fakeReader: fakeReader{f: fig(80, 60)}}
 	b, n, c := transientBook(t, r)
 	ctx := context.Background()
 	b.Poll(ctx)
 	r.set(Figure{}, &TransientError{Err: errors.New("usage endpoint answered HTTP 503")})
-	for i := 0; i < 10 && b.Status("sub").State == Readable; i++ {
-		c.add(5 * time.Minute)
+	for range 20 {
+		c.add(time.Minute)
 		b.Poll(ctx)
+		if c.Now().Sub(time.Date(2026, 11, 21, 19, 0, 0, 0, time.UTC)) > 15*time.Minute {
+			assert.Equal(t, Fault, b.Status("sub").State, "at %s", c.Now())
+		}
 	}
-	s := b.Status("sub")
-	assert.Equal(t, Fault, s.State, "past 15 minutes the kept figure is no longer the budget")
-	assert.Equal(t, "usage endpoint answered HTTP 503", s.Fault)
-	assert.False(t, b.Headroom("sub", core.BudgetRule{}))
-	assert.Equal(t, []string{"sub: usage endpoint answered HTTP 503"}, n.faults, "told once, when it becomes a fault")
+	assert.Len(t, n.faults, 1)
 }
 
 func TestATransientFailureWithNoGoodFigureIsAFault(t *testing.T) {
@@ -199,4 +235,29 @@ func TestAZeroStaleLimitKeepsTheDefault(t *testing.T) {
 	b := New(nil, nil, WithMaxStale(0))
 	assert.Equal(t, DefaultMaxStale, b.maxStale)
 	assert.Equal(t, time.Minute, New(nil, nil, WithMaxStale(time.Minute)).maxStale)
+}
+
+func TestAnExpiredFigureIsAFaultInTheListingToo(t *testing.T) {
+	r := &countingReader{fakeReader: fakeReader{f: fig(80, 60)}}
+	b, _, c := transientBook(t, r)
+	b.Poll(context.Background())
+	r.set(Figure{}, &TransientError{Err: errors.New("429"), RetryAfter: time.Hour})
+	c.add(time.Minute)
+	b.Poll(context.Background())
+	c.add(15 * time.Minute)
+	all := b.All()
+	require.Len(t, all, 1)
+	assert.Equal(t, Fault, all[0].State, "pao budget shows what dispatch sees")
+}
+
+func TestOnlyAFigureKeptThroughFailuresAges(t *testing.T) {
+	// A figure read well is renewed on every poll, and the poll is never longer
+	// than the limit; one not renewed because no poll came is not a failure to
+	// read, and a poll that runs a little late must not flap it to a fault.
+	r := &countingReader{fakeReader: fakeReader{f: fig(80, 60)}}
+	b, n, c := transientBook(t, r)
+	b.Poll(context.Background())
+	c.add(16 * time.Minute)
+	assert.Equal(t, Readable, b.Status("sub").State)
+	assert.Empty(t, n.faults)
 }
