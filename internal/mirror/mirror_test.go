@@ -5,7 +5,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -61,7 +60,7 @@ func (s *sink) errCount() int {
 func follow(t *testing.T, path string, start Start) (*sink, func()) {
 	t.Helper()
 	s := &sink{}
-	m := &Mirror{Reader: lineReader{}, Poll: 5 * time.Millisecond, OnError: s.onError}
+	m := &Mirror{Reader: lineReader{}, Poll: pollEvery, OnError: s.onError}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- m.Follow(ctx, path, start, s.emit) }()
@@ -76,6 +75,9 @@ func follow(t *testing.T, path string, start Start) (*sink, func()) {
 	}
 }
 
+// pollEvery is how often a test's mirror looks at the transcript.
+const pollEvery = 5 * time.Millisecond
+
 func appendTo(t *testing.T, path, text string) {
 	t.Helper()
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
@@ -85,11 +87,13 @@ func appendTo(t *testing.T, path, text string) {
 	require.NoError(t, f.Close())
 }
 
+// eventually waits for the sink to hold exactly want. On a timeout it reports
+// what the sink held last, not what it held when the wait began.
 func eventually(t *testing.T, s *sink, want ...string) {
 	t.Helper()
-	require.Eventually(t, func() bool {
-		return strings.Join(s.texts(), "|") == strings.Join(want, "|")
-	}, 3*time.Second, 5*time.Millisecond, "got %v, want %v", s.texts(), want)
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		assert.Equal(c, want, s.texts())
+	}, 3*time.Second, 5*time.Millisecond)
 }
 
 func TestFollowDeliversAppendedLinesInOrder(t *testing.T) {
@@ -173,9 +177,14 @@ func TestFollowDirectoryMovesToANewerTranscript(t *testing.T) {
 	appendTo(t, b, "from b 1\nfrom b 2\n")
 	eventually(t, s, "from b 1", "from b 2")
 
-	appendTo(t, a, "late a\n") // a is no longer the live transcript once b exists
+	// a is no longer the live transcript once b exists. Written again, it is for a
+	// while the newest file, and following looks at least once in that while.
+	appendTo(t, a, "late a\n")
+	time.Sleep(20 * pollEvery)
 	appendTo(t, b, "from b 3\n")
 	eventually(t, s, "from b 1", "from b 2", "from b 3")
+	time.Sleep(20 * pollEvery)
+	assert.Equal(t, []string{"from b 1", "from b 2", "from b 3"}, s.texts(), "nothing shown twice")
 }
 
 func TestLocate(t *testing.T) {
