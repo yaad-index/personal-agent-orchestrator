@@ -111,6 +111,8 @@ type Layer struct {
 	routes sync.Map
 	// bindings are the node's standing bindings (ADR-0029 point 3).
 	bindings []Binding
+	// proposals are the proposals whose button is open (ADR-0030).
+	proposals proposalSet
 
 	// self is this node's id in a mesh, empty outside one; known says whether an id
 	// is a node of the mesh.
