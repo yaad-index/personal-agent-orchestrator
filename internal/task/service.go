@@ -41,6 +41,9 @@ type Service struct {
 	Auth  access.Authorizer
 	Gate  Gate
 	Now   func() time.Time
+	// Changed is called after a task is created, reported on or canceled, so
+	// dispatch can look again. It may be nil.
+	Changed func()
 
 	// mu serialises read-modify-write of one task file.
 	mu sync.Mutex
@@ -98,7 +101,14 @@ func (s *Service) Create(ctx context.Context, who access.Subject, n New) (Task, 
 	if err := s.Store.Put(FolderOpen, t); err != nil {
 		return Task{}, err
 	}
+	s.changed()
 	return t, nil
+}
+
+func (s *Service) changed() {
+	if s.Changed != nil {
+		s.Changed()
+	}
 }
 
 // List returns the tasks who may see, the newest first, with their folders.
@@ -258,6 +268,7 @@ func (s *Service) Report(ctx context.Context, who access.Subject, id string, r R
 	if err := s.Store.Put(folder, t); err != nil {
 		return Task{}, err
 	}
+	s.changed()
 	return t, nil
 }
 
@@ -290,6 +301,7 @@ func (s *Service) Cancel(ctx context.Context, who access.Subject, id, reason str
 	if err := s.Store.Put(FolderArchive, t); err != nil {
 		return Task{}, err
 	}
+	s.changed()
 	return t, nil
 }
 

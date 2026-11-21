@@ -6,12 +6,16 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/local"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/config"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/mcpsrv"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/registry"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/task"
 )
 
@@ -42,6 +46,9 @@ func TestTheOperatorCreatesListsAndReadsTasksOnTheNode(t *testing.T) {
 
 	got, err := n.client.Task(ctx, created.ID)
 	require.NoError(t, err)
+	// Dispatch may have noted why it waits (the agent names no account): the
+	// task is otherwise what was created.
+	got.Log, got.Updated = nil, created.Updated
 	assert.Equal(t, created, got)
 	_, err = n.client.Task(ctx, "t-20991231-000000-000000")
 	assert.ErrorContains(t, err, "404")
@@ -83,4 +90,48 @@ func TestTheOperatorCancelsATaskWhichGoesToTheArchive(t *testing.T) {
 	assert.ErrorContains(t, err, "400", "already over")
 	_, err = n.client.CancelTask(ctx, "t-20991231-000000-000000", "")
 	assert.ErrorContains(t, err, "404")
+}
+
+func TestAnOpenTaskIsDispatchedToAnAgentWithHeadroomAndTheAgentIsTold(t *testing.T) {
+	no := false
+	n := startNodeWith(t, map[string]string{"a": "", "b": ""}, func(_, _ string, cfg *config.Config) {
+		cfg.Orchestrator.Accounts = []config.Account{{Name: "local", Metered: &no}}
+		for i := range cfg.Profiles {
+			if cfg.Profiles[i].Name == "a" {
+				cfg.Profiles[i].Account = "local"
+			}
+		}
+	}, func(o *Options) { o.DispatchEvery = 50 * time.Millisecond })
+	ctx := context.Background()
+
+	created, err := n.client.CreateTask(ctx, local.NewTaskJSON{Title: "Weekly report", Description: "Write it.", Done: "Posted.", Tags: []string{"team"}})
+	require.NoError(t, err)
+	var got local.TaskJSON
+	require.Eventually(t, func() bool {
+		got, err = n.client.Task(ctx, created.ID)
+		return err == nil && got.Assignee != ""
+	}, 10*time.Second, 20*time.Millisecond)
+	assert.Equal(t, "a", got.Assignee, "b names no account, so it has no headroom")
+	assert.Equal(t, task.Assigned, got.Status)
+
+	// The agent was told: the fake agent echoes the brief's first line.
+	for {
+		m := n.next(t)
+		if m.Sender == "a" && strings.Contains(m.Text, "You are assigned task "+created.ID) {
+			break
+		}
+	}
+}
+
+func TestTheFleetLeavesOutTheGovernorAndRemoteAgents(t *testing.T) {
+	reg := registry.New()
+	for _, p := range []core.Profile{{Name: "a", Tags: []string{"team"}, Account: "x"}, {Name: "gov", Tags: []string{"team"}}, {Name: "far", Tags: []string{"team"}, Node: "n2"}} {
+		require.NoError(t, reg.Add(p))
+	}
+	var names []string
+	for _, c := range (taskFleet{reg: reg, governor: "gov"}).Candidates() {
+		names = append(names, c.Name)
+	}
+	assert.Equal(t, []string{"a"}, names)
+	assert.Error(t, (taskFleet{reg: reg}).Deliver(context.Background(), "nobody", "x"))
 }

@@ -67,6 +67,8 @@ type Options struct {
 	MirrorPoll time.Duration
 	// PollInterval is how often startup checks for readiness.
 	PollInterval time.Duration
+	// DispatchEvery is how often open tasks are dispatched; zero is every 5s.
+	DispatchEvery time.Duration
 	// BudgetReader builds a metered account's reader; nil builds the reader the
 	// account's config names.
 	BudgetReader func(config.Account) (budget.Reader, error)
@@ -390,6 +392,9 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	budgetCtx, stopBudget := context.WithCancel(ctx)
 	defer stopBudget()
 	book := newBudget(budgetCtx, cfg, layer, opts.BudgetReader)
+	// Set before any surface serves, so no create can race the hook.
+	dispatcher := task.NewDispatcher(tasks, taskFleet{reg: reg, router: router, governor: cfg.Orchestrator.Governor.Agent}, book)
+	tasks.Changed = dispatcher.Kick
 	localOpts = append(localOpts, local.WithBudget(budgetJSON(book)))
 	srv, err := local.New(layer, token, append([]local.Option{local.WithDecider(decider), local.WithTemp(tempOps), local.WithStream(streamOps), local.WithStanding(standingOps), local.WithWatch(streamOps), local.WithLifecycle(lifeOps), local.WithRejected(rejectedAPI{rejects}), local.WithTasks(taskAPI{tasks}), local.WithIdentity(identityAPI{ids}),
 		local.WithDefaults(newDefaultsAPI(defaults, cfg.Orchestrator.Channels, router.Resolve)), local.WithGrants(grantsAPI{store: grantStore, changed: mcpServer.Refresh}),
@@ -456,6 +461,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		close(meshDone)
 	}
 	go book.Run(budgetCtx, cfg.Orchestrator.Budget.Poll)
+	go dispatcher.Run(budgetCtx, opts.DispatchEvery)
 	slog.Info("pao serving", "node", cfg.Orchestrator.Node, "listen", ln.Addr().String(), "agents", len(cfg.Profiles))
 
 	select {
