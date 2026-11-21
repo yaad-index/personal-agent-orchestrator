@@ -1,7 +1,10 @@
 package comm
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -115,4 +118,32 @@ func TestPaosMessageAboutAnAgentIsInNoAgentsScope(t *testing.T) {
 	assert.Error(t, err, "the agent cannot quote it")
 	_, err = l.Fetch("a", stored.ID)
 	assert.Error(t, err, "nor fetch it")
+}
+
+// logged captures what the layer logs during a test.
+func logged(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return &buf
+}
+
+func TestTwoBindingsThatNameTheSameConversationAreLoggedOnce(t *testing.T) {
+	l, _, chat, _ := originSetup(t)
+	buf := logged(t)
+	alice := Dest{Kind: DestPrivate, Name: "alice", Channel: "chat"}
+	l.SetBindings([]Binding{
+		bind("private:alice", 2, ""), {Agent: "a", To: alice, Level: 3},
+		stderrTo("a", "private:alice"), {Agent: "a", Stream: StreamStderr, To: alice},
+	})
+	entry(t, l, atLevel("x", 9))
+	entry(t, l, atLevel("y", 9))
+	notifyAgent(t, l, askMsg("q"))
+	notifyAgent(t, l, askMsg("q2"))
+	assert.Equal(t, map[string][]string{"-5": {"x@1", "y@1"}, "op": {"x@2", "y@2", "q", "q2"}}, chat.take(), "the first binding's copy")
+	out := buf.String()
+	assert.Equal(t, 1, strings.Count(out, "stream=stdout shown=private:alice redundant=private:alice@chat"), out)
+	assert.Equal(t, 1, strings.Count(out, "stream=stderr shown=private:alice redundant=private:alice@chat"), out)
 }

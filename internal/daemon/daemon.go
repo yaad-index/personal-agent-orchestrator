@@ -265,6 +265,11 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	watch := newWatcher(reg, opts.MirrorPoll)
 	watch.auth = auth
 	streamOps := &streamAPI{auth: auth, streams: streams, watcher: watch}
+	standing, err := loadBindingSet(filepath.Join(cfg.Orchestrator.StateDir, "bindings.json"), cfg, layer, subjectExists(ids))
+	if err != nil {
+		return err
+	}
+	standingOps := &standingAPI{auth: auth, reg: reg, set: standing}
 	lifeOps := &lifecycleAPI{auth: auth, life: life}
 	ops := &mcpOps{reg: reg, thresholds: mgr.Thresholds, recipes: mgr.Recipes, mgr: mgr, store: harvests, layer: layer, auth: auth, resolve: router.Resolve}
 	resolver := mcpsrv.Chain{
@@ -309,6 +314,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		ops.dir = dir
 		tempOps.dir = dir
 		streamOps.dir = dir
+		standingOps.dir = dir
 		lifeOps.dir = dir
 		cmds := &meshCommands{self: id.NodeID, node: meshNode, dir: dir, holds: func(name string) bool {
 			_, _, ok := reg.Lookup(name)
@@ -330,7 +336,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 
 	layer.SetCommands(chatCommands{streams: streamOps, decider: decider, agents: ops, auth: auth})
 
-	srv, err := local.New(layer, token, append([]local.Option{local.WithDecider(decider), local.WithTemp(tempOps), local.WithStream(streamOps), local.WithWatch(streamOps), local.WithLifecycle(lifeOps), local.WithRejected(rejectedAPI{rejects}), local.WithIdentity(identityAPI{ids}),
+	srv, err := local.New(layer, token, append([]local.Option{local.WithDecider(decider), local.WithTemp(tempOps), local.WithStream(streamOps), local.WithStanding(standingOps), local.WithWatch(streamOps), local.WithLifecycle(lifeOps), local.WithRejected(rejectedAPI{rejects}), local.WithIdentity(identityAPI{ids}),
 		local.WithDefaults(newDefaultsAPI(defaults, cfg.Orchestrator.Channels, router.Resolve)), local.WithGrants(grantsAPI{store: grantStore, changed: mcpServer.Refresh}),
 		local.WithMount("/mcp", mcpHandler)}, localOpts...)...)
 	if err != nil {

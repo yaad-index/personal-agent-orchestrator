@@ -25,7 +25,6 @@ func (r rejectRecorder) Record(channel, sender, kind, reason, payload string) er
 func wireChannels(cfg *config.Config, creds map[string]string, table adapter.Table, layer *comm.Layer, ids *identity.Store, rejects *rejected.Store) ([]adapter.Adapter, error) {
 	layer.SetIdentity(ids, rejectRecorder{rejects})
 	layer.SetCompositeWindow(cfg.Orchestrator.MessageWindow)
-	layer.SetBindings(standingBindings(cfg.Orchestrator.Bindings))
 	if len(cfg.Orchestrator.Channels) == 0 {
 		return nil, nil
 	}

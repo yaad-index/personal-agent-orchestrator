@@ -123,6 +123,20 @@ func (l *Layer) resolve(d Dest) []origin {
 	return nil
 }
 
+// warnSameConversation logs, once per pair, that two of an agent's bindings on a
+// stream name the same conversation, such as private:alice and private:alice@chat.
+// The conversation is shown one copy, the first binding's; the second does
+// nothing.
+func (l *Layer) warnSameConversation(agent, stream, first, second string) {
+	if first == second {
+		return
+	}
+	if _, seen := l.unshown.LoadOrStore("same\x00"+agent+"\x00"+stream+"\x00"+first+"\x00"+second, true); seen {
+		return
+	}
+	slog.Warn("two bindings name the same conversation: the second sends nothing", "agent", agent, "stream", stream, "shown", first, "redundant", second)
+}
+
 // warnUnresolved logs, once per destination, that a binding's destination names no
 // conversation, so its output goes nowhere.
 func (l *Layer) warnUnresolved(d Dest, why string) {

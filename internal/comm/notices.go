@@ -44,8 +44,14 @@ func (l *Layer) stderrTargets(agent string, m core.Message) ([]target, error) {
 		return out, nil
 	}
 	var out []target
+	first := map[origin]string{}
 	for _, b := range bs {
 		for _, at := range l.resolve(b.To) {
+			if d, seen := first[at]; seen {
+				l.warnSameConversation(agent, StreamStderr, d, b.To.String())
+				continue
+			}
+			first[at] = b.To.String()
 			if !l.noticeMay(at, m) {
 				if _, warned := l.unshown.LoadOrStore("stderr\x00"+agent+"\x00"+b.To.String(), true); !warned {
 					slog.Warn("stderr destination held back: a reader of it may not see pao's messages about the agent", "agent", agent, "destination", b.To.String())

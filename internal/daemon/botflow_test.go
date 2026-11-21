@@ -649,3 +649,76 @@ func TestANoticeThatAnAgentIsNotReadyGoesToItsStderrDestinations(t *testing.T) {
 // neverReady starts an agent that stays up and never shows its ready prompt; what
 // pao appends to the command is taken as the shell's own arguments.
 const neverReady = "sh -c 'sleep 30' sh"
+
+// TestABindingSetWhileTheNodeRunsFollowsTheAgent runs ADR-0029 point 8 over the
+// local API on a real node: a binding set while the node runs shows the agent's
+// output in the group with its prefix, is listed beside the config's, and once
+// removed shows nothing more. A config binding cannot be removed, and an agent the
+// operator may not reach is answered as one that does not exist.
+func TestABindingSetWhileTheNodeRunsFollowsTheAgent(t *testing.T) {
+	svc := &service{}
+	ts := httptest.NewServer(http.HandlerFunc(svc.handler))
+	t.Cleanup(ts.Close)
+	t.Setenv("PAO_TEST_BOT_TOKEN", "tok-1")
+	const person, group = 4242, -700
+
+	n := startNodeWith(t, map[string]string{"bee": "", "hidden": ""}, func(_, _ string, cfg *config.Config) {
+		cfg.Orchestrator.Channels = []config.Channel{{ID: 1, Name: "chat", Kind: "bot", CredentialEnv: "PAO_TEST_BOT_TOKEN",
+			Options: map[string]any{"endpoint": ts.URL + "/bot{token}/{method}", "poll_timeout": 0},
+			Groups:  []config.Group{{ID: strconv.Itoa(group), Name: "team", Members: config.MembersOperators}}}}
+		cfg.Orchestrator.Bindings = []config.Binding{{Agent: "bee", Stream: config.StreamStderr, To: "private:alice"}}
+		for i := range cfg.Profiles {
+			if cfg.Profiles[i].Name == "hidden" {
+				cfg.Profiles[i].Tags = []string{"elsewhere"}
+			}
+		}
+	}, func(o *Options) { o.Adapters = builtin.Table() })
+	ctx := context.Background()
+
+	require.NoError(t, n.client.AddSubject(ctx, "alice"))
+	inv, err := n.client.Invite(ctx, "alice", time.Hour)
+	require.NoError(t, err)
+	svc.push(chatUpdate(1, 10, person, "/register "+inv.Secret))
+	lineWith(t, svc, float64(person), "registered.")
+	require.NoError(t, n.client.SetOperator(ctx, "alice", true))
+
+	b, err := n.client.BindStanding(ctx, local.StandingJSON{Agent: "bee", To: "group:team", Prefix: "B:"})
+	require.NoError(t, err)
+	assert.Equal(t, local.StandingJSON{Agent: "bee", Stream: "stdout", To: "group:team", Level: "1", Prefix: "B:", From: "runtime"}, b, "defaults filled in")
+
+	list, err := n.client.StandingBindings(ctx, "")
+	require.NoError(t, err)
+	assert.Equal(t, []local.StandingJSON{
+		{Agent: "bee", Stream: "stderr", To: "private:alice", From: "config"},
+		{Agent: "bee", Stream: "stdout", To: "group:team", Level: "1", Prefix: "B:", From: "runtime"},
+	}, list.Bindings)
+
+	svc.push(chatUpdate(2, 11, person, "/pao agent bee hello"))
+	assert.Equal(t, "[bee]: echo: [alice]: hello", lineWith(t, svc, person, "hello"), "the origin")
+	assert.Equal(t, "B: echo: [alice]: hello", lineWith(t, svc, group, "hello"), "the binding set at runtime")
+
+	_, err = n.client.UnbindStanding(ctx, local.StandingJSON{Agent: "bee", To: "group:team"})
+	require.NoError(t, err)
+	svc.push(chatUpdate(3, 12, person, "/pao agent bee again"))
+	lineWith(t, svc, person, "again")
+	assert.Nil(t, svc.sentWith(group, "again"), "removed, it shows nothing more")
+
+	_, err = n.client.UnbindStanding(ctx, local.StandingJSON{Agent: "bee", Stream: "stderr", To: "private:alice"})
+	requireStatus(t, err, "409", "a config binding is the config's")
+	_, err = n.client.BindStanding(ctx, local.StandingJSON{Agent: "bee", To: "private:nobody"})
+	requireStatus(t, err, "400", "no such subject")
+	_, err = n.client.BindStanding(ctx, local.StandingJSON{Agent: "bee", To: "group:team", Level: "loud"})
+	requireStatus(t, err, "400", "a level is a number or log")
+
+	_, err = n.client.BindStanding(ctx, local.StandingJSON{Agent: "hidden", To: "group:team"})
+	requireStatus(t, err, "404", "an agent out of the operator's reach is not there")
+	_, err = n.client.StandingBindings(ctx, "hidden")
+	requireStatus(t, err, "404", "nor are its bindings")
+}
+
+// requireStatus checks that a local client call failed with the HTTP status.
+func requireStatus(t *testing.T, err error, status, msg string) {
+	t.Helper()
+	require.Error(t, err, msg)
+	assert.True(t, strings.HasPrefix(err.Error(), status+":"), "%s: %v", msg, err)
+}
