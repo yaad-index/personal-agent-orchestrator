@@ -1,6 +1,6 @@
 # ADR 0036: Tasks — the unit of work pao dispatches
 
-**Status:** Proposed
+**Status:** Accepted (2026-11-21)
 
 Builds on ADR-0035 (per-account budget, for dispatch headroom), ADR-0006 (temporary agents), ADR-0003 (agent name and tags), ADR-0016 (pao as an MCP server), ADR-0015 point 4 (the credential lives in the orchestrator config, not the agent), ADR-0007 (the control plane). Relates to ADR-0026 (operator commands) and ADR-0034 (the governor), which are not tasks.
 
