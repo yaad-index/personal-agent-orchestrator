@@ -43,6 +43,18 @@ func (l *Layer) Propose(ctx context.Context, agent string, m core.Message) (core
 // private conversations there that pass the reader rule, or, on a channel of one
 // conversation such as the local channel, that conversation.
 func (l *Layer) toSubject(channel string, one bool, subject, agent string, m core.Message) []target {
+	var out []target
+	for _, t := range l.subjectTargets(channel, one, subject, agent) {
+		if l.noticeMay(t.at, m) {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// subjectTargets is every conversation of subject alone on channel, before the
+// reader rule, which routing applies again to each message.
+func (l *Layer) subjectTargets(channel string, one bool, subject, agent string) []target {
 	if one {
 		return []target{{kind: toSubject, at: origin{channel: channel}, agent: agent}}
 	}
@@ -51,10 +63,7 @@ func (l *Layer) toSubject(channel string, one bool, subject, agent string, m cor
 	}
 	var out []target
 	for _, s := range l.identity.Senders(subject, channel) {
-		c := origin{channel: channel, conversation: s}
-		if l.noticeMay(c, m) {
-			out = append(out, target{kind: toSubject, at: c, agent: agent})
-		}
+		out = append(out, target{kind: toSubject, at: origin{channel: channel, conversation: s}, agent: agent})
 	}
 	return out
 }

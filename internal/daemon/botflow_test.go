@@ -821,3 +821,46 @@ func TestTheOperatorSpawnsAndKillsATemporaryAgentFromChat(t *testing.T) {
 	svc.push(chatUpdate(6, 15, person, "/pao spawn nope"))
 	lineWith(t, svc, person, "spawn from recipe nope failed: ")
 }
+
+func TestAGovernorRequestFromChatIsAnsweredToTheRequesterAlone(t *testing.T) {
+	svc := &service{}
+	ts := httptest.NewServer(http.HandlerFunc(svc.handler))
+	t.Cleanup(ts.Close)
+	t.Setenv("PAO_TEST_BOT_TOKEN", "tok-1")
+	const person, group = 4242, -700
+
+	n := startNodeWith(t, map[string]string{"bee": "", "gov": ""}, func(_, _ string, cfg *config.Config) {
+		cfg.Orchestrator.Governor = config.Governor{Agent: "gov"}
+		cfg.Orchestrator.Channels = []config.Channel{{ID: 1, Name: "chat", Kind: "bot", CredentialEnv: "PAO_TEST_BOT_TOKEN",
+			Options: map[string]any{"endpoint": ts.URL + "/bot{token}/{method}", "poll_timeout": 0},
+			Groups:  []config.Group{{ID: strconv.Itoa(group), Name: "team", Members: config.MembersOperators}}}}
+	}, func(o *Options) { o.Adapters = builtin.Table() })
+	ctx := context.Background()
+
+	require.NoError(t, n.client.AddSubject(ctx, "alice"))
+	inv, err := n.client.Invite(ctx, "alice", time.Hour)
+	require.NoError(t, err)
+	svc.push(chatUpdate(1, 10, person, "/register "+inv.Secret))
+	lineWith(t, svc, float64(person), "registered.")
+	require.NoError(t, n.client.SetOperator(ctx, "alice", true))
+
+	svc.push(groupUpdate(2, 11, person, group, "/gpao pause the bee"))
+	assert.Equal(t, "[gov]: echo: [alice]: pause the bee", lineWith(t, svc, person, "pause the bee"), "the governor's answer, privately")
+	assert.Nil(t, svc.sentWith(group, "pause the bee"), "never in the group it was asked in")
+
+	svc.push(chatUpdate(3, 12, person, "/gpao list the agents"))
+	lineWith(t, svc, person, "echo: [alice]: list the agents")
+
+	svc.push(chatUpdate(4, 13, person, "/pao stream gov"))
+	assert.Equal(t, `bad request: agent "gov" is the governor: what it says goes only to whoever asked it`, lineWith(t, svc, person, "is the governor"))
+	svc.push(chatUpdate(5, 14, person, "/pao bind gov group:team"))
+	refusal := `agent "gov" is the governor: what it says goes only to whoever asked it`
+	require.Eventually(t, func() bool {
+		for _, s := range svc.texts(person) {
+			if s == refusal {
+				return true
+			}
+		}
+		return false
+	}, 10*time.Second, 20*time.Millisecond, "the bind is refused in the operation's words")
+}

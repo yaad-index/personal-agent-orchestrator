@@ -453,7 +453,7 @@ func TestProposable(t *testing.T) {
 		"/pao spawn helper scout",
 		"/pao kill scout",
 	} {
-		got, err := Proposable(text)
+		got, err := Proposable(text, nil)
 		require.NoError(t, err, "%q", text)
 		assert.Equal(t, strings.TrimSpace(text), got)
 	}
@@ -471,7 +471,7 @@ func TestProposable(t *testing.T) {
 		"/pao agent coder a\nb":      "one line",
 		"/pao agents\n/pao allow q1": "one line",
 	} {
-		_, err := Proposable(text)
+		_, err := Proposable(text, nil)
 		require.Error(t, err, "%q", text)
 		assert.Contains(t, err.Error(), why, "%q", text)
 	}

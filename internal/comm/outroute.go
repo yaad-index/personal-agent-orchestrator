@@ -85,8 +85,17 @@ type planned struct {
 //   - To every standing binding's conversations, at the binding's level and with
 //     its prefix (points 3 and 5).
 //
-// A conversation reached two ways gets one copy, the binding's.
+// A conversation reached two ways gets one copy, the binding's. The governor's
+// output is the exception: it goes only to the subject who sent the request that
+// started its turn, privately (governorTargets).
 func (l *Layer) planFor(agent string, def int) plan {
+	if l.governor != "" && agent == l.governor {
+		// The governor speaks to whoever asked it, alone (ADR-0030): never to a
+		// binding, a group or another channel.
+		targets := l.governorTargets(agent)
+		return plan{def: rendering{level: def}, covered: map[origin]bool{},
+			byRendering: []planned{{r: rendering{level: def}, targets: targets, base: len(targets)}}}
+	}
 	l.mu.RLock()
 	only, bound := l.bound[agent]
 	t, hasOrigin := l.origins[agent]

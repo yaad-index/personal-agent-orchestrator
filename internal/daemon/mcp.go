@@ -39,6 +39,9 @@ type mcpOps struct {
 	resolve func(core.Target) ([]core.Profile, error)
 	// dir is the master's directory of agents on other nodes; nil off the mesh.
 	dir *directory.Directory
+	// propose is the node's narrower set of commands a governor may propose;
+	// empty is every such command.
+	propose []string
 }
 
 func (o mcpOps) Agents() []mcpsrv.AgentInfo {
@@ -225,9 +228,10 @@ func targetKind(byTag bool) core.TargetKind {
 // propose, and draws its button itself, labelled with the command and carrying
 // it, so what the operator reads is what a press runs, as the presser (ADR-0027
 // point 4). A command too long for a channel's button is shown without one, to
-// be sent as typed.
+// be sent as typed. A node that narrows what its governor may propose narrows
+// what any proposal may carry.
 func (o mcpOps) Propose(ctx context.Context, who access.Subject, text string) error {
-	cmd, err := command.Proposable(text)
+	cmd, err := command.Proposable(text, o.propose)
 	if err != nil {
 		return err
 	}

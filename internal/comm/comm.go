@@ -101,6 +101,10 @@ type Layer struct {
 	pre      map[string]Preprocessor
 	channels []Channel
 
+	// governor is the node's governor, by name; empty for none (ADR-0030).
+	// governorPrefix is the first word of a request to it.
+	governor, governorPrefix string
+
 	mu    sync.RWMutex
 	bound map[string]string // agent name to the channel its output goes to
 	// origins is the origin of each agent's current turn, by agent name

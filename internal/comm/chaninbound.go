@@ -304,6 +304,16 @@ func (l *Layer) receiveAsOperator(ctx context.Context, in ChannelInbound, subjec
 		defer l.closeProposal(in.Channel, in.Pressed)
 	}
 
+	// A /gpao request is pao's too: it goes to the governor alone, and leaves the
+	// sender's last address as it was.
+	if _, ok := l.governorRequest(in.Text); ok {
+		target, request, reply := l.toGovernor(in.Text)
+		if reply != "" {
+			return ChannelResult{Reply: reply}, nil
+		}
+		in.Target, in.Text = target, request
+	}
+
 	// A /pao command is pao's, whatever the target the adapter brings (ADR-0026
 	// point 1). One that addresses an agent or a tag routes its message there.
 	var addressed *core.Target
@@ -403,12 +413,25 @@ func (l *Layer) later(channel, subject string) func(context.Context, string) {
 	}
 }
 
-// CommandAsOperator runs a /pao command from the operator at a channel that
+// CommandAsOperator runs a /pao command, or passes a /gpao request to the
+// governor, from the operator at a channel that
 // routes as the operator without an identity binding, such as the node's local
 // channel. A command that addresses an agent or a tag is routed as the operator's
 // message; any other command's answer is returned as reply, for the sender alone.
 // ok is false when in.Text is not a command.
 func (l *Layer) CommandAsOperator(ctx context.Context, in Inbound) (reply string, d *Delivery, ok bool, err error) {
+	if _, isRequest := l.governorRequest(in.Text); isRequest {
+		target, request, reply := l.toGovernor(in.Text)
+		if reply != "" {
+			return reply, nil, true, nil
+		}
+		in.Target, in.Text = target, request
+		got, err := l.ReceiveAsOperator(ctx, in)
+		if err != nil {
+			return "", nil, true, err
+		}
+		return "", &got, true, nil
+	}
 	if !command.Is(in.Text) {
 		return "", nil, false, nil
 	}

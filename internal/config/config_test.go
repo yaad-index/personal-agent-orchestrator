@@ -532,3 +532,44 @@ func TestABindingAtTheLogLevel(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, BindingLevel(core.LevelLog), cfg.Orchestrator.Bindings[0].Level)
 }
+
+func TestTheGovernorIsLoaded(t *testing.T) {
+	path, err := channelsConfig(t, "governor:\n  agent: a\n  propose: [agents, spawn]\n")
+	require.NoError(t, err)
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	assert.Equal(t, Governor{Agent: "a", Propose: []string{"agents", "spawn"}}, cfg.Orchestrator.Governor)
+
+	path, err = channelsConfig(t, "governor:\n  agent: a\n  prefix: /ask\n")
+	require.NoError(t, err)
+	cfg, err = Load(path)
+	require.NoError(t, err)
+	assert.Equal(t, "/ask", cfg.Orchestrator.Governor.Prefix)
+
+	path, err = channelsConfig(t, "")
+	require.NoError(t, err)
+	cfg, err = Load(path)
+	require.NoError(t, err)
+	assert.Equal(t, Governor{}, cfg.Orchestrator.Governor, "no governor by default")
+}
+
+func TestTheGovernorRejects(t *testing.T) {
+	for name, c := range map[string]struct{ body, want string }{
+		"unknown agent":    {"governor:\n  agent: z\n", `governor.agent "z" is not a configured agent`},
+		"a gate answer":    {"governor:\n  agent: a\n  propose: [agents, allow]\n", `governor.propose[1]: "allow" is not a command a governor may propose`},
+		"help":             {"governor:\n  agent: a\n  propose: [help]\n", `governor.propose[0]: "help" is not`},
+		"no such command":  {"governor:\n  agent: a\n  propose: [launch]\n", `"launch" is not`},
+		"propose no agent": {"governor:\n  propose: [agents]\n", "governor.propose or governor.prefix is set but governor.agent is not"},
+		"prefix no agent":  {"governor:\n  prefix: /ask\n", "governor.propose or governor.prefix is set but governor.agent is not"},
+		"pao's prefix":     {"governor:\n  agent: a\n  prefix: /pao\n", `governor.prefix "/pao" must be`},
+		"no slash":         {"governor:\n  agent: a\n  prefix: ask\n", `governor.prefix "ask" must be`},
+		"two words":        {"governor:\n  agent: a\n  prefix: \"/ask me\"\n", `governor.prefix "/ask me" must be`},
+		"unknown field":    {"governor:\n  agent: a\n  model: small\n", "model"},
+		"bound": {"level: 2\nchannels:\n  - id: 1\n    name: chat\n    kind: bot\n    credential_env: PAO_BOT\n    groups:\n      - id: \"-5\"\n        name: team\n        members: operators\n" +
+			"governor:\n  agent: a\nbindings:\n  - agent: a\n    to: group:team\n", `agent "a" is the governor: what it says goes only to whoever asked it`},
+	} {
+		_, err := channelsConfig(t, c.body)
+		require.Error(t, err, name)
+		assert.Contains(t, err.Error(), c.want, name)
+	}
+}

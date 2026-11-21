@@ -21,6 +21,7 @@ import (
 	"go.yaml.in/yaml/v3"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/backend/builtin"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/command"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/gate"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/mesh"
@@ -81,6 +82,22 @@ type Orchestrator struct {
 	// Bindings are the standing bindings: who follows an agent besides the
 	// conversation it is answering (ADR-0029 point 3).
 	Bindings []Binding `yaml:"bindings"`
+	// Governor names the node's governor (ADR-0030), the agent /gpao requests
+	// go to. Unset, the node has none.
+	Governor Governor `yaml:"governor"`
+}
+
+// Governor configures the node's governor: one agent, shared by the node's
+// operators, that turns a /gpao request into a command it proposes.
+type Governor struct {
+	// Agent is the governor, by the name of a configured agent. Empty: the node
+	// has no governor, and a /gpao request is answered so.
+	Agent string `yaml:"agent"`
+	// Propose narrows the commands the governor may propose to these command
+	// words. Empty: every command a governor may propose.
+	Propose []string `yaml:"propose"`
+	// Prefix is the first word of a request to the governor. Default "/gpao".
+	Prefix string `yaml:"prefix"`
 }
 
 // Binding subscribes a destination to an agent's stream at a level (ADR-0029
@@ -552,10 +569,39 @@ func load(path string, withMesh bool) (*Config, error) {
 		seen[p.Name] = f
 		cfg.Profiles = append(cfg.Profiles, p)
 	}
+	if err := checkGovernor(path, cfg.Orchestrator.Governor, seen); err != nil {
+		return nil, err
+	}
 	if err := checkBindings(path, &cfg.Orchestrator, seen); err != nil {
 		return nil, err
 	}
 	return cfg, nil
+}
+
+// governorPrefix is the shape of a governor prefix: a slash and one word.
+var governorPrefix = regexp.MustCompile(`^/[a-z][a-z0-9_]{0,31}$`)
+
+// checkGovernor validates the governor against the node's agents and the commands
+// a governor may propose.
+func checkGovernor(path string, g Governor, agents map[string]string) error {
+	if g.Agent == "" {
+		if len(g.Propose) > 0 || g.Prefix != "" {
+			return fmt.Errorf("%s: governor.propose or governor.prefix is set but governor.agent is not", path)
+		}
+		return nil
+	}
+	if g.Prefix != "" && (!governorPrefix.MatchString(g.Prefix) || g.Prefix == command.Prefix) {
+		return fmt.Errorf("%s: governor.prefix %q must be a \"/\" and one lowercase word, and not %s", path, g.Prefix, command.Prefix)
+	}
+	if agents[g.Agent] == "" {
+		return fmt.Errorf("%s: governor.agent %q is not a configured agent", path, g.Agent)
+	}
+	for i, w := range g.Propose {
+		if !command.ProposableWord(w) {
+			return fmt.Errorf("%s: governor.propose[%d]: %q is not a command a governor may propose", path, i, w)
+		}
+	}
+	return nil
 }
 
 // checkBindings validates the standing bindings against the node's agents,
@@ -566,6 +612,7 @@ func checkBindings(path string, o *Orchestrator, agents map[string]string) error
 		Groups:   map[string]bool{},
 		Channels: map[string]bool{},
 		Level:    o.Level,
+		Governor: o.Governor.Agent,
 	}
 	for _, c := range o.Channels {
 		k.Channels[c.Name] = true
@@ -596,6 +643,9 @@ type BindingKnown struct {
 	Groups   map[string]bool
 	Channels map[string]bool
 	Level    int
+	// Governor is the governor's name, empty for none: its output goes only to
+	// whoever asked it, so it takes no binding.
+	Governor string
 }
 
 // CheckBinding validates one binding and fills in its defaults: the stream
@@ -613,6 +663,8 @@ func CheckBinding(b *Binding, k BindingKnown) error {
 	switch {
 	case !k.Agent(b.Agent):
 		return fmt.Errorf("agent %q is not a configured agent", b.Agent)
+	case k.Governor != "" && b.Agent == k.Governor:
+		return fmt.Errorf("agent %q is the governor: what it says goes only to whoever asked it", b.Agent)
 	case b.Stream != StreamStdout && b.Stream != StreamStderr:
 		return fmt.Errorf("stream must be %q or %q", StreamStdout, StreamStderr)
 	case stderrSet:

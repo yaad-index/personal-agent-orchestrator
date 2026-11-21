@@ -271,7 +271,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	}
 	standingOps := &standingAPI{auth: auth, reg: reg, set: standing}
 	lifeOps := &lifecycleAPI{auth: auth, life: life}
-	ops := &mcpOps{reg: reg, thresholds: mgr.Thresholds, recipes: mgr.Recipes, mgr: mgr, store: harvests, layer: layer, auth: auth, resolve: router.Resolve}
+	ops := &mcpOps{reg: reg, thresholds: mgr.Thresholds, recipes: mgr.Recipes, mgr: mgr, store: harvests, layer: layer, auth: auth, resolve: router.Resolve, propose: cfg.Orchestrator.Governor.Propose}
 	resolver := mcpsrv.Chain{
 		mcpsrv.NewOperatorResolver(token),
 		mcpsrv.AgentResolver{Tokens: tokens, Alive: func(agent string) bool {
@@ -334,6 +334,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		localOpts = append(localOpts, local.WithMesh(meshStatusWith(meshNode, dir)))
 	}
 
+	layer.SetGovernor(cfg.Orchestrator.Governor.Agent, cfg.Orchestrator.Governor.Prefix)
 	layer.SetCommands(chatCommands{streams: streamOps, standing: standingOps, temps: tempOps, decider: decider, agents: ops, auth: auth})
 
 	srv, err := local.New(layer, token, append([]local.Option{local.WithDecider(decider), local.WithTemp(tempOps), local.WithStream(streamOps), local.WithStanding(standingOps), local.WithWatch(streamOps), local.WithLifecycle(lifeOps), local.WithRejected(rejectedAPI{rejects}), local.WithIdentity(identityAPI{ids}),

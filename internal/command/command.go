@@ -500,12 +500,20 @@ func isNumber(s string) bool {
 // alone.
 var notProposable = map[string]bool{"help": true, "allow": true, "always": true, "deny": true}
 
+// ProposableWord reports whether a governor may propose the command word w.
+func ProposableWord(w string) bool {
+	_, ok := lookup(w)
+	return ok && !notProposable[w]
+}
+
 // Proposable checks that text is exactly one command a governor may propose
 // (ADR-0030 point 3) and returns it trimmed, as it is shown and run: one line,
 // beginning "/pao " and a command word of the table other than help and the gate's
 // answers. The short form "/pao <name> <message>" is not proposed; the long form
 // "/pao agent <name> <message>" says the same and cannot be read as a command.
-func Proposable(text string) (string, error) {
+// When only is not empty, the word must also be one of only: the node's narrower
+// set.
+func Proposable(text string, only []string) (string, error) {
 	text = strings.TrimSpace(text)
 	if strings.ContainsAny(text, "\r\n") {
 		return "", fmt.Errorf("a proposal is one line")
@@ -515,7 +523,7 @@ func Proposable(text string) (string, error) {
 		return "", fmt.Errorf("a proposal begins %q", Prefix+" ")
 	}
 	word, _ := cut(rest)
-	if _, ok := lookup(word); !ok || notProposable[word] {
+	if !ProposableWord(word) || (len(only) > 0 && !slices.Contains(only, word)) {
 		return "", fmt.Errorf("%q is not a command a governor may propose", word)
 	}
 	return text, nil
