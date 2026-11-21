@@ -134,7 +134,13 @@ func (d *Dispatcher) spawnFor(ctx context.Context, id, recipe, secret string, ow
 		d.kill(ctx, owner, name)
 		return
 	}
-	if err := d.Fleet.Deliver(ctx, name, Brief(t)); err != nil {
+	path := ""
+	if secret != "" && d.SecretPath != nil {
+		if p, err := d.SecretPath(name, secret); err == nil {
+			path = p
+		}
+	}
+	if err := d.Fleet.Deliver(ctx, name, BriefWith(t, path)); err != nil {
 		d.unassign(id, name, err)
 		d.kill(ctx, owner, name)
 	}

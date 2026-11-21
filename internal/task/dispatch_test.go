@@ -255,8 +255,9 @@ func TestTheBriefNamesTheSecretButNeverItsValue(t *testing.T) {
 	tk := Task{ID: "t-20261121-183000-abcdef", Title: "T", Description: "D", Done: "X", How: "skill: s", Parent: "t-20261121-000000-000000",
 		Attachments: Attachments{Tools: []string{"Read"}, Scripts: []string{"run.sh"}, Secret: "report-api"}}
 	b := Brief(tk)
-	for _, want := range []string{"How: skill: s", "Tools: Read", "Scripts: run.sh", "Secret: report-api. Its value is in the file whose path is in $PAO_SECRET_REPORT_API, for this run only. Never print, log, commit or copy the value anywhere.", "Created from task: t-20261121-000000-000000"} {
+	for _, want := range []string{"How: skill: s", "Tools: Read", "Scripts: run.sh", "Secret: report-api. Its value is in the file whose path is in $PAO_SECRET_REPORT_API, for this run only. Read it with a file-reading tool. Never print, log, commit or copy the value anywhere.", "Created from task: t-20261121-000000-000000"} {
 		assert.Contains(t, b, want)
 	}
 	assert.False(t, strings.Contains(Brief(Task{ID: tk.ID}), "Secret:"), "no secret, no line")
+	assert.Contains(t, BriefWith(tk, "/run/secrets/a/report-api"), "Its value is in the file /run/secrets/a/report-api (its path is also in $PAO_SECRET_REPORT_API)", "a shell-less agent is told the file itself")
 }

@@ -97,3 +97,16 @@ func TestASecretNameCannotNameAPathEvenIfItResolves(t *testing.T) {
 	assert.NoFileExists(t, filepath.Join(root, "escaped"))
 	assert.NoDirExists(t, filepath.Join(s.Dir, "tmp-a"))
 }
+
+func TestPathIsWhereMaterializePutsTheSecret(t *testing.T) {
+	s := store(t)
+	want, err := s.Path("tmp-a", "report-api")
+	require.NoError(t, err)
+	got, err := s.Materialize("tmp-a", "report-api")
+	require.NoError(t, err)
+	assert.Equal(t, want, got)
+	for _, c := range [][2]string{{"../x", "report-api"}, {"tmp-a", "../x"}} {
+		_, err := s.Path(c[0], c[1])
+		assert.Error(t, err, "%v", c)
+	}
+}

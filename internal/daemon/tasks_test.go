@@ -268,6 +268,11 @@ func TestATasksSecretIsAFileForItsOneOffAloneAndGoneWithIt(t *testing.T) {
 	assert.Equal(t, value, string(b))
 	env := paneEnv(t, n, one)
 	assert.Contains(t, env, "PAO_SECRET_REPORT_API="+path+"\n", "the agent is given the path")
+	// And its brief names the file, for an agent that has no shell to read a
+	// variable with: the fake agent echoes each line it is given.
+	for m := n.next(t); m.Sender != one || !strings.Contains(m.Text, "the file "+path); m = n.next(t) {
+		assert.NotContains(t, m.Text, value)
+	}
 	assert.NotContains(t, env, value, "never the value")
 	assert.NotContains(t, paneEnv(t, n, "a"), "PAO_SECRET_", "and no other agent is given anything")
 	assert.NotContains(t, paneEnv(t, n, "a"), value, "nor inherits the variable the node read it from")
