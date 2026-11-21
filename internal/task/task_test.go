@@ -307,3 +307,22 @@ func TestAFileHoldingAnotherTasksIDIsRefused(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "holds task "+id)
 }
+
+func TestABrokenFileIsNotFoundToAnyoneButTheOperator(t *testing.T) {
+	s, _ := service(t, grants{"operator": {tagGrant("operator", "r")}, "agent:bee": {tagGrant("agent:bee", "r")}})
+	id := "t-20261121-000000-000000"
+	require.NoError(t, os.MkdirAll(filepath.Join(s.Store.Root, FolderOpen), 0o700))
+	for name, body := range map[string]string{
+		"bad yaml":    "id: [",
+		"unknown key": "id: " + id + "\nsecret_value: x\n",
+		"other id":    "id: t-20261121-000009-000000\ntitle: t\ndescription: d\ndone: x\ntags: [r]\nowner: operator\nstatus: open\n",
+	} {
+		require.NoError(t, os.WriteFile(filepath.Join(s.Store.Root, FolderOpen, id+".yaml"), []byte(body), 0o600))
+		_, err := s.Get(context.Background(), access.Agent("bee"), id)
+		assert.ErrorIs(t, err, ErrNotFound, name)
+		assert.Equal(t, ErrNotFound.Error(), err.Error(), "%s: nothing of the file reaches an agent", name)
+		_, err = s.Get(context.Background(), access.Operator, id)
+		require.Error(t, err, name)
+		assert.NotErrorIs(t, err, ErrNotFound, "%s: the operator is told the file is broken", name)
+	}
+}

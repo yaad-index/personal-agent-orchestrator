@@ -120,16 +120,26 @@ func (s *Service) List(ctx context.Context, who access.Subject) ([]Entry, error)
 // it is not found, as if it did not exist.
 func (s *Service) Get(ctx context.Context, who access.Subject, id string) (Entry, error) {
 	t, folder, err := s.Store.Get(id)
-	if errors.Is(err, ErrNotFound) || (err == nil && !s.visible(who, t)) {
-		return Entry{}, ErrNotFound
-	}
 	if err != nil {
-		return Entry{}, err
+		return Entry{}, s.storeError(who, err)
+	}
+	if !s.visible(who, t) {
+		return Entry{}, ErrNotFound
 	}
 	if err := s.approve(ctx, who, ActionRead, map[string]string{"id": id}); err != nil {
 		return Entry{}, err
 	}
 	return Entry{Task: t, Folder: folder}, nil
+}
+
+// storeError is what who is told when a task could not be read. A file that is
+// broken is the operator's to see and mend; to anyone else it is not found, as a
+// task they may not see is, since whose it is cannot be read either.
+func (s *Service) storeError(who access.Subject, err error) error {
+	if errors.Is(err, ErrNotFound) || who.Kind != access.KindOperator {
+		return ErrNotFound
+	}
+	return err
 }
 
 // visible reports whether who may see t: its owner may, as may whoever may see
