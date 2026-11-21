@@ -64,21 +64,35 @@ var ownedPattern = func() []*regexp.Regexp {
 	return out
 }()
 
-// trustPrompt is Claude Code's first-run question on a working directory it has
-// not been told to trust. The cursor starts on "No, exit"; one key down is "Yes,
-// I trust this folder", which Claude Code records for that directory alone.
-var trustPrompt = backend.Prompt{
-	About:   "trust the working directory",
-	Pattern: regexp.MustCompile(`(?s)Is this a project you created or one you trust.*Yes, I trust this folder`),
-	Keys:    []string{"Down", "Enter"},
-}
+// The question Claude Code asks on starting in a working directory it has not
+// been told to trust, answered in two steps by where its cursor is: down from
+// "No, exit" to "Yes, I trust this folder", then confirm. Claude Code records
+// the yes for that directory alone. It may draw the question before it takes
+// keys, so a key can be lost; each step names the state it applies in, so it is
+// sent again until it takes, and Enter is only ever sent with the cursor on yes.
+var (
+	trustDown = backend.Prompt{
+		About:   "trust the working directory (to yes)",
+		Pattern: regexp.MustCompile(`(?ms)Is this a project you created or one you trust.*^\s*❯ No, exit\s*\n\s*Yes, I trust this folder`),
+		Keys:    []string{"Down"},
+		Tries:   3,
+	}
+	trustConfirm = backend.Prompt{
+		About:   "trust the working directory (confirm)",
+		Pattern: regexp.MustCompile(`(?ms)Is this a project you created or one you trust.*^\s*❯ Yes, I trust this folder`),
+		Keys:    []string{"Enter"},
+		Tries:   3,
+	}
+)
 
 var _ backend.Prompter = Adapter{}
 
 // Prompts implements backend.Prompter: the question whether to trust the working
 // directory. It is safe to answer for a provisioned profile too, since Command
 // shuts out every setting source in a provisioned directory.
-func (Adapter) Prompts(core.Profile) []backend.Prompt { return []backend.Prompt{trustPrompt} }
+func (Adapter) Prompts(core.Profile) []backend.Prompt {
+	return []backend.Prompt{trustDown, trustConfirm}
+}
 
 // Isolates implements backend.Adapter: Claude Code can shut out every category.
 func (Adapter) Isolates() []backend.Category { return backend.Categories }

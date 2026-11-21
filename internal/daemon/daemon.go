@@ -68,6 +68,9 @@ type Options struct {
 	MirrorPoll time.Duration
 	// PollInterval is how often startup checks for readiness.
 	PollInterval time.Duration
+	// PromptSettle is how long a start-up question must be shown before it is
+	// answered; zero is control.DefaultSettle.
+	PromptSettle time.Duration
 	// DispatchEvery is how often open tasks are dispatched; zero is every 5s.
 	DispatchEvery time.Duration
 	// BudgetReader builds a metered account's reader; nil builds the reader the
@@ -197,6 +200,9 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	}
 
 	var ctlOpts []control.Option
+	if opts.PromptSettle > 0 {
+		ctlOpts = append(ctlOpts, control.WithSettle(opts.PromptSettle))
+	}
 	if opts.PollInterval > 0 {
 		ctlOpts = append(ctlOpts, control.WithPollInterval(opts.PollInterval))
 	}
@@ -249,7 +255,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 			}
 			var out []control.Prompt
 			for _, q := range backends.Table().Prompts(p) {
-				out = append(out, control.Prompt{About: q.About, Pattern: q.Pattern, Keys: q.Keys})
+				out = append(out, control.Prompt{About: q.About, Pattern: q.Pattern, Keys: q.Keys, Tries: q.Tries})
 			}
 			return out
 		}),

@@ -212,13 +212,24 @@ const trustPane = `────────────────────�
  Enter to confirm · Esc to cancel
 `
 
-func TestTheTrustQuestionIsAnsweredWithYes(t *testing.T) {
+func TestTheTrustQuestionIsAnsweredWithYesByWhereTheCursorIs(t *testing.T) {
 	ps := Adapter{}.Prompts(core.Profile{Name: "a"})
-	require.Len(t, ps, 1)
-	assert.True(t, ps[0].Pattern.MatchString(trustPane), "the question as Claude Code shows it")
-	assert.Equal(t, []string{"Down", "Enter"}, ps[0].Keys, "from No, exit down to Yes, then confirm")
-	assert.False(t, ps[0].Pattern.MatchString("❯ Try \"refactor <filepath>\"\n  ⏵⏵ auto mode on"), "not the ready prompt")
-	assert.False(t, ps[0].Pattern.MatchString("[alice]: Is this a project you created or one you trust?"), "not the question alone, without its answer")
+	require.Len(t, ps, 2)
+	down, confirm := ps[0], ps[1]
+	onYes := strings.Replace(strings.Replace(trustPane, " ❯ No, exit", "   No, exit", 1), "   Yes, I trust this folder", " ❯ Yes, I trust this folder", 1)
+	require.NotEqual(t, trustPane, onYes)
+
+	assert.True(t, down.Pattern.MatchString(trustPane), "with the cursor on No, move down")
+	assert.Equal(t, []string{"Down"}, down.Keys)
+	assert.False(t, down.Pattern.MatchString(onYes), "never down from Yes")
+	assert.True(t, confirm.Pattern.MatchString(onYes), "with the cursor on Yes, confirm")
+	assert.Equal(t, []string{"Enter"}, confirm.Keys)
+	assert.False(t, confirm.Pattern.MatchString(trustPane), "never Enter with the cursor on No: that would exit")
+	for _, q := range ps {
+		assert.Equal(t, 3, q.Tries, "a lost key is sent again")
+		assert.False(t, q.Pattern.MatchString("❯ Try \"refactor <filepath>\"\n  ⏵⏵ auto mode on"), "not the ready prompt")
+		assert.False(t, q.Pattern.MatchString("[alice]: Is this a project you created or one you trust? ❯ Yes, I trust this folder"), "not the question quoted in a message")
+	}
 }
 
 func TestAProvisionedDirectorysSettingsAreNotLoaded(t *testing.T) {
@@ -234,7 +245,7 @@ func TestAProvisionedDirectorysSettingsAreNotLoaded(t *testing.T) {
 	assert.NotContains(t, env, "CLAUDE_CODE_SYNC_PLUGINS=0")
 
 	ps := Adapter{}.Prompts(core.Profile{Name: "tmp", Provisioned: true})
-	assert.Len(t, ps, 1, "its trust question may be answered: nothing in the directory is loaded")
+	assert.Len(t, ps, 2, "its trust question may be answered: nothing in the directory is loaded")
 }
 
 func TestAConfiguredAgentStillLoadsItsOwnDirectorysSettings(t *testing.T) {

@@ -301,7 +301,7 @@ var trust = Prompt{About: "trust", Pattern: regexp.MustCompile(`trust this folde
 func TestLaunchAnswersAStartUpQuestionOnceThenWaitsForReady(t *testing.T) {
 	ft := &fakeTerm{panes: []string{"loading", "trust this folder?", "trust this folder?", "welcome\nREADY>"}}
 	var asked []string
-	p := New(ft, WithPollInterval(time.Millisecond), WithPrompts(func(prof core.Profile) []Prompt {
+	p := New(ft, WithPollInterval(time.Millisecond), WithSettle(0), WithPrompts(func(prof core.Profile) []Prompt {
 		asked = append(asked, prof.Name)
 		return []Prompt{trust}
 	}))
@@ -312,7 +312,7 @@ func TestLaunchAnswersAStartUpQuestionOnceThenWaitsForReady(t *testing.T) {
 
 func TestAStartUpQuestionThatComesBackTimesOut(t *testing.T) {
 	ft := &fakeTerm{panes: []string{"trust this folder?"}}
-	p := New(ft, WithPollInterval(time.Millisecond), WithPrompts(func(core.Profile) []Prompt { return []Prompt{trust} }))
+	p := New(ft, WithPollInterval(time.Millisecond), WithSettle(0), WithPrompts(func(core.Profile) []Prompt { return []Prompt{trust} }))
 	_, ok := AsReadinessError(p.Launch(context.Background(), profile(30*time.Millisecond)))
 	assert.True(t, ok, "not ready, as any start that stays at a question")
 	assert.Equal(t, []string{"a:Down,Enter"}, ft.keys, "answered once only")
@@ -336,4 +336,49 @@ func TestAQuestionThatIsNotShownIsNotAnswered(t *testing.T) {
 	p := New(ft, WithPollInterval(time.Millisecond), WithPrompts(func(core.Profile) []Prompt { return []Prompt{trust} }))
 	require.NoError(t, p.Launch(context.Background(), profile(time.Second)))
 	assert.Empty(t, ft.keys, "no key is sent to a terminal that never asked")
+}
+
+func TestAQuestionIsAnsweredOnlyOnceItHasBeenShownAWhile(t *testing.T) {
+	// Shown on one poll only, then gone: drawn and dismissed before it settled.
+	ft := &fakeTerm{panes: []string{"trust this folder?", "welcome\nREADY>"}}
+	p := New(ft, WithPollInterval(time.Millisecond), WithSettle(time.Hour), WithPrompts(func(core.Profile) []Prompt { return []Prompt{trust} }))
+	require.NoError(t, p.Launch(context.Background(), profile(time.Second)))
+	assert.Empty(t, ft.keys, "no key before the question has settled")
+
+	ft = &fakeTerm{panes: []string{"loading", "trust this folder?", "trust this folder?", "trust this folder?", "welcome\nREADY>"}}
+	p = New(ft, WithPollInterval(5*time.Millisecond), WithSettle(8*time.Millisecond), WithPrompts(func(core.Profile) []Prompt { return []Prompt{trust} }))
+	require.NoError(t, p.Launch(context.Background(), profile(time.Second)))
+	assert.Equal(t, []string{"a:Down,Enter"}, ft.keys, "answered once it had been shown past the settle time")
+}
+
+func TestAnAnswerThatDidNotTakeIsSentAgainUpToItsTries(t *testing.T) {
+	again := Prompt{About: "again", Pattern: regexp.MustCompile(`cursor on no`), Keys: []string{"Down"}, Tries: 3}
+	ft := &fakeTerm{panes: []string{"cursor on no"}}
+	p := New(ft, WithPollInterval(time.Millisecond), WithSettle(3*time.Millisecond), WithPrompts(func(core.Profile) []Prompt { return []Prompt{again} }))
+	_, ok := AsReadinessError(p.Launch(context.Background(), profile(100*time.Millisecond)))
+	assert.True(t, ok)
+	assert.Equal(t, []string{"a:Down", "a:Down", "a:Down"}, ft.keys, "a key that was lost is sent again, three times at most")
+}
+
+func TestAnAnswerIsSentAgainOnlyAfterTheSettleTime(t *testing.T) {
+	again := Prompt{About: "again", Pattern: regexp.MustCompile(`cursor on no`), Keys: []string{"Down"}, Tries: 3}
+	ft := &fakeTerm{panes: []string{"cursor on no"}}
+	p := New(ft, WithPollInterval(time.Millisecond), WithSettle(40*time.Millisecond), WithPrompts(func(core.Profile) []Prompt { return []Prompt{again} }))
+	_, _ = AsReadinessError(p.Launch(context.Background(), profile(100*time.Millisecond)))
+	// The first at 40ms, the next no sooner than 40ms after it: at most two in
+	// 100ms, where answering on every poll would use all three tries at once.
+	assert.GreaterOrEqual(t, len(ft.keys), 1)
+	assert.LessOrEqual(t, len(ft.keys), 2)
+}
+
+func TestAQuestionThatGoesAwaySettlesAfreshWhenItComesBack(t *testing.T) {
+	q := Prompt{About: "q", Pattern: regexp.MustCompile(`asking`), Keys: []string{"Enter"}}
+	// Each poll is a second on this clock: shown for 4, gone for 1, shown for 4.
+	panes := []string{"asking", "asking", "asking", "asking", "redrawing", "asking", "asking", "asking", "asking", "welcome\nREADY>"}
+	ft := &fakeTerm{panes: panes}
+	p := New(ft, WithPollInterval(time.Millisecond), WithSettle(5*time.Second), WithPrompts(func(core.Profile) []Prompt { return []Prompt{q} }))
+	at := time.Unix(0, 0)
+	p.clock = func() time.Time { at = at.Add(time.Second); return at }
+	require.NoError(t, p.Launch(context.Background(), profile(time.Second)))
+	assert.Empty(t, ft.keys, "eight seconds shown in all, but never five in a row")
 }

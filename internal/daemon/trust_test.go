@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -21,9 +22,16 @@ import (
 func trustingAgent(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "trust.sh")
-	require.NoError(t, os.WriteFile(path, []byte(`printf '%s\n' "$@" > "$0.$(basename "$PWD").args"
+	// As Claude Code does, it draws the question with the cursor on No, moves the
+	// cursor to Yes on Down (redrawing in place), and takes Enter as the answer.
+	require.NoError(t, os.WriteFile(path, []byte(`[ -z "$BASH_VERSION" ] && exec bash "$0" "$@"
+printf '%s\n' "$@" > "$0.$(basename "$PWD").args"
 printf 'Quick safety check: Is this a project you created or one you trust?\n ❯ No, exit\n   Yes, I trust this folder\n'
-read -r answer
+IFS= read -rsn3 down
+printf '\033[2J\033[H'
+printf 'Quick safety check: Is this a project you created or one you trust?\n   No, exit\n ❯ Yes, I trust this folder\n'
+IFS= read -rs answer
+printf '\033[2J\033[H'
 echo 'READY>'
 exec cat
 `), 0o700))
@@ -37,7 +45,7 @@ func TestATrustQuestionIsAnsweredForAConfiguredAgentAndForATemporaryOneWithItsSe
 		require.NoError(t, os.MkdirAll(rdir, 0o700))
 		require.NoError(t, os.WriteFile(filepath.Join(rdir, "cloned.yaml"), []byte(tempRecipe(script, "cloned", "READY>", "claude-code")), 0o600))
 		cfg.Orchestrator.RecipesDir = rdir
-	})
+	}, func(o *Options) { o.PromptSettle = 30 * time.Millisecond })
 	ctx := context.Background()
 
 	require.NoError(t, n.client.AgentAction(ctx, "bee", "start"), "the operator's own agent: answered, and ready")
