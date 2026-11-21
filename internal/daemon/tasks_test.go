@@ -178,6 +178,16 @@ func TestATaskNoAgentCanRunGetsAOneOffWhichIsKilledWhenTheTaskIsOver(t *testing.
 	require.NoError(t, err)
 	require.Len(t, hs, 1)
 	assert.Equal(t, one, hs[0].Agent)
+	// The harvest is in the task's log; no one is sent a report of the kill.
+	for {
+		select {
+		case m := <-n.events:
+			assert.NotContains(t, m.Text, hs[0].ID, "the kill is reported to no one")
+			continue
+		case <-time.After(300 * time.Millisecond):
+		}
+		break
+	}
 }
 
 func TestAOneOffIsSpawnedForTheOwnerAndNotForPao(t *testing.T) {
@@ -364,4 +374,35 @@ func (g toolGrants) Of(s access.Subject) []access.Grant {
 		}
 	}
 	return out
+}
+
+func TestAOneOffThatNeverBecomesReadyIsKilledWithNoReport(t *testing.T) {
+	no := false
+	n := startNodeWith(t, map[string]string{"a": ""}, func(dir, script string, cfg *config.Config) {
+		rdir := filepath.Join(dir, "recipes")
+		require.NoError(t, os.MkdirAll(rdir, 0o700))
+		body := strings.Replace(tempRecipe("@@SCRIPT@@", "stuck", "NEVER-READY>", "claude-code"), "  backend: claude-code\n", "  backend: claude-code\n  account: local\n", 1)
+		require.NoError(t, os.WriteFile(filepath.Join(rdir, "stuck.yaml"), []byte(strings.ReplaceAll(body, "@@SCRIPT@@", script)), 0o600))
+		cfg.Orchestrator.RecipesDir = rdir
+		cfg.Orchestrator.Accounts = []config.Account{{Name: "local", Metered: &no}}
+	}, func(o *Options) { o.DispatchEvery = 50 * time.Millisecond })
+	ctx := context.Background()
+	created, err := n.client.CreateTask(ctx, local.NewTaskJSON{Title: "x", Description: "y", Done: "z", Tags: []string{"temp"}})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		got, err := n.client.Task(ctx, created.ID)
+		return err == nil && len(got.Log) > 0 && strings.Contains(got.Log[len(got.Log)-1].Text, "could not be started")
+	}, 15*time.Second, 50*time.Millisecond)
+	hs, err := n.client.Harvests(ctx, "")
+	require.NoError(t, err)
+	require.Len(t, hs, 1, "the agent that never became ready was killed, harvesting first")
+	for {
+		select {
+		case m := <-n.events:
+			assert.NotContains(t, m.Text, "harvested", "its kill is reported to no one")
+			continue
+		case <-time.After(300 * time.Millisecond):
+		}
+		break
+	}
 }

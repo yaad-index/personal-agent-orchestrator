@@ -203,7 +203,7 @@ func TestAnOriginOnTheBoundChannelGetsOneCopy(t *testing.T) {
 func TestPaosOwnMessagesAreNotRoutedByAnOrigin(t *testing.T) {
 	l, _, chat, local := originSetup(t)
 	fromChat(t, l, privately("hi"))
-	_, err := l.Notify(context.Background(), core.Message{Sender: "pao", Text: "allow?", Actions: question.Actions})
+	_, err := l.notify(context.Background(), core.Message{Sender: "pao", Text: "allow?", Actions: question.Actions})
 	require.NoError(t, err)
 	assert.Equal(t, map[string][]string{"op": {"allow?"}}, chat.take(), "the operator privately, as with no origin")
 	assert.Len(t, local.texts(), 1)
