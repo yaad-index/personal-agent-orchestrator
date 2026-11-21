@@ -10,13 +10,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/local"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/comm"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/config"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/msgstore"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/registry"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/route"
-	"github.com/yaad-index/personal-agent-orchestrator/internal/temp"
 )
 
 // bindingRig is a binding set over a layer with the local channel and a channel
@@ -105,11 +105,11 @@ func TestARuntimeBindingIsRemovedAndAConfigBindingIsNot(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = r.set.remove("bee", "stdout", "group:team")
-	require.ErrorIs(t, err, errBindingTaken)
+	require.ErrorIs(t, err, local.ErrConflict)
 	assert.Contains(t, err.Error(), "by the config")
 
 	_, err = r.set.remove("bee", "", "channel:local")
-	require.ErrorIs(t, err, temp.ErrNotFound, "an empty stream is stdout, and bee has no stdout binding to local")
+	require.ErrorIs(t, err, local.ErrNotFound, "an empty stream is stdout, and bee has no stdout binding to local")
 
 	gone, err := r.set.remove("bee", "stderr", "channel:local")
 	require.NoError(t, err)
@@ -124,13 +124,13 @@ func TestABindingSetAtRuntimeIsCheckedAsTheConfigChecksOne(t *testing.T) {
 		b    config.Binding
 		want error
 	}{
-		"config duplicate":  {config.Binding{Agent: "bee", To: "group:team"}, errBindingTaken},
-		"unknown agent":     {config.Binding{Agent: "moth", To: "group:team"}, temp.ErrBadRequest},
-		"unknown group":     {config.Binding{Agent: "bee", To: "group:other"}, temp.ErrBadRequest},
-		"unknown subject":   {config.Binding{Agent: "bee", To: "private:bob"}, temp.ErrBadRequest},
-		"bad destination":   {config.Binding{Agent: "bee", To: "room:x"}, temp.ErrBadRequest},
-		"stderr with level": {config.Binding{Agent: "bee", Stream: "stderr", To: "private:alice", Level: 3}, temp.ErrBadRequest},
-		"long prefix":       {config.Binding{Agent: "bee", To: "private:alice", Prefix: "12345678901"}, temp.ErrBadRequest},
+		"config duplicate":  {config.Binding{Agent: "bee", To: "group:team"}, local.ErrConflict},
+		"unknown agent":     {config.Binding{Agent: "moth", To: "group:team"}, local.ErrBadRequest},
+		"unknown group":     {config.Binding{Agent: "bee", To: "group:other"}, local.ErrBadRequest},
+		"unknown subject":   {config.Binding{Agent: "bee", To: "private:bob"}, local.ErrBadRequest},
+		"bad destination":   {config.Binding{Agent: "bee", To: "room:x"}, local.ErrBadRequest},
+		"stderr with level": {config.Binding{Agent: "bee", Stream: "stderr", To: "private:alice", Level: 3}, local.ErrBadRequest},
+		"long prefix":       {config.Binding{Agent: "bee", To: "private:alice", Prefix: "12345678901"}, local.ErrBadRequest},
 	} {
 		_, err := r.set.add(c.b)
 		assert.ErrorIs(t, err, c.want, name)
@@ -138,7 +138,7 @@ func TestABindingSetAtRuntimeIsCheckedAsTheConfigChecksOne(t *testing.T) {
 	_, err := r.set.add(config.Binding{Agent: "bee", To: "private:alice"})
 	require.NoError(t, err)
 	_, err = r.set.add(config.Binding{Agent: "bee", To: "private:alice", Level: 4})
-	assert.ErrorIs(t, err, errBindingTaken, "a runtime duplicate, whatever its level")
+	assert.ErrorIs(t, err, local.ErrConflict, "a runtime duplicate, whatever its level")
 	_, err = r.set.add(config.Binding{Agent: "bee", Stream: "stderr", To: "private:alice"})
 	assert.NoError(t, err, "the other stream to the same destination")
 	assert.Len(t, r.set.list(""), 3)

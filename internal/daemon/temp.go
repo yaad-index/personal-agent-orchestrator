@@ -84,7 +84,7 @@ func translate(err error) error {
 		return translated{local.ErrConflict, err}
 	case errors.Is(err, temp.ErrDenied):
 		return translated{local.ErrForbidden, err}
-	case errors.Is(err, errViewer), errors.Is(err, errTemporaryAgent), errors.Is(err, errBindingTaken):
+	case errors.Is(err, errViewer), errors.Is(err, errTemporaryAgent):
 		return translated{local.ErrConflict, err}
 	case errors.Is(err, errTooManyWatches):
 		return translated{local.ErrBusy, err}

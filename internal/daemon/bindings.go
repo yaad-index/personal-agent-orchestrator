@@ -10,11 +10,11 @@ import (
 	"slices"
 	"sync"
 
+	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/local"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/comm"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/config"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/identity"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/statefile"
-	"github.com/yaad-index/personal-agent-orchestrator/internal/temp"
 )
 
 // Where a standing binding was set.
@@ -117,15 +117,15 @@ func (s *bindingSet) check(b *config.Binding) error {
 // On an error nothing is changed, on disk or in the layer.
 func (s *bindingSet) add(b config.Binding) (config.Binding, error) {
 	if err := s.check(&b); err != nil {
-		return config.Binding{}, fmt.Errorf("%w: %w", temp.ErrBadRequest, err)
+		return config.Binding{}, translated{local.ErrBadRequest, err}
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if slices.ContainsFunc(s.config, func(c config.Binding) bool { return c.Key() == b.Key() }) {
-		return config.Binding{}, fmt.Errorf("%w: agent %q is already bound to %s by the config", errBindingTaken, b.Agent, b.To)
+		return config.Binding{}, translated{local.ErrConflict, fmt.Errorf("agent %q is already bound to %s by the config", b.Agent, b.To)}
 	}
 	if slices.ContainsFunc(s.runtime, func(r config.Binding) bool { return r.Key() == b.Key() }) {
-		return config.Binding{}, fmt.Errorf("%w: agent %q is already bound to %s", errBindingTaken, b.Agent, b.To)
+		return config.Binding{}, translated{local.ErrConflict, fmt.Errorf("agent %q is already bound to %s", b.Agent, b.To)}
 	}
 	next := append(slices.Clone(s.runtime), b)
 	if err := statefile.Write(s.path, next); err != nil {
@@ -144,17 +144,17 @@ func (s *bindingSet) remove(agent, stream, to string) (config.Binding, error) {
 	}
 	d, err := config.ParseDestination(to)
 	if err != nil {
-		return config.Binding{}, fmt.Errorf("%w: %w", temp.ErrBadRequest, err)
+		return config.Binding{}, translated{local.ErrBadRequest, err}
 	}
 	key := config.Binding{Agent: agent, Stream: stream, To: d.String()}.Key()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if slices.ContainsFunc(s.config, func(c config.Binding) bool { return c.Key() == key }) {
-		return config.Binding{}, fmt.Errorf("%w: agent %q is bound to %s by the config: change it there", errBindingTaken, agent, d)
+		return config.Binding{}, translated{local.ErrConflict, fmt.Errorf("agent %q is bound to %s by the config: change it there", agent, d)}
 	}
 	i := slices.IndexFunc(s.runtime, func(r config.Binding) bool { return r.Key() == key })
 	if i < 0 {
-		return config.Binding{}, fmt.Errorf("%w: agent %q has no %s binding to %s", temp.ErrNotFound, agent, stream, d)
+		return config.Binding{}, translated{local.ErrNotFound, fmt.Errorf("agent %q has no %s binding to %s", agent, stream, d)}
 	}
 	gone := s.runtime[i]
 	next := slices.Delete(slices.Clone(s.runtime), i, i+1)
@@ -205,6 +205,3 @@ func subjectExists(ids *identity.Store) func(string) bool {
 		return slices.ContainsFunc(subjects, func(s identity.Subject) bool { return s.Name == name })
 	}
 }
-
-// errBindingTaken is a binding refused because of another one.
-var errBindingTaken = errors.New("binding conflict")
