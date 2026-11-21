@@ -2,6 +2,7 @@ package task
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -114,4 +115,61 @@ func TestATaskWithASecretAndAProxiedToolIsRefusedAtCreate(t *testing.T) {
 	n.Attachments.Secret, n.Attachments.Tools = "", []string{"search__query"}
 	_, err = s.Create(context.Background(), access.Operator, n)
 	assert.NoError(t, err, "and so is a proxied tool without a secret")
+}
+
+func secretOneOff(t *testing.T, o *fakeOneOffs) (*Dispatcher, *Service, Task, *[]string) {
+	t.Helper()
+	fleet := &fakeFleet{}
+	d, s := oneOffDispatcher(t, opGrants("r"), fleet, headroomOf{"sub": true}, o)
+	var warned []string
+	d.Warn = func(text string) { warned = append(warned, text) }
+	n := newTask("r")
+	n.Attachments.Secret = "report-api"
+	tk, err := s.Create(context.Background(), access.Operator, n)
+	require.NoError(t, err)
+	passUntil(t, d, func() bool { return get(t, s, tk.ID).Assignee != "" })
+	return d, s, get(t, s, tk.ID), &warned
+}
+
+func TestASecretOneOffsTranscriptIsRecordedAndRemovedWithIt(t *testing.T) {
+	o := &fakeOneOffs{recipes: []Recipe{{Name: "writer", Tags: []string{"r"}, Account: "sub"}}}
+	d, s, tk, warned := secretOneOff(t, o)
+	assert.Equal(t, "/transcripts/writer-a", tk.Transcript, "where its backend keeps the transcript is in the task")
+	_, err := s.Report(context.Background(), access.Agent("writer-a"), tk.ID, Report{Status: Done})
+	require.NoError(t, err)
+	passUntil(t, d, func() bool { return get(t, s, tk.ID).Removed })
+	o.mu.Lock()
+	forgot := append([]string(nil), o.forgot...)
+	o.mu.Unlock()
+	assert.Equal(t, []string{"writer-a /transcripts/writer-a"}, forgot)
+	got := get(t, s, tk.ID)
+	assert.Equal(t, "one-off writer-a removed; its outputs are in harvest h-1; its transcript was removed", got.Log[len(got.Log)-1].Text)
+	assert.Empty(t, *warned)
+}
+
+func TestATranscriptThatCannotBeRemovedIsLoggedAndToldToTheOperator(t *testing.T) {
+	o := &fakeOneOffs{recipes: []Recipe{{Name: "writer", Tags: []string{"r"}, Account: "sub"}}, forgetErr: errors.New("no transcript at /x")}
+	d, s, tk, warned := secretOneOff(t, o)
+	_, err := s.Cancel(context.Background(), access.Operator, tk.ID, "")
+	require.NoError(t, err)
+	passUntil(t, d, func() bool { return get(t, s, tk.ID).Removed })
+	got := get(t, s, tk.ID)
+	assert.Contains(t, got.Log[len(got.Log)-1].Text, "its transcript could NOT be removed: no transcript at /x")
+	require.Len(t, *warned, 1)
+	assert.Contains(t, (*warned)[0], "could not be removed: no transcript at /x. The secret's value may still be in it.")
+}
+
+func TestAOneOffWithoutASecretKeepsItsTranscript(t *testing.T) {
+	fleet := &fakeFleet{}
+	o := &fakeOneOffs{recipes: []Recipe{{Name: "writer", Tags: []string{"r"}, Account: "sub"}}}
+	d, s := oneOffDispatcher(t, opGrants("r"), fleet, headroomOf{"sub": true}, o)
+	tk := create(t, s, access.Operator, "r")
+	passUntil(t, d, func() bool { return get(t, s, tk.ID).Assignee != "" })
+	assert.Empty(t, get(t, s, tk.ID).Transcript, "recorded only for a run with a secret")
+	_, err := s.Report(context.Background(), access.Agent("writer-a"), tk.ID, Report{Status: Done})
+	require.NoError(t, err)
+	passUntil(t, d, func() bool { return get(t, s, tk.ID).Removed })
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	assert.Empty(t, o.forgot)
 }
