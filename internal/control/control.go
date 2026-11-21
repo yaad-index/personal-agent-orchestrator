@@ -34,7 +34,16 @@ type Prompt struct {
 	About   string
 	Pattern *regexp.Regexp
 	Keys    []string
+	// Tries is how many times the keys may be sent while the question stays
+	// shown; zero means once. A backend may draw a question before it takes
+	// keys, so a key can be lost; a question whose pattern names the state its
+	// keys apply in can safely be answered again.
+	Tries int
 }
+
+// DefaultSettle is how long a question must have been shown before it is
+// answered, and before it is answered again.
+const DefaultSettle = time.Second
 
 // ReadinessError reports that an agent did not reach readiness in time. Its
 // Error text never carries the pane: the raw pane is for the operator alone
@@ -65,7 +74,15 @@ type Plane struct {
 	onStop func(agent string)
 	// prompts are the start-up questions to answer for an agent; nil answers none.
 	prompts func(core.Profile) []Prompt
+	// settle is how long a question must be shown before it is answered.
+	settle time.Duration
+	// clock tells the time start-up questions are timed by.
+	clock func() time.Time
 }
+
+// WithSettle sets how long a start-up question must have been shown before it
+// is answered, and before an answer that did not take is sent again.
+func WithSettle(d time.Duration) Option { return func(p *Plane) { p.settle = d } }
 
 // WithPrompts sets the start-up questions the plane answers for an agent while
 // waiting for it to be ready. Each is answered at most once per start: one that
@@ -98,7 +115,7 @@ func WithOnStop(f func(agent string)) Option { return func(p *Plane) { p.onStop 
 
 // New returns a Plane.
 func New(term Terminal, opts ...Option) *Plane {
-	p := &Plane{term: term, poll: 500 * time.Millisecond}
+	p := &Plane{term: term, poll: 500 * time.Millisecond, settle: DefaultSettle, clock: time.Now}
 	for _, o := range opts {
 		o(p)
 	}
@@ -148,7 +165,11 @@ func (p *Plane) Launch(ctx context.Context, prof core.Profile) error {
 	if p.prompts != nil {
 		prompts = p.prompts(prof)
 	}
-	answered := make([]bool, len(prompts))
+	// For each question: how often it was answered, since when it has been
+	// shown without a break, and when it was last answered.
+	answered := make([]int, len(prompts))
+	shown := make([]time.Time, len(prompts))
+	last := make([]time.Time, len(prompts))
 	deadline := time.Now().Add(prof.Startup.ReadyTimeout)
 	for {
 		pane, err := p.term.Capture(ctx, prof.Name)
@@ -158,12 +179,25 @@ func (p *Plane) Launch(ctx context.Context, prof core.Profile) error {
 		if ready.MatchString(pane) {
 			return nil
 		}
+		now := p.clock()
 		for i, q := range prompts {
-			if answered[i] || !q.Pattern.MatchString(pane) {
+			if !q.Pattern.MatchString(pane) {
+				shown[i] = time.Time{}
 				continue
 			}
-			answered[i] = true
-			slog.Info("answering a start-up question", "agent", prof.Name, "question", q.About)
+			if shown[i].IsZero() {
+				shown[i] = now
+			}
+			tries := max(q.Tries, 1)
+			// Answered only once it has been shown a while, so its keys reach a
+			// question that takes them; again only a while after an answer that
+			// left it shown.
+			if answered[i] >= tries || now.Sub(shown[i]) < p.settle || (answered[i] > 0 && now.Sub(last[i]) < p.settle) {
+				continue
+			}
+			answered[i]++
+			last[i] = now
+			slog.Info("answering a start-up question", "agent", prof.Name, "question", q.About, "try", answered[i])
 			if err := p.term.SendKeys(ctx, prof.Name, q.Keys...); err != nil {
 				return fmt.Errorf("agent %q: answering %q: %w", prof.Name, q.About, err)
 			}

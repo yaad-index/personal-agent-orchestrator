@@ -97,6 +97,10 @@ type Prompt struct {
 	Pattern *regexp.Regexp
 	// Keys are the terminal keys that answer it, sent in order.
 	Keys []string
+	// Tries is how many times the keys may be sent while it stays shown; zero
+	// means once. Set it only where the pattern names the state the keys apply
+	// in, so a second send can never give another answer.
+	Tries int
 }
 
 // Prompter is an adapter whose backend may stop at a question on starting that
