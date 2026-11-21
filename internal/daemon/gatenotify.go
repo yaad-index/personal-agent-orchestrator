@@ -12,12 +12,12 @@ import (
 // closeTimeout bounds closing a settled question's buttons.
 const closeTimeout = 30 * time.Second
 
-// gateNotifier puts the gate's questions to the operator on every channel, with
-// their answers as actions, and closes those actions once the question is
-// settled (ADR-0027 points 1 and 6).
+// gateNotifier puts the gate's questions to the operator, with their answers as
+// actions, at the asking agent's stderr destinations (ADR-0029 point 4), and
+// closes those actions once the question is settled (ADR-0027 points 1 and 6).
 type gateNotifier struct {
 	layer interface {
-		Notify(ctx context.Context, m core.Message) (core.Message, error)
+		NotifyAgent(ctx context.Context, agent string, m core.Message) (core.Message, error)
 		CloseActions(ctx context.Context, id, outcome string) error
 	}
 }
@@ -27,7 +27,7 @@ var _ gate.Notifier = gateNotifier{}
 // Announce sends the question. The handle is the stored message's id, set even
 // when a channel failed, so the copies that were shown can still be closed.
 func (n gateNotifier) Announce(ctx context.Context, q gate.Question) (string, error) {
-	m, err := n.layer.Notify(ctx, core.Message{Sender: "pao", Text: q.Text, Actions: q.Actions})
+	m, err := n.layer.NotifyAgent(ctx, q.Agent, core.Message{Sender: "pao", Text: q.Text, Actions: q.Actions})
 	return m.ID, err
 }
 

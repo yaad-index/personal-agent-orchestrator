@@ -88,18 +88,21 @@ type Orchestrator struct {
 type Binding struct {
 	// Agent is the agent followed, by name.
 	Agent string `yaml:"agent"`
-	// Stream is the stream followed. Only "stdout", the agent's output, is
-	// accepted, and it is the default.
+	// Stream is the stream followed: "stdout", the agent's output, which is the
+	// default, or "stderr", pao's gate questions and notices about the agent
+	// (ADR-0029 point 4).
 	Stream string `yaml:"stream"`
 	// To is the destination, by name: group:<name>, private:<subject>,
 	// private:<subject>@<channel> or channel:local (ADR-0029 point 1).
 	To string `yaml:"to"`
 	// Level is the verbosity level the destination is shown the stream at, read
 	// against the agent's level map (ADR-0008), or "log": every kind, and the
-	// messages delivered to the agent too. Default: the node's level.
+	// messages delivered to the agent too. Default: the node's level. stdout
+	// only: stderr is not shown by level.
 	Level BindingLevel `yaml:"level"`
 	// Prefix, when set, is put before every message the binding sends, in place
 	// of the agent's name (ADR-0029 point 5). At most MaxPrefix characters.
+	// stdout only.
 	Prefix string `yaml:"prefix"`
 }
 
@@ -123,8 +126,13 @@ func (l *BindingLevel) UnmarshalYAML(n *yaml.Node) error {
 	return nil
 }
 
-// StreamStdout is an agent's output.
-const StreamStdout = "stdout"
+// The streams a binding may follow (ADR-0023 point 1).
+const (
+	// StreamStdout is an agent's output.
+	StreamStdout = "stdout"
+	// StreamStderr is pao's gate questions and notices about an agent.
+	StreamStderr = "stderr"
+)
 
 // MaxPrefix is the longest prefix a binding may carry (ADR-0029 point 5).
 const MaxPrefix = 10
@@ -568,15 +576,18 @@ func checkBindings(path string, o *Orchestrator, agents map[string]string) error
 		if b.Stream == "" {
 			b.Stream = StreamStdout
 		}
-		if b.Level == 0 {
+		stderrSet := b.Stream == StreamStderr && (b.Level != 0 || b.Prefix != "")
+		if b.Level == 0 && b.Stream == StreamStdout {
 			b.Level = BindingLevel(o.Level)
 		}
 		d, err := ParseDestination(b.To)
 		switch {
 		case agents[b.Agent] == "":
 			return fmt.Errorf("%s: agent %q is not a configured agent", at, b.Agent)
-		case b.Stream != StreamStdout:
-			return fmt.Errorf("%s: stream must be %q", at, StreamStdout)
+		case b.Stream != StreamStdout && b.Stream != StreamStderr:
+			return fmt.Errorf("%s: stream must be %q or %q", at, StreamStdout, StreamStderr)
+		case stderrSet:
+			return fmt.Errorf("%s: a %s binding takes no level and no prefix", at, StreamStderr)
 		case err != nil:
 			return fmt.Errorf("%s: %w", at, err)
 		case d.Kind == DestGroup && !groups[d.Name]:
@@ -585,7 +596,7 @@ func checkBindings(path string, o *Orchestrator, agents map[string]string) error
 			return fmt.Errorf("%s: no channel is named %q", at, d.Channel)
 		case d.Kind == DestChannel && !reservedChannelNames[d.Name]:
 			return fmt.Errorf("%s: channel %q has several conversations: name one as %s:<name> or %s:<subject>", at, d.Name, DestGroup, DestPrivate)
-		case b.Level < 1:
+		case b.Stream == StreamStdout && b.Level < 1:
 			return fmt.Errorf("%s: level must be at least 1", at)
 		case utf8.RuneCountInString(b.Prefix) > MaxPrefix:
 			return fmt.Errorf("%s: prefix is longer than %d characters", at, MaxPrefix)

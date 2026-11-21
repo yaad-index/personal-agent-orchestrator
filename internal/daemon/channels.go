@@ -63,7 +63,7 @@ func standingBindings(bs []config.Binding) []comm.Binding {
 		if err != nil {
 			continue
 		}
-		out = append(out, comm.Binding{Agent: b.Agent, To: comm.Dest{Kind: d.Kind, Name: d.Name, Channel: d.Channel}, Level: int(b.Level), Prefix: b.Prefix})
+		out = append(out, comm.Binding{Agent: b.Agent, Stream: b.Stream, To: comm.Dest{Kind: d.Kind, Name: d.Name, Channel: d.Channel}, Level: int(b.Level), Prefix: b.Prefix})
 	}
 	return out
 }

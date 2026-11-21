@@ -20,6 +20,12 @@ const (
 	// toMirror is a conversation a binding at the log level names, shown a
 	// message delivered to the agent.
 	toMirror
+	// toPrivate is the private conversation of each operator bound on a
+	// channel: where pao's messages about an agent go when it has no stderr
+	// binding.
+	toPrivate
+	// toStderr is a conversation a stderr binding names.
+	toStderr
 )
 
 // target is one place an agent's message goes.
@@ -28,7 +34,8 @@ type target struct {
 	at   origin
 	// dest names a binding's destination, for the log.
 	dest string
-	// agent is the agent a mirrored message was delivered to.
+	// agent is the agent a mirrored message was delivered to, or a message of
+	// pao's is about.
 	agent string
 }
 
@@ -91,7 +98,7 @@ func (l *Layer) planFor(agent string, def int) plan {
 		}
 		byR[r] = append(byR[r], t)
 	}
-	for _, b := range l.bindingsOf(agent) {
+	for _, b := range l.bindingsOf(agent, StreamStdout) {
 		for _, at := range l.resolve(b.To) {
 			if p.covered[at] {
 				continue
@@ -163,10 +170,16 @@ func (l *Layer) sendRendered(ctx context.Context, agent string, m core.Message, 
 		return core.Message{}, err
 	}
 	stored.Label = prefix
-	l.routes.Store(stored.ID, outRoute{targets: targets, covered: covered})
+	return stored, l.sendRouted(ctx, stored, outRoute{targets: targets, covered: covered})
+}
+
+// sendRouted hands a stored message to the channels of its targets, holding its
+// route while they ask where it goes.
+func (l *Layer) sendRouted(ctx context.Context, stored core.Message, r outRoute) error {
+	l.routes.Store(stored.ID, r)
 	defer l.routes.Delete(stored.ID)
 	var channels []string
-	for _, t := range targets {
+	for _, t := range r.targets {
 		if !slices.Contains(channels, t.at.channel) {
 			channels = append(channels, t.at.channel)
 		}
@@ -177,7 +190,7 @@ func (l *Layer) sendRendered(ctx context.Context, agent string, m core.Message, 
 			errs = append(errs, err)
 		}
 	}
-	return stored, errors.Join(errs...)
+	return errors.Join(errs...)
 }
 
 // routed returns the conversations on channel that m, sent on route r, goes to.
@@ -223,6 +236,14 @@ func (l *Layer) routed(channel string, m core.Message, r outRoute) []string {
 			}
 			if _, seen := l.unshown.LoadOrStore("mirror\x00"+t.agent+"\x00"+t.dest, true); !seen {
 				slog.Warn("mirrored message held back: a reader of the destination may not see it", "agent", t.agent, "destination", t.dest)
+			}
+		case toPrivate:
+			for _, c := range l.privately(channel, m) {
+				add(c)
+			}
+		case toStderr:
+			if l.noticeMay(t.at, m) {
+				add(t.at.conversation)
 			}
 		}
 	}
