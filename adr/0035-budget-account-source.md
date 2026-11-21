@@ -1,6 +1,6 @@
 # ADR 0035: The budget figure, the unmetered account, and the unreadable one
 
-**Status:** Proposed
+**Status:** Accepted (2026-11-21)
 
 Extends ADR-0014 (per-account budget). Builds on ADR-0015 (an agent has one profile, point 1, naming its one account, point 3) and ADR-0007 point 4 (health signals, usage and budget among them, are read from the backend's own source, not the agent).
 
