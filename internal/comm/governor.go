@@ -1,6 +1,7 @@
 package comm
 
 import (
+	"context"
 	"strings"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
@@ -45,8 +46,7 @@ func (l *Layer) governorRequest(text string) (string, bool) {
 
 // Replies to a request to the governor that does not reach it.
 const (
-	ReplyNoGovernor   = "this node has no governor"
-	ReplyGovernorHeld = "the governor is serving another operator on this node"
+	ReplyNoGovernor = "this node has no governor"
 )
 
 // governorUsage is the answer to a request with nothing in it.
@@ -54,19 +54,25 @@ func governorUsage(prefix string) string {
 	return "usage: " + prefix + " <what you want done, in your own words>"
 }
 
+// SetGovernorReset gives the layer how to end the governor's session, so the next
+// request starts it on a fresh context (ADR-0031 point 6). Call it before the
+// layer starts receiving.
+func (l *Layer) SetGovernorReset(reset func(context.Context) error) { l.governorReset = reset }
+
 // toGovernor turns subject's request to the governor into the message it is
 // sent: to the governor by name, the request as its text. reply is what to answer
-// instead when it does not go. The governor serves one subject while the node
-// runs (governorHolder): a request from any other is refused.
-func (l *Layer) toGovernor(text, subject string) (target core.Target, request, reply string) {
+// instead when it does not go. A request from a different subject than the one
+// before it first ends the governor's session (serve).
+func (l *Layer) toGovernor(ctx context.Context, text, subject string) (target core.Target, request, reply string) {
 	request, _ = l.governorRequest(text)
 	switch {
 	case l.governor == "":
 		return core.Target{}, "", ReplyNoGovernor
 	case request == "":
 		return core.Target{}, "", governorUsage(l.governorPrefix)
-	case !l.holdGovernor(subject):
-		return core.Target{}, "", ReplyGovernorHeld
+	}
+	if err := l.serve(ctx, subject); err != nil {
+		return core.Target{}, "", "the governor could not be started on a fresh context: " + err.Error()
 	}
 	return core.Target{Kind: core.ByName, Value: l.governor}, request, ""
 }
@@ -84,13 +90,24 @@ func (l *Layer) governorTargets(agent string) []target {
 	return l.subjectTargets(t.at.channel, t.at.conversation == "", t.requester, agent)
 }
 
-// holdGovernor reports whether the governor serves subject: it does when no one
-// holds it yet, and subject then holds it, or when subject already does.
-func (l *Layer) holdGovernor(subject string) bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if l.governorHolder == "" {
-		l.governorHolder = subject
+// serve makes the governor's context subject's (ADR-0031 point 6): when the
+// subject differs from the one the governor last served, or it has served no one
+// since the node started, its session is ended first, and the request then starts
+// it afresh. One requester's request, and what was read for it, is so never in
+// the context another's is answered in. A reset that fails leaves the subject
+// unchanged, so the next request tries again.
+func (l *Layer) serve(ctx context.Context, subject string) error {
+	l.governorMu.Lock()
+	defer l.governorMu.Unlock()
+	// A sender is never empty, so the empty subject a node starts with is no one.
+	if l.governorSubject == subject {
+		return nil
 	}
-	return l.governorHolder == subject
+	if l.governorReset != nil {
+		if err := l.governorReset(ctx); err != nil {
+			return err
+		}
+	}
+	l.governorSubject = subject
+	return nil
 }

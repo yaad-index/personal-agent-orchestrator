@@ -335,6 +335,12 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	}
 
 	layer.SetGovernor(cfg.Orchestrator.Governor.Agent, cfg.Orchestrator.Governor.Prefix)
+	if g := cfg.Orchestrator.Governor.Agent; g != "" {
+		// A request from another subject than the last starts the governor on a
+		// fresh context (ADR-0031 point 6): its session is stopped, and the
+		// request's delivery starts it again.
+		layer.SetGovernorReset(func(ctx context.Context) error { return life.Stop(ctx, g) })
+	}
 	layer.SetCommands(chatCommands{streams: streamOps, standing: standingOps, temps: tempOps, decider: decider, agents: ops, auth: auth})
 
 	srv, err := local.New(layer, token, append([]local.Option{local.WithDecider(decider), local.WithTemp(tempOps), local.WithStream(streamOps), local.WithStanding(standingOps), local.WithWatch(streamOps), local.WithLifecycle(lifeOps), local.WithRejected(rejectedAPI{rejects}), local.WithIdentity(identityAPI{ids}),
