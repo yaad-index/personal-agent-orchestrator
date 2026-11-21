@@ -5,8 +5,10 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"strings"
 	"unicode/utf8"
 
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/access"
@@ -73,7 +75,14 @@ const (
 	ActionRoute        = "pao.route"
 	ActionSpawn        = "pao.spawn"
 	ActionKill         = "pao.kill"
+	ActionPropose      = "pao.propose"
 )
+
+// ToolPropose is the tool a governor proposes a command with (ADR-0030). Unlike
+// pao's other tools it is offered only to a subject granted it by name, as a tool
+// (access.ToolResource): no upstream tool can share the name, since every
+// upstream tool's pao-side name holds "__".
+const ToolPropose = "propose_command"
 
 // DefaultServerName is the name a backend gives pao's MCP server: the backend
 // adapter configures it under this name, and the gate's rules for pao's tools
@@ -115,9 +124,13 @@ func GateRules(server string, proxied ...upstream.Tool) []gate.Rule {
 	for _, t := range proxied {
 		names = append(names, t.Name)
 	}
+	names = append(names, ToolPropose)
 	for _, t := range names {
 		rules = append(rules, gate.Rule{Tool: "mcp__" + server + "__" + t, Effect: gate.EffectAllow})
 	}
+	// A proposal only puts a command in front of the operator, who runs it or
+	// not; asking first would put a second question to the same person.
+	rules = append(rules, gate.Rule{Tool: ActionPropose, Effect: gate.EffectAllow})
 	return rules
 }
 
@@ -147,6 +160,10 @@ type Operations interface {
 	// may be addressed are known and before anything is delivered; an error
 	// from it delivers nothing.
 	Send(ctx context.Context, who access.Subject, byTag bool, target, text string, approve func() error) ([]Delivered, error)
+	// Propose shows command, proposed by the agent who, to the subject who
+	// started the agent's current turn, for that subject to run or not
+	// (ADR-0030 point 3).
+	Propose(ctx context.Context, who access.Subject, command string) error
 }
 
 // Delivered is the outcome for one addressed agent.
@@ -387,4 +404,38 @@ func (s *Server) sendMessage(ctx context.Context, req *mcp.CallToolRequest, in s
 		ds = []Delivered{}
 	}
 	return nil, sendOutput{Delivered: ds}, err
+}
+
+type proposeInput struct {
+	Command string `json:"command" jsonschema:"exactly one /pao command, on one line, as the operator would type it"`
+}
+
+type proposeOutput struct {
+	Shown string `json:"shown" jsonschema:"the command as it was shown to the operator"`
+}
+
+var proposeTool = &mcp.Tool{
+	Name: ToolPropose,
+	Description: "Propose one exact /pao command to the operator whose message started your current turn. pao shows it to them privately, with a button that runs it as them; nothing runs unless they commit it. " +
+		"Help and answers to approval questions cannot be proposed.",
+}
+
+// propose shows the caller's proposal. A subject whose grant was revoked since
+// the tool was offered is refused as for a tool that does not exist.
+func (s *Server) propose(ctx context.Context, req *mcp.CallToolRequest, in proposeInput) (*mcp.CallToolResult, proposeOutput, error) {
+	who := subject(req)
+	if !s.mayPropose(who) {
+		return nil, proposeOutput{}, &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: fmt.Sprintf("unknown tool %q", ToolPropose)}
+	}
+	if err := s.approve(ctx, who, ActionPropose, in); err != nil {
+		return nil, proposeOutput{}, err
+	}
+	if err := s.ops.Propose(ctx, who, in.Command); err != nil {
+		return nil, proposeOutput{}, err
+	}
+	return nil, proposeOutput{Shown: strings.TrimSpace(in.Command)}, nil
+}
+
+func (s *Server) mayPropose(who access.Subject) bool {
+	return who.Kind == access.KindAgent && access.Allowed(s.auth, who, access.CallTool, access.ToolResource(ToolPropose, nil))
 }

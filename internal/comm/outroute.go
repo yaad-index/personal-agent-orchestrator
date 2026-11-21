@@ -26,6 +26,8 @@ const (
 	toPrivate
 	// toStderr is a conversation a stderr binding names.
 	toStderr
+	// toProposal is a private conversation of the subject a proposal is for.
+	toProposal
 )
 
 // target is one place an agent's message goes.
@@ -86,8 +88,9 @@ type planned struct {
 func (l *Layer) planFor(agent string, def int) plan {
 	l.mu.RLock()
 	only, bound := l.bound[agent]
-	o, hasOrigin := l.origins[agent]
+	t, hasOrigin := l.origins[agent]
 	l.mu.RUnlock()
+	o := t.at
 
 	p := plan{def: rendering{level: def}, covered: map[origin]bool{}}
 	byR := map[rendering][]target{}
@@ -244,7 +247,7 @@ func (l *Layer) routed(channel string, m core.Message, r outRoute) []string {
 			for _, c := range l.privately(channel, m) {
 				add(c)
 			}
-		case toStderr:
+		case toStderr, toProposal:
 			if l.noticeMay(t.at, m) {
 				add(t.at.conversation)
 			}

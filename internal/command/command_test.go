@@ -309,3 +309,36 @@ func TestBindingCommandsAreTheOperatorsOnly(t *testing.T) {
 		assert.Contains(t, res.Reply, "unknown command", "%q", text)
 	}
 }
+
+func TestProposable(t *testing.T) {
+	for _, text := range []string{
+		"/pao bind coder group:team 2 TA:",
+		"  /pao agent coder fix the build  ",
+		"/pao stream coder local 2",
+		"/pao view coder pause",
+		"/pao unbind coder group:team",
+		"/pao agents",
+	} {
+		got, err := Proposable(text)
+		require.NoError(t, err, "%q", text)
+		assert.Equal(t, strings.TrimSpace(text), got)
+	}
+	for text, why := range map[string]string{
+		"/pao help":                  "not a command a governor may propose",
+		"/pao allow q1":              "not a command a governor may propose",
+		"/pao always q1":             "not a command a governor may propose",
+		"/pao deny q1":               "not a command a governor may propose",
+		"/pao coder fix it":          "not a command a governor may propose",
+		"/pao do bind coder":         "not a command a governor may propose",
+		"/pao":                       "not a command a governor may propose",
+		"/pao@bot agents":            "begins",
+		"pao agents":                 "begins",
+		"bind coder group:team":      "begins",
+		"/pao agent coder a\nb":      "one line",
+		"/pao agents\n/pao allow q1": "one line",
+	} {
+		_, err := Proposable(text)
+		require.Error(t, err, "%q", text)
+		assert.Contains(t, err.Error(), why, "%q", text)
+	}
+}

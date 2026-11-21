@@ -2,12 +2,14 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"sort"
 	"time"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/access"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/comm"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/command"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/harvest"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/mcpsrv"
@@ -216,4 +218,24 @@ func targetKind(byTag bool) core.TargetKind {
 		return core.ByTag
 	}
 	return core.ByName
+}
+
+// Propose shows a governor's proposal to the subject who started its current
+// turn (ADR-0030 point 3). pao checks it is exactly one command a governor may
+// propose, and draws its button itself, labelled with the command and carrying
+// it, so what the operator reads is what a press runs, as the presser (ADR-0027
+// point 4). A command too long for a channel's button is shown without one, to
+// be sent as typed.
+func (o mcpOps) Propose(ctx context.Context, who access.Subject, text string) error {
+	cmd, err := command.Proposable(text)
+	if err != nil {
+		return err
+	}
+	m := core.Message{
+		Sender:  "pao",
+		Text:    fmt.Sprintf("%s proposes:\n%s\nsend it, or press the button, to run it.", who.Name, cmd),
+		Actions: []core.Action{{Label: cmd, Command: cmd}},
+	}
+	_, err = o.layer.Propose(ctx, who.Name, m)
+	return err
 }
