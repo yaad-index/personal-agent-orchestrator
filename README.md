@@ -6,4 +6,6 @@ The design is recorded as Architecture Decision Records in [`adr/`](adr/README.m
 
 Status: early development. The single-node MVP is being built against the Accepted ADRs; see [AGENTS.md](AGENTS.md) for the layout and conventions.
 
+To drive pao in plain words, see [the governor](docs/governor.md).
+
 What pao does and does not promise about keeping an agent within bounds is in [SECURITY.md](SECURITY.md).

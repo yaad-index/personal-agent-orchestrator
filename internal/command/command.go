@@ -500,6 +500,25 @@ func isNumber(s string) bool {
 // alone.
 var notProposable = map[string]bool{"help": true, "allow": true, "always": true, "deny": true}
 
+// Proposal is one command a governor may propose, as its instructions list it.
+type Proposal struct {
+	Usage string
+	About string
+}
+
+// Proposals lists the commands a governor may propose, in the table's order:
+// every one, or those of only when it is not empty.
+func Proposals(only []string) []Proposal {
+	var out []Proposal
+	for _, s := range table {
+		if !ProposableWord(s.word) || (len(only) > 0 && !slices.Contains(only, s.word)) {
+			continue
+		}
+		out = append(out, Proposal{Usage: usage(s), About: s.about})
+	}
+	return out
+}
+
 // ProposableWord reports whether a governor may propose the command word w.
 func ProposableWord(w string) bool {
 	_, ok := lookup(w)
