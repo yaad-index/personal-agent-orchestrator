@@ -12,7 +12,8 @@ import (
 // the agent's call raised or a notice that it did not start, to the agent's
 // stderr destinations (ADR-0029 point 4). Where the agent has no stderr binding,
 // those are the private conversation of each operator bound on a channel, and
-// every channel with one conversation. Like Notify, the message is stored in no
+// every channel with one conversation. The governor's go to the subject it is
+// serving instead (governorStderr). Like Notify, the message is stored in no
 // agent's scope.
 //
 // A stderr destination is shown the message only if every one of its readers may
@@ -35,6 +36,9 @@ func (l *Layer) NotifyAgent(ctx context.Context, agent string, m core.Message) (
 
 // stderrTargets returns where pao's message m about agent goes.
 func (l *Layer) stderrTargets(agent string, m core.Message) ([]target, error) {
+	if l.governor != "" && agent == l.governor {
+		return l.governorStderr(agent, m)
+	}
 	bs := l.bindingsOf(agent, StreamStderr)
 	if len(bs) == 0 {
 		var out []target
@@ -65,6 +69,25 @@ func (l *Layer) stderrTargets(agent string, m core.Message) ([]target, error) {
 		return nil, fmt.Errorf("agent %q: no stderr destination shows pao's message", agent)
 	}
 	return out, nil
+}
+
+// governorStderr is where pao's message about the governor goes: to the subject
+// it is serving, alone and privately, on the channel the request came from, as
+// its output does (ADR-0032 point 4). Never to every operator. With no request in
+// hand there is no one to tell: nothing is sent, and the error says so, so a
+// question that cannot be put is refused.
+func (l *Layer) governorStderr(agent string, m core.Message) ([]target, error) {
+	l.mu.RLock()
+	t, ok := l.origins[agent]
+	l.mu.RUnlock()
+	if !ok || t.requester == "" {
+		return nil, fmt.Errorf("agent %q is the governor and is serving no request, so there is no one to tell", agent)
+	}
+	targets := l.toSubject(t.at.channel, t.at.conversation == "", t.requester, agent, m)
+	if len(targets) == 0 {
+		return nil, fmt.Errorf("agent %q: %s has no private conversation an operator reads on %s", agent, t.requester, t.at.channel)
+	}
+	return targets, nil
 }
 
 // noticeMay reports whether every reader of a conversation may see pao's message
