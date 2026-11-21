@@ -100,17 +100,19 @@ type Prompt struct {
 }
 
 // Prompter is an adapter whose backend may stop at a question on starting that
-// pao answers for an agent the operator configured: a backend's own first-run
-// check that no one is at the terminal to answer.
+// pao answers: a backend's own first-run check that no one is at the terminal to
+// answer (ADR-0033 point 6). It returns the questions to answer for p; for a
+// provisioned profile, only those it keeps safe to answer, such as trusting a
+// directory whose settings it shuts out.
 type Prompter interface {
-	Prompts() []Prompt
+	Prompts(p core.Profile) []Prompt
 }
 
-// Prompts returns the start-up questions of p's backend, none when its adapter
-// has none.
+// Prompts returns the start-up questions of p's backend to answer for p, none
+// when its adapter has none.
 func (t Table) Prompts(p core.Profile) []Prompt {
 	if a, ok := t[p.Backend].(Prompter); ok {
-		return a.Prompts()
+		return a.Prompts(p)
 	}
 	return nil
 }

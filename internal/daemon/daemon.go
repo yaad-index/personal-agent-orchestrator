@@ -213,12 +213,12 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 			return s.Command, s.Env, err
 		}),
 		// A backend's start-up question, such as Claude Code's whether to trust
-		// the working directory, is answered only for an agent the operator
-		// configured: its workdir is the operator's own. A temporary agent's
-		// workdir may be a clone of a repository whose own settings trusting
-		// would load, so its question is left for a person.
+		// the working directory, is answered for an agent the operator configured,
+		// whose workdir is the operator's own, and for a temporary agent, whose
+		// workdir's settings its adapter shuts out (ADR-0033). Any other agent's
+		// question is left for a person.
 		control.WithPrompts(func(p core.Profile) []control.Prompt {
-			if !configured[p.Name] {
+			if !configured[p.Name] && !p.Provisioned {
 				return nil
 			}
 			var out []control.Prompt

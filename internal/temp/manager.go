@@ -297,6 +297,7 @@ func (m *Manager) Spawn(ctx context.Context, req SpawnRequest) (core.Profile, er
 		undo()
 		return core.Profile{}, err
 	}
+	prof.Provisioned = true
 	prof.Tags = append(prof.Tags, extra...)
 	if m.Check != nil {
 		if err := m.Check(prof); err != nil {
