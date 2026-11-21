@@ -2,7 +2,7 @@
 
 **Status:** Accepted (2026-11-21)
 
-**Superseded-by:** ADR-0031 (the governor, shared per node and started on demand), on its acceptance
+**Superseded-by:** ADR-0031 (the governor, shared per node and started on demand)
 
 Extends ADR-0026 (operator commands from chat), ADR-0027 (action buttons on a message), ADR-0023 (agent I/O and the default agent), ADR-0009 (channels), ADR-0004 (the approval gate).
 
