@@ -2,6 +2,8 @@
 
 **Status:** Accepted (2026-11-21)
 
+**Superseded-by:** ADR-0034 (the governor replies where it was asked)
+
 Supersedes ADR-0031 (the governor, shared per node and started on demand). Keeps its points 1 to 3 and 5 to 8, its deferred list and its consequences unchanged. Changes point 4, which now also covers the governor's stderr. Extends ADR-0029 (output routing).
 
 ## Context
