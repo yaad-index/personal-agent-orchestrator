@@ -74,6 +74,11 @@ type Task struct {
 	Status Status `yaml:"status" json:"status"`
 	// Assignee is the agent working it, once dispatched.
 	Assignee string `yaml:"assignee,omitempty" json:"assignee,omitempty"`
+	// OneOff says the assignee is a temporary agent pao spawned for this task,
+	// which is killed when the task is over (ADR-0036 point 1, ADR-0006).
+	OneOff bool `yaml:"one_off,omitempty" json:"one_off,omitempty"`
+	// Removed says that one-off agent has been killed.
+	Removed bool `yaml:"removed,omitempty" json:"removed,omitempty"`
 	// Created and Updated are when it was made and last changed.
 	Created time.Time `yaml:"created" json:"created"`
 	Updated time.Time `yaml:"updated" json:"updated"`

@@ -135,3 +135,68 @@ func TestTheFleetLeavesOutTheGovernorAndRemoteAgents(t *testing.T) {
 	assert.Equal(t, []string{"a"}, names)
 	assert.Error(t, (taskFleet{reg: reg}).Deliver(context.Background(), "nobody", "x"))
 }
+
+func TestATaskNoAgentCanRunGetsAOneOffWhichIsKilledWhenTheTaskIsOver(t *testing.T) {
+	no := false
+	n := startNodeWith(t, map[string]string{"a": ""}, func(dir, script string, cfg *config.Config) {
+		rdir := filepath.Join(dir, "recipes")
+		require.NoError(t, os.MkdirAll(rdir, 0o700))
+		body := strings.Replace(goodRecipe("fake"), "  backend: claude-code\n", "  backend: claude-code\n  account: local\n", 1)
+		require.NoError(t, os.WriteFile(filepath.Join(rdir, "fake.yaml"), []byte(strings.ReplaceAll(body, "@@SCRIPT@@", script)), 0o600))
+		cfg.Orchestrator.RecipesDir = rdir
+		cfg.Orchestrator.Accounts = []config.Account{{Name: "local", Metered: &no}}
+	}, func(o *Options) { o.DispatchEvery = 50 * time.Millisecond })
+	ctx := context.Background()
+
+	// Only the recipe's agents carry "temp"; the configured agent does not.
+	created, err := n.client.CreateTask(ctx, local.NewTaskJSON{Title: "Scratch work", Description: "Do it.", Done: "Done.", Tags: []string{"temp"}})
+	require.NoError(t, err)
+	var got local.TaskJSON
+	require.Eventually(t, func() bool {
+		got, err = n.client.Task(ctx, created.ID)
+		return err == nil && got.Assignee != ""
+	}, 15*time.Second, 50*time.Millisecond)
+	assert.True(t, got.OneOff)
+	assert.True(t, strings.HasPrefix(got.Assignee, "fake-"), got.Assignee)
+	one := got.Assignee
+	assert.True(t, tmuxHasSession(t, n, one), "the one-off runs")
+
+	_, err = n.client.CancelTask(ctx, created.ID, "no longer needed")
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		got, err = n.client.Task(ctx, created.ID)
+		return err == nil && got.Removed
+	}, 15*time.Second, 50*time.Millisecond)
+	assert.False(t, tmuxHasSession(t, n, one), "and is killed once its task is over")
+	assert.Contains(t, got.Log[len(got.Log)-1].Text, "one-off "+one+" removed; its outputs are in harvest ")
+	hs, err := n.client.Harvests(ctx, "")
+	require.NoError(t, err)
+	require.Len(t, hs, 1)
+	assert.Equal(t, one, hs[0].Agent)
+}
+
+func TestAOneOffIsSpawnedForTheOwnerAndNotForPao(t *testing.T) {
+	no := false
+	n := startNodeWith(t, map[string]string{"a": ""}, func(dir, script string, cfg *config.Config) {
+		rdir := filepath.Join(dir, "recipes")
+		require.NoError(t, os.MkdirAll(rdir, 0o700))
+		body := strings.Replace(goodRecipe("fake"), "  backend: claude-code\n", "  backend: claude-code\n  account: local\n", 1)
+		require.NoError(t, os.WriteFile(filepath.Join(rdir, "fake.yaml"), []byte(strings.ReplaceAll(body, "@@SCRIPT@@", script)), 0o600))
+		cfg.Orchestrator.RecipesDir = rdir
+		cfg.Orchestrator.Accounts = []config.Account{{Name: "local", Metered: &no}}
+	}, func(o *Options) { o.DispatchEvery = 50 * time.Millisecond })
+	// A task owned by an agent with no grants: its one-off would be that agent's
+	// spawn, which the matrix refuses.
+	id, err := task.NewID(time.Now())
+	require.NoError(t, err)
+	st := &task.Store{Root: filepath.Join(n.stateDir, "tasks")}
+	now := time.Now().UTC().Truncate(time.Second)
+	require.NoError(t, st.Put(task.FolderOpen, task.Task{ID: id, Title: "x", Description: "y", Done: "z", Tags: []string{"temp"}, Owner: "agent:nobody", Status: task.Open, Created: now, Updated: now}))
+	require.Eventually(t, func() bool {
+		got, err := n.client.Task(context.Background(), id)
+		return err == nil && len(got.Log) > 0 && strings.Contains(got.Log[len(got.Log)-1].Text, "a one-off from recipe fake could not be started")
+	}, 15*time.Second, 50*time.Millisecond)
+	got, err := n.client.Task(context.Background(), id)
+	require.NoError(t, err)
+	assert.Empty(t, got.Assignee)
+}

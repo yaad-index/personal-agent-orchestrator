@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 	"sync"
@@ -44,6 +45,9 @@ type Service struct {
 	// Changed is called after a task is created, reported on or canceled, so
 	// dispatch can look again. It may be nil.
 	Changed func()
+	// Tell hands text to an agent as a message from pao: a canceled task's
+	// assignee is told to stop. It may be nil.
+	Tell func(ctx context.Context, agent, text string) error
 
 	// mu serialises read-modify-write of one task file.
 	mu sync.Mutex
@@ -275,6 +279,23 @@ func (s *Service) Report(ctx context.Context, who access.Subject, id string, r R
 // Cancel ends a task that is not over: its owner may, and the operator may for
 // a task it can see. It goes to the archive, with the reason in its log.
 func (s *Service) Cancel(ctx context.Context, who access.Subject, id, reason string) (Task, error) {
+	t, err := s.cancel(ctx, who, id, reason)
+	if err != nil {
+		return Task{}, err
+	}
+	if t.Assignee != "" && s.Tell != nil {
+		text := fmt.Sprintf("Task %s (%s) was canceled by %s. Stop working on it.", t.ID, t.Title, who.String())
+		if reason != "" {
+			text += " Reason: " + reason
+		}
+		if err := s.Tell(ctx, t.Assignee, text); err != nil {
+			slog.Warn("could not tell an assignee its task was canceled", "task", t.ID, "agent", t.Assignee, "error", err)
+		}
+	}
+	return t, nil
+}
+
+func (s *Service) cancel(ctx context.Context, who access.Subject, id, reason string) (Task, error) {
 	if len(reason) > MaxEntry {
 		return Task{}, fmt.Errorf("%w: a reason is at most %d bytes", ErrBadRequest, MaxEntry)
 	}
