@@ -20,6 +20,18 @@ func (c *cmdOps) SetStream(_ context.Context, agent, channel string, _ int) erro
 	return nil
 }
 
+func (c *cmdOps) Bind(_ context.Context, b command.Binding) (command.Binding, error) {
+	c.calls = append(c.calls, "bind "+b.Agent+" "+b.To)
+	return b, nil
+}
+
+func (c *cmdOps) Unbind(_ context.Context, b command.Binding) (command.Binding, error) {
+	c.calls = append(c.calls, "unbind "+b.Agent+" "+b.To)
+	return b, nil
+}
+
+func (c *cmdOps) Bindings(context.Context, string) ([]command.Binding, error) { return nil, nil }
+
 func (c *cmdOps) View(_ context.Context, agent, action string) error {
 	c.calls = append(c.calls, "view "+agent+" "+action)
 	return nil

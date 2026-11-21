@@ -31,6 +31,28 @@ type Ops interface {
 	// as the node's agent list shows them: an agent out of reach is left out, as
 	// if it did not exist (ADR-0012 point 4).
 	Agents(ctx context.Context) ([]Agent, error)
+	// Bind sets a standing binding (ADR-0029 point 8) and returns it as set,
+	// its defaults filled in.
+	Bind(ctx context.Context, b Binding) (Binding, error)
+	// Unbind removes a standing binding set while the node runs.
+	Unbind(ctx context.Context, b Binding) (Binding, error)
+	// Bindings lists the standing bindings of the agents the operator may
+	// reach, of one agent when agent is not empty.
+	Bindings(ctx context.Context, agent string) ([]Binding, error)
+}
+
+// Binding is one standing binding as the commands show it: a destination, by
+// name, following one of an agent's streams.
+type Binding struct {
+	Agent string
+	// Stream is "stdout" or "stderr"; empty is stdout.
+	Stream string
+	To     string
+	// Level is a number or "log"; empty is the node's.
+	Level  string
+	Prefix string
+	// From is where the binding was set: "config" or "runtime".
+	From string
 }
 
 // Agent is one agent as /pao agents lists it.
@@ -76,6 +98,9 @@ var table = []spec{
 	{word: "tag", args: "<tag> <message>", about: "send a message to every agent with a tag", run: runTag},
 	{word: "agents", about: "list the agents you may reach, with their tags and whether each is running", operator: true, run: runAgents},
 	{word: "stream", args: "<agent> [channel] [level] | <agent> --clear", about: "send an agent's output to one channel (this one if none is named), at a level; --clear sends it to every channel again", operator: true, run: runStream},
+	{word: "bind", args: "<agent> <destination> [stderr] [level|log] [prefix]", about: "make a destination (group:<name>, private:<subject>, channel:local) follow an agent's output, or with stderr its gate questions and notices", operator: true, run: runBind},
+	{word: "unbind", args: "<agent> <destination> [stderr]", about: "remove a binding set with bind", operator: true, run: runUnbind},
+	{word: "bindings", args: "[agent]", about: "list the standing bindings, and where each was set", operator: true, run: runBindings},
 	{word: "view", args: "<agent> pause|resume", about: "hold an agent's output back, or send what was held and let it through again", operator: true, run: runView},
 	{word: "allow", args: "<question>", about: "allow what a gate question asks, once", operator: true, run: decide("allow")},
 	{word: "always", args: "<question>", about: "allow what a gate question asks, and remember it", operator: true, run: decide("always")},
@@ -282,4 +307,98 @@ func decide(decision string) func(context.Context, Ops, Caller, []string, string
 		}
 		return Result{Reply: fmt.Sprintf("%s: %s", args[0], decision)}, true
 	}
+}
+
+// Streams a binding follows.
+const (
+	streamStdout = "stdout"
+	streamStderr = "stderr"
+)
+
+// runBind reads /pao bind <agent> <destination> [stdout|stderr] [level|log]
+// [prefix]. The prefix is the rest of the line, so it may hold a space.
+func runBind(ctx context.Context, ops Ops, _ Caller, args []string, rest string) (Result, bool) {
+	if len(args) < 2 {
+		return Result{}, false
+	}
+	b := Binding{Agent: args[0], To: args[1]}
+	_, rest = cut(rest)
+	_, rest = cut(rest)
+	if w, more := cut(rest); w == streamStdout || w == streamStderr {
+		b.Stream, rest = w, more
+	}
+	if w, more := cut(rest); w == "log" || isNumber(w) {
+		b.Level, rest = w, more
+	}
+	b.Prefix = strings.TrimSpace(rest)
+	set, err := ops.Bind(ctx, b)
+	if err != nil {
+		return Result{Reply: err.Error()}, true
+	}
+	return Result{Reply: describeBinding(set, "follows")}, true
+}
+
+func runUnbind(ctx context.Context, ops Ops, _ Caller, args []string, _ string) (Result, bool) {
+	if len(args) < 2 || len(args) > 3 {
+		return Result{}, false
+	}
+	b := Binding{Agent: args[0], To: args[1]}
+	if len(args) == 3 {
+		if args[2] != streamStdout && args[2] != streamStderr {
+			return Result{}, false
+		}
+		b.Stream = args[2]
+	}
+	gone, err := ops.Unbind(ctx, b)
+	if err != nil {
+		return Result{Reply: err.Error()}, true
+	}
+	return Result{Reply: fmt.Sprintf("%s no longer follows %s's %s", gone.To, gone.Agent, streamOf(gone))}, true
+}
+
+func runBindings(ctx context.Context, ops Ops, _ Caller, args []string, _ string) (Result, bool) {
+	if len(args) > 1 {
+		return Result{}, false
+	}
+	agent := ""
+	if len(args) == 1 {
+		agent = args[0]
+	}
+	bs, err := ops.Bindings(ctx, agent)
+	if err != nil {
+		return Result{Reply: err.Error()}, true
+	}
+	if len(bs) == 0 {
+		return Result{Reply: "no standing bindings"}, true
+	}
+	var out strings.Builder
+	out.WriteString("standing bindings:")
+	for _, b := range bs {
+		fmt.Fprintf(&out, "\n%s (%s)", describeBinding(b, "follows"), b.From)
+	}
+	return Result{Reply: out.String()}, true
+}
+
+// describeBinding says a binding in one line, by destination name.
+func describeBinding(b Binding, verb string) string {
+	s := fmt.Sprintf("%s %s %s's %s", b.To, verb, b.Agent, streamOf(b))
+	if b.Level != "" {
+		s += " at level " + b.Level
+	}
+	if b.Prefix != "" {
+		s += fmt.Sprintf(", prefix %q", b.Prefix)
+	}
+	return s
+}
+
+func streamOf(b Binding) string {
+	if b.Stream == "" {
+		return streamStdout
+	}
+	return b.Stream
+}
+
+func isNumber(s string) bool {
+	_, err := strconv.Atoi(s)
+	return err == nil
 }

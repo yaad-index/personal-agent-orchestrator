@@ -369,6 +369,15 @@ func (noCommands) SetStream(context.Context, string, string, int) error { return
 func (noCommands) View(context.Context, string, string) error           { return errNoCommands }
 func (noCommands) Decide(context.Context, string, string, string) error { return errNoCommands }
 func (noCommands) Agents(context.Context) ([]command.Agent, error)      { return nil, errNoCommands }
+func (noCommands) Bind(context.Context, command.Binding) (command.Binding, error) {
+	return command.Binding{}, errNoCommands
+}
+func (noCommands) Unbind(context.Context, command.Binding) (command.Binding, error) {
+	return command.Binding{}, errNoCommands
+}
+func (noCommands) Bindings(context.Context, string) ([]command.Binding, error) {
+	return nil, errNoCommands
+}
 
 // CommandAsOperator runs a /pao command from the operator at a channel that
 // routes as the operator without an identity binding, such as the node's local

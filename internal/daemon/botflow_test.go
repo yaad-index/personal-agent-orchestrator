@@ -722,3 +722,53 @@ func requireStatus(t *testing.T, err error, status, msg string) {
 	require.Error(t, err, msg)
 	assert.True(t, strings.HasPrefix(err.Error(), status+":"), "%s: %v", msg, err)
 }
+
+// TestTheOperatorBindsAnAgentFromChat runs ADR-0029 point 8 from chat on a real
+// node: /pao bind, /pao bindings and /pao unbind are answered to the operator
+// alone, and the binding shows the agent's output in the group while it lasts.
+func TestTheOperatorBindsAnAgentFromChat(t *testing.T) {
+	svc := &service{}
+	ts := httptest.NewServer(http.HandlerFunc(svc.handler))
+	t.Cleanup(ts.Close)
+	t.Setenv("PAO_TEST_BOT_TOKEN", "tok-1")
+	const person, group = 4242, -700
+
+	n := startNodeWith(t, map[string]string{"bee": ""}, func(_, _ string, cfg *config.Config) {
+		cfg.Orchestrator.Channels = []config.Channel{{ID: 1, Name: "chat", Kind: "bot", CredentialEnv: "PAO_TEST_BOT_TOKEN",
+			Options: map[string]any{"endpoint": ts.URL + "/bot{token}/{method}", "poll_timeout": 0},
+			Groups:  []config.Group{{ID: strconv.Itoa(group), Name: "team", Members: config.MembersOperators}}}}
+	}, func(o *Options) { o.Adapters = builtin.Table() })
+	ctx := context.Background()
+
+	require.NoError(t, n.client.AddSubject(ctx, "alice"))
+	inv, err := n.client.Invite(ctx, "alice", time.Hour)
+	require.NoError(t, err)
+	svc.push(chatUpdate(1, 10, person, "/register "+inv.Secret))
+	lineWith(t, svc, float64(person), "registered.")
+	require.NoError(t, n.client.SetOperator(ctx, "alice", true))
+
+	svc.push(chatUpdate(2, 11, person, "/pao bind bee group:team 2 B:"))
+	assert.Equal(t, `group:team follows bee's stdout at level 2, prefix "B:"`, lineWith(t, svc, person, "group:team follows bee"))
+	svc.push(chatUpdate(3, 12, person, "/pao bind bee private:alice stderr"))
+	assert.Equal(t, "private:alice follows bee's stderr", lineWith(t, svc, person, "private:alice follows bee"))
+	svc.push(chatUpdate(4, 13, person, "/pao bindings"))
+	assert.Equal(t, "standing bindings:\n"+`group:team follows bee's stdout at level 2, prefix "B:" (runtime)`+"\nprivate:alice follows bee's stderr (runtime)", lineWith(t, svc, person, "standing bindings"))
+	svc.push(chatUpdate(5, 14, person, "/pao unbind bee private:alice stderr"))
+	lineWith(t, svc, person, "private:alice no longer follows bee's stderr")
+
+	svc.push(chatUpdate(6, 15, person, "/pao agent bee hello"))
+	assert.Equal(t, "B: echo: [alice]: hello", lineWith(t, svc, group, "hello"), "the binding set from chat")
+
+	svc.push(chatUpdate(7, 16, person, "/pao unbind bee group:team"))
+	lineWith(t, svc, person, "group:team no longer follows bee's stdout")
+	svc.push(chatUpdate(8, 17, person, "/pao agent bee again"))
+	lineWith(t, svc, person, "again")
+	assert.Nil(t, svc.sentWith(group, "again"), "unbound, the group is shown nothing more")
+
+	svc.push(chatUpdate(9, 18, person, "/pao bind bee group:nope"))
+	assert.Equal(t, `no admitted group is named "nope"`, lineWith(t, svc, person, "nope"))
+	for _, s := range svc.texts(group) {
+		assert.NotContains(t, s, "follows", "a command's answer goes to the sender alone")
+		assert.NotContains(t, s, "standing bindings")
+	}
+}
