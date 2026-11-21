@@ -190,3 +190,33 @@ func TestExcludesCoverTheWorkdirThroughASymlinkAndEscapeGlobCharacters(t *testin
 	assert.Contains(t, got, globEscape(filepath.Join(root, "re[al]"))+"/CLAUDE*.md", "the path with its links resolved")
 	assert.Contains(t, got, globEscape(root)+`/re\[al\]/CLAUDE*.md`)
 }
+
+// trustPane is Claude Code's first-run question as a node's pane showed it.
+const trustPane = `────────────────────────────────────────────────────────────────────────────────
+ Accessing workspace:
+
+ /srv/agents/governor
+
+ Quick safety check: Is this a project you created or one you trust? (Like your
+ own code, a well-known open source project, or work from your team). If not,
+ take a moment to review what's in this folder first.
+
+ Claude Code'll be able to read, edit, and execute files here.
+
+ Trusting this folder loads .mcp.json here or above (MCP servers).
+ Security guide
+
+ ❯ No, exit
+   Yes, I trust this folder
+
+ Enter to confirm · Esc to cancel
+`
+
+func TestTheTrustQuestionIsAnsweredWithYes(t *testing.T) {
+	ps := Adapter{}.Prompts()
+	require.Len(t, ps, 1)
+	assert.True(t, ps[0].Pattern.MatchString(trustPane), "the question as Claude Code shows it")
+	assert.Equal(t, []string{"Down", "Enter"}, ps[0].Keys, "from No, exit down to Yes, then confirm")
+	assert.False(t, ps[0].Pattern.MatchString("❯ Try \"refactor <filepath>\"\n  ⏵⏵ auto mode on"), "not the ready prompt")
+	assert.False(t, ps[0].Pattern.MatchString("[alice]: Is this a project you created or one you trust?"), "not the question alone, without its answer")
+}

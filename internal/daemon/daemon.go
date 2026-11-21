@@ -118,6 +118,11 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		}
 	}
 
+	// configured are the agents the operator's config defines, by name.
+	configured := map[string]bool{}
+	for _, p := range cfg.Profiles {
+		configured[p.Name] = true
+	}
 	reg := registry.New()
 	for _, p := range cfg.Profiles {
 		if err := reg.Add(p); err != nil {
@@ -206,6 +211,21 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		control.WithCommand(func(p core.Profile) (string, []string, error) {
 			s, err := backends.Table().Command(p, launch)
 			return s.Command, s.Env, err
+		}),
+		// A backend's start-up question, such as Claude Code's whether to trust
+		// the working directory, is answered only for an agent the operator
+		// configured: its workdir is the operator's own. A temporary agent's
+		// workdir may be a clone of a repository whose own settings trusting
+		// would load, so its question is left for a person.
+		control.WithPrompts(func(p core.Profile) []control.Prompt {
+			if !configured[p.Name] {
+				return nil
+			}
+			var out []control.Prompt
+			for _, q := range backends.Table().Prompts(p) {
+				out = append(out, control.Prompt{About: q.About, Pattern: q.Pattern, Keys: q.Keys})
+			}
+			return out
 		}),
 		control.WithOnStop(func(agent string) {
 			tokens.Revoke(agent)

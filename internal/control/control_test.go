@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -27,6 +28,7 @@ type fakeTerm struct {
 	env      [][]string
 	pasted   []string
 	killed   []string
+	keys     []string
 }
 
 func (f *fakeTerm) NewSession(_ context.Context, agent, _, command string, env []string) error {
@@ -70,6 +72,13 @@ func (f *fakeTerm) Paste(_ context.Context, agent, text string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.pasted = append(f.pasted, agent+":"+text)
+	return nil
+}
+
+func (f *fakeTerm) SendKeys(_ context.Context, agent string, keys ...string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.keys = append(f.keys, agent+":"+strings.Join(keys, ","))
 	return nil
 }
 
@@ -285,4 +294,46 @@ func (erroringHas) HasSession(context.Context, string) (bool, error) {
 
 func TestAnErrorAskingIsNotAlive(t *testing.T) {
 	assert.False(t, New(erroringHas{&fakeTerm{}}).Alive(context.Background(), "a"), "a question that cannot be answered is not a yes")
+}
+
+var trust = Prompt{About: "trust", Pattern: regexp.MustCompile(`trust this folder\?`), Keys: []string{"Down", "Enter"}}
+
+func TestLaunchAnswersAStartUpQuestionOnceThenWaitsForReady(t *testing.T) {
+	ft := &fakeTerm{panes: []string{"loading", "trust this folder?", "trust this folder?", "welcome\nREADY>"}}
+	var asked []string
+	p := New(ft, WithPollInterval(time.Millisecond), WithPrompts(func(prof core.Profile) []Prompt {
+		asked = append(asked, prof.Name)
+		return []Prompt{trust}
+	}))
+	require.NoError(t, p.Launch(context.Background(), profile(time.Second)))
+	assert.Equal(t, []string{"a:Down,Enter"}, ft.keys, "answered once, though the question stayed up for two polls")
+	assert.Equal(t, []string{"a"}, asked)
+}
+
+func TestAStartUpQuestionThatComesBackTimesOut(t *testing.T) {
+	ft := &fakeTerm{panes: []string{"trust this folder?"}}
+	p := New(ft, WithPollInterval(time.Millisecond), WithPrompts(func(core.Profile) []Prompt { return []Prompt{trust} }))
+	_, ok := AsReadinessError(p.Launch(context.Background(), profile(30*time.Millisecond)))
+	assert.True(t, ok, "not ready, as any start that stays at a question")
+	assert.Equal(t, []string{"a:Down,Enter"}, ft.keys, "answered once only")
+}
+
+func TestAQuestionNotGivenForTheAgentIsNotAnswered(t *testing.T) {
+	ft := &fakeTerm{panes: []string{"trust this folder?"}}
+	p := New(ft, WithPollInterval(time.Millisecond), WithPrompts(func(core.Profile) []Prompt { return nil }))
+	_, ok := AsReadinessError(p.Launch(context.Background(), profile(20*time.Millisecond)))
+	assert.True(t, ok)
+	assert.Empty(t, ft.keys)
+
+	ft = &fakeTerm{panes: []string{"trust this folder?"}}
+	_, ok = AsReadinessError(New(ft, WithPollInterval(time.Millisecond)).Launch(context.Background(), profile(20*time.Millisecond)))
+	assert.True(t, ok, "and with no questions given at all")
+	assert.Empty(t, ft.keys)
+}
+
+func TestAQuestionThatIsNotShownIsNotAnswered(t *testing.T) {
+	ft := &fakeTerm{panes: []string{"loading", "still loading", "welcome\nREADY>"}}
+	p := New(ft, WithPollInterval(time.Millisecond), WithPrompts(func(core.Profile) []Prompt { return []Prompt{trust} }))
+	require.NoError(t, p.Launch(context.Background(), profile(time.Second)))
+	assert.Empty(t, ft.keys, "no key is sent to a terminal that never asked")
 }
