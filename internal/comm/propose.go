@@ -10,15 +10,15 @@ import (
 	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
 )
 
-// Propose sends pao's message m, a command proposed on an agent's behalf, to the
-// subject who sent the message that started the agent's current turn, and to
-// that subject alone (ADR-0030 point 3): to the subject's private conversations on
-// the channel the message came from, or to that channel's one conversation, as on
-// the local channel. Like Notify, m is stored in no agent's scope.
+// Propose sends pao's message m, a command proposed on an agent's behalf, back to
+// the conversation the message that started the agent's current turn came from
+// (ADR-0034 point 4): a group's when it was asked in one, a private one when it
+// was asked privately, the local channel's one conversation from there. Like
+// Notify, m is stored in no agent's scope.
 //
 // A turn not started from a channel, such as one started by another agent, has no
-// one to propose to, and nor does a subject who is not an operator: both are an
-// error, and nothing is sent.
+// one to propose to, and a conversation whose readers may not see it is not sent
+// it: both are an error, and nothing is sent, never anywhere else.
 func (l *Layer) Propose(ctx context.Context, agent string, m core.Message) (core.Message, error) {
 	m.Kind = core.MessageSystemEvent
 	l.mu.RLock()
@@ -27,10 +27,10 @@ func (l *Layer) Propose(ctx context.Context, agent string, m core.Message) (core
 	if !ok || t.requester == "" {
 		return core.Message{}, fmt.Errorf("agent %q: its turn was not started from a channel, so there is no one to propose to", agent)
 	}
-	targets := l.toSubject(t.at.channel, t.at.conversation == "", t.requester, agent, m)
-	if len(targets) == 0 {
-		return core.Message{}, fmt.Errorf("agent %q: %s has no private conversation an operator reads on %s", agent, t.requester, t.at.channel)
+	if !l.noticeMay(t.at, m) {
+		return core.Message{}, fmt.Errorf("agent %q: a reader of %s, where it was asked, may not see the proposal", agent, l.conversationName(t.at))
 	}
+	targets := []target{{kind: toOrigin, at: t.at, agent: agent}}
 	stored, err := l.store.Add(m)
 	if err != nil {
 		return core.Message{}, err

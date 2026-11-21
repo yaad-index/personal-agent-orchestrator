@@ -845,16 +845,16 @@ func TestAGovernorRequestFromChatIsAnsweredToTheRequesterAlone(t *testing.T) {
 	require.NoError(t, n.client.SetOperator(ctx, "alice", true))
 
 	svc.push(groupUpdate(2, 11, person, group, "/gpao pause the bee"))
-	assert.Equal(t, "[gov]: echo: [alice]: pause the bee", lineWith(t, svc, person, "pause the bee"), "the governor's answer, privately")
-	assert.Nil(t, svc.sentWith(group, "pause the bee"), "never in the group it was asked in")
+	assert.Equal(t, "[gov]: echo: [alice]: pause the bee", lineWith(t, svc, group, "pause the bee"), "the governor's answer, in the group it was asked in")
+	assert.Nil(t, svc.sentWith(person, "echo: [alice]: pause the bee"), "and not privately")
 
 	svc.push(chatUpdate(3, 12, person, "/gpao list the agents"))
 	lineWith(t, svc, person, "echo: [alice]: list the agents")
 
 	svc.push(chatUpdate(4, 13, person, "/pao stream gov"))
-	assert.Equal(t, `bad request: agent "gov" is the governor: what it says goes only to whoever asked it`, lineWith(t, svc, person, "is the governor"))
+	assert.Equal(t, `bad request: agent "gov" is the governor: what it says goes only where it was asked`, lineWith(t, svc, person, "is the governor"))
 	svc.push(chatUpdate(5, 14, person, "/pao bind gov group:team"))
-	refusal := `agent "gov" is the governor: what it says goes only to whoever asked it`
+	refusal := `agent "gov" is the governor: what it says goes only where it was asked`
 	require.Eventually(t, func() bool {
 		for _, s := range svc.texts(person) {
 			if s == refusal {

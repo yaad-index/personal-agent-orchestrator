@@ -145,7 +145,7 @@ func (c *streamControl) SetStream(agent, channel string, level int, viewer strin
 		return fmt.Errorf("%w: level %d is below 0", temp.ErrBadRequest, level)
 	}
 	if channel != "" && agent == c.layer.Governor() {
-		return fmt.Errorf("%w: agent %q is the governor: what it says goes only to whoever asked it", temp.ErrBadRequest, agent)
+		return fmt.Errorf("%w: agent %q is the governor: what it says goes only where it was asked", temp.ErrBadRequest, agent)
 	}
 	if channel == "" {
 		if err := c.saved.forget(agent); err != nil {

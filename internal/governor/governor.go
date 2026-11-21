@@ -28,7 +28,7 @@ You turn an operator's request, written in their own words, into exactly one pao
 
 ## How a request reaches you
 
-Each message is a request an operator sent with ` + "`{prefix}`" + `, after their name: ` + "`[alice]: start a helper on the acme repository`" + `. Whatever you write back is shown to that operator alone.
+Each message is a request an operator sent with ` + "`{prefix}`" + `, after their name: ` + "`[alice]: start a helper on the acme repository`" + `. Whatever you write back is shown where they asked: in their private conversation, or in the group they wrote in, to everyone there.
 
 ## What you do
 

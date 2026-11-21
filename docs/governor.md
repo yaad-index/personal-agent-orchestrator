@@ -6,7 +6,7 @@ The governor turns an operator's request, written in plain words, into exactly o
 /gpao start a helper on the acme repository
 ```
 
-The governor's answer goes to the operator who asked, privately. It is either a clarifying question, or a proposal with a button: `gov proposes: /pao spawn acme-helper`.
+The governor answers where it was asked: privately, or in the group the request was sent in. The answer is either a clarifying question, or a proposal with a button: `gov proposes: /pao spawn acme-helper`. Anyone the group admits may press the button, and it runs as them.
 
 ## Setting one up
 
@@ -55,5 +55,6 @@ pao access grant agent:gov --tag team
 
 - **Started on the first request.** The governor is not started with the node.
 - **A fresh context per operator.** A request from a different operator than the last first ends the governor's session. The same operator keeps their context, so a clarifying question and its answer stay together. An answer still in flight for the previous operator is cut short.
-- **Everything it says goes to the requester alone, privately.** It never goes to a group, even when the request was sent from one, and never to a binding. A binding or a channel stream of the governor is refused.
+- **It answers where it was asked.** Its replies and proposals go back to the conversation the request came from, under the same reader rule as any agent's reply. A group that may not see it is not sent it, and the reply is not sent anywhere else instead. A binding or a channel stream of the governor is refused.
+- **Its notices and gate questions go to the requester alone, privately,** never to a group or to every operator. A not-ready notice carries its terminal pane.
 - **Only operators** may send `/gpao`.

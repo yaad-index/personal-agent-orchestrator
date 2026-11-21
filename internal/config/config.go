@@ -664,7 +664,7 @@ func CheckBinding(b *Binding, k BindingKnown) error {
 	case !k.Agent(b.Agent):
 		return fmt.Errorf("agent %q is not a configured agent", b.Agent)
 	case k.Governor != "" && b.Agent == k.Governor:
-		return fmt.Errorf("agent %q is the governor: what it says goes only to whoever asked it", b.Agent)
+		return fmt.Errorf("agent %q is the governor: what it says goes only where it was asked", b.Agent)
 	case b.Stream != StreamStdout && b.Stream != StreamStderr:
 		return fmt.Errorf("stream must be %q or %q", StreamStdout, StreamStderr)
 	case stderrSet:
