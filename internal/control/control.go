@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"time"
 
@@ -22,6 +23,17 @@ type Terminal interface {
 	KillSession(ctx context.Context, agent string) error
 	Capture(ctx context.Context, agent string) (string, error)
 	Paste(ctx context.Context, agent, text string) error
+	// SendKeys sends terminal keys, such as "Down" or "Enter", to the agent's
+	// pane.
+	SendKeys(ctx context.Context, agent string, keys ...string) error
+}
+
+// Prompt is a question an agent's backend may stop at while it starts, and the
+// keys that answer it.
+type Prompt struct {
+	About   string
+	Pattern *regexp.Regexp
+	Keys    []string
 }
 
 // ReadinessError reports that an agent did not reach readiness in time. Its
@@ -51,7 +63,14 @@ type Plane struct {
 	command func(core.Profile) (string, []string, error)
 	// onStop is called when an agent's session is known to be over.
 	onStop func(agent string)
+	// prompts are the start-up questions to answer for an agent; nil answers none.
+	prompts func(core.Profile) []Prompt
 }
+
+// WithPrompts sets the start-up questions the plane answers for an agent while
+// waiting for it to be ready. Each is answered at most once per start: one that
+// comes back is left, and the start times out as any other that is not ready.
+func WithPrompts(f func(core.Profile) []Prompt) Option { return func(p *Plane) { p.prompts = f } }
 
 // Option configures a Plane.
 type Option func(*Plane)
@@ -125,6 +144,11 @@ func (p *Plane) Launch(ctx context.Context, prof core.Profile) error {
 		}
 	}
 
+	var prompts []Prompt
+	if p.prompts != nil {
+		prompts = p.prompts(prof)
+	}
+	answered := make([]bool, len(prompts))
 	deadline := time.Now().Add(prof.Startup.ReadyTimeout)
 	for {
 		pane, err := p.term.Capture(ctx, prof.Name)
@@ -133,6 +157,16 @@ func (p *Plane) Launch(ctx context.Context, prof core.Profile) error {
 		}
 		if ready.MatchString(pane) {
 			return nil
+		}
+		for i, q := range prompts {
+			if answered[i] || !q.Pattern.MatchString(pane) {
+				continue
+			}
+			answered[i] = true
+			slog.Info("answering a start-up question", "agent", prof.Name, "question", q.About)
+			if err := p.term.SendKeys(ctx, prof.Name, q.Keys...); err != nil {
+				return fmt.Errorf("agent %q: answering %q: %w", prof.Name, q.About, err)
+			}
 		}
 		if !time.Now().Before(deadline) {
 			return &ReadinessError{Agent: prof.Name, Timeout: prof.Startup.ReadyTimeout, pane: pane}

@@ -104,6 +104,17 @@ func (d *Driver) Capture(ctx context.Context, agent string) (string, error) {
 	return string(out), err
 }
 
+// SendKeys sends tmux key names, such as "Down" or "Enter", to the agent's pane,
+// in order.
+func (d *Driver) SendKeys(ctx context.Context, agent string, keys ...string) error {
+	for _, k := range keys {
+		if _, err := d.run(ctx, nil, "send-keys", "-t", pane(agent), k); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Paste pastes text into the agent's terminal as one bracketed paste and then
 // submits it with Enter. The text goes through a tmux buffer, never through
 // shell or key parsing, so it arrives verbatim. Once the text is pasted the

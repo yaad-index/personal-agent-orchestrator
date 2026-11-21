@@ -12,6 +12,7 @@ package backend
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -86,6 +87,33 @@ type Adapter interface {
 
 // Table maps a profile's backend name to its adapter.
 type Table map[string]Adapter
+
+// Prompt is a question a backend may stop at while it starts, before it is
+// ready, and the keys that answer it.
+type Prompt struct {
+	// About names the question, for the log.
+	About string
+	// Pattern matches the pane while the question is shown.
+	Pattern *regexp.Regexp
+	// Keys are the terminal keys that answer it, sent in order.
+	Keys []string
+}
+
+// Prompter is an adapter whose backend may stop at a question on starting that
+// pao answers for an agent the operator configured: a backend's own first-run
+// check that no one is at the terminal to answer.
+type Prompter interface {
+	Prompts() []Prompt
+}
+
+// Prompts returns the start-up questions of p's backend, none when its adapter
+// has none.
+func (t Table) Prompts(p core.Profile) []Prompt {
+	if a, ok := t[p.Backend].(Prompter); ok {
+		return a.Prompts()
+	}
+	return nil
+}
 
 // Inherits reports which categories p opens, and refuses a name that is not a
 // category or is named twice.

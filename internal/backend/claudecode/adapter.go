@@ -64,6 +64,21 @@ var ownedPattern = func() []*regexp.Regexp {
 	return out
 }()
 
+// trustPrompt is Claude Code's first-run question on a working directory it has
+// not been told to trust. The cursor starts on "No, exit"; one key down is "Yes,
+// I trust this folder", which Claude Code records for that directory alone.
+var trustPrompt = backend.Prompt{
+	About:   "trust the working directory",
+	Pattern: regexp.MustCompile(`(?s)Is this a project you created or one you trust.*Yes, I trust this folder`),
+	Keys:    []string{"Down", "Enter"},
+}
+
+var _ backend.Prompter = Adapter{}
+
+// Prompts implements backend.Prompter: the question whether to trust the working
+// directory.
+func (Adapter) Prompts() []backend.Prompt { return []backend.Prompt{trustPrompt} }
+
 // Isolates implements backend.Adapter: Claude Code can shut out every category.
 func (Adapter) Isolates() []backend.Category { return backend.Categories }
 
