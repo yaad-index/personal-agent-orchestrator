@@ -43,6 +43,11 @@ type Mirror struct {
 // directory's live transcript is its most recently written .jsonl file: a new
 // session writes a new file, and the newest one is the one being written.
 func Locate(path string) (string, error) {
+	return locate(path, nil)
+}
+
+// locate is Locate passing over the files in skip.
+func locate(path string, skip map[string]bool) (string, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return "", err
@@ -60,6 +65,9 @@ func Locate(path string) (string, error) {
 	}
 	var cands []cand
 	for _, m := range matches {
+		if skip[m] {
+			continue
+		}
 		fi, err := os.Stat(m)
 		if err != nil || fi.IsDir() {
 			continue
@@ -83,7 +91,9 @@ func Locate(path string) (string, error) {
 // parsed once its newline has been written, so a record the backend is still
 // writing is never half-read. If the file shrinks it is read again from the
 // start, and if path is a directory and a newer transcript appears, following
-// moves to it from its start.
+// moves to it from its start. It never moves back to a transcript it left, even
+// one written to again: the agent's live session is the newer one, and going back
+// would show the old one's whole history again.
 func (m *Mirror) Follow(ctx context.Context, path string, start Start, emit func(core.Entry)) error {
 	poll := m.Poll
 	if poll <= 0 {
@@ -98,9 +108,11 @@ func (m *Mirror) Follow(ctx context.Context, path string, start Start, emit func
 		// written entirely after following began and is read whole.
 		existed bool
 		ticked  bool
+		// left are the transcripts following moved on from.
+		left = map[string]bool{}
 	)
 	for {
-		file, err := Locate(path)
+		file, err := locate(path, left)
 		switch {
 		case err == nil:
 			if !ticked {
@@ -108,6 +120,9 @@ func (m *Mirror) Follow(ctx context.Context, path string, start Start, emit func
 			}
 			if file != cur {
 				first := cur == ""
+				if !first {
+					left[cur] = true
+				}
 				cur, pending = file, nil
 				off = 0
 				if first && existed && start == FromEnd {
