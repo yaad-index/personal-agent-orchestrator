@@ -393,8 +393,11 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	defer stopBudget()
 	book := newBudget(budgetCtx, cfg, layer, opts.BudgetReader)
 	// Set before any surface serves, so no create can race the hook.
-	dispatcher := task.NewDispatcher(tasks, taskFleet{reg: reg, router: router, governor: cfg.Orchestrator.Governor.Agent}, book)
-	tasks.Changed = dispatcher.Kick
+	fleet := taskFleet{reg: reg, router: router, governor: cfg.Orchestrator.Governor.Agent}
+	dispatcher := task.NewDispatcher(tasks, fleet, book)
+	dispatcher.OneOffs = taskOneOffs{mgr: mgr}
+	dispatcher.Liveness = taskLiveness{reg: reg, thresholds: mgr.Thresholds}
+	tasks.Changed, tasks.Tell = dispatcher.Kick, fleet.Tell
 	localOpts = append(localOpts, local.WithBudget(budgetJSON(book)))
 	srv, err := local.New(layer, token, append([]local.Option{local.WithDecider(decider), local.WithTemp(tempOps), local.WithStream(streamOps), local.WithStanding(standingOps), local.WithWatch(streamOps), local.WithLifecycle(lifeOps), local.WithRejected(rejectedAPI{rejects}), local.WithTasks(taskAPI{tasks}), local.WithIdentity(identityAPI{ids}),
 		local.WithDefaults(newDefaultsAPI(defaults, cfg.Orchestrator.Channels, router.Resolve)), local.WithGrants(grantsAPI{store: grantStore, changed: mcpServer.Refresh}),

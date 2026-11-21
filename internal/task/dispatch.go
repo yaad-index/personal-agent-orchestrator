@@ -7,6 +7,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/access"
@@ -47,8 +48,18 @@ type Dispatcher struct {
 	Svc    *Service
 	Fleet  Fleet
 	Budget Headroom
+	// OneOffs, when set, spawns an agent for a task no existing agent can run,
+	// and kills it when the task is over.
+	OneOffs OneOffs
+	// Liveness, when set, says whether an assignee has gone quiet.
+	Liveness Liveness
 
 	kick chan struct{}
+
+	mu       sync.Mutex
+	spawning map[string]bool
+	removing map[string]bool
+	retryAt  map[string]time.Time
 }
 
 // Pao is the name pao's own log entries are made under.
@@ -85,7 +96,8 @@ func (d *Dispatcher) Run(ctx context.Context, every time.Duration) {
 
 // NewDispatcher returns a dispatcher whose Kick wakes its Run.
 func NewDispatcher(svc *Service, fleet Fleet, budget Headroom) *Dispatcher {
-	return &Dispatcher{Svc: svc, Fleet: fleet, Budget: budget, kick: make(chan struct{}, 1)}
+	return &Dispatcher{Svc: svc, Fleet: fleet, Budget: budget, kick: make(chan struct{}, 1),
+		spawning: map[string]bool{}, removing: map[string]bool{}, retryAt: map[string]time.Time{}}
 }
 
 // Pass dispatches the open tasks once, the oldest first.
@@ -101,6 +113,9 @@ func (d *Dispatcher) Pass(ctx context.Context) {
 		switch {
 		case t.Assignee != "" && !t.Status.Terminal():
 			busy[t.Assignee] = true
+			d.watch(t)
+		case t.Assignee != "" && t.OneOff && !t.Removed:
+			d.startRemoval(ctx, t.ID)
 		case e.Folder == FolderOpen && t.Status == Open && t.Assignee == "":
 			open = append(open, t)
 		}
@@ -116,7 +131,20 @@ func (d *Dispatcher) Pass(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
+		if d.inFlight(d.spawning, t.ID) {
+			continue
+		}
 		agent, why := d.pick(t, candidates, busy)
+		if agent == "" && d.OneOffs != nil {
+			recipe, rwhy := d.pickRecipe(t)
+			if recipe != "" {
+				if owner, err := access.ParseSubject(t.Owner); err == nil && d.begin(d.spawning, t.ID) {
+					go d.spawnFor(ctx, t.ID, recipe, owner)
+				}
+				continue
+			}
+			why += "; " + rwhy
+		}
 		if agent == "" {
 			d.wait(t.ID, why)
 			continue
@@ -124,6 +152,23 @@ func (d *Dispatcher) Pass(ctx context.Context) {
 		if d.assign(ctx, t.ID, agent) {
 			busy[agent] = true
 		}
+	}
+}
+
+// startRemoval kills a finished task's one-off beside the pass, unless a kill
+// is already under way or failed too recently.
+func (d *Dispatcher) startRemoval(ctx context.Context, id string) {
+	if d.OneOffs == nil {
+		return
+	}
+	d.mu.Lock()
+	if at, ok := d.retryAt[id]; ok && d.Svc.now().Before(at) {
+		d.mu.Unlock()
+		return
+	}
+	d.mu.Unlock()
+	if d.begin(d.removing, id) {
+		go d.remove(ctx, id)
 	}
 }
 
