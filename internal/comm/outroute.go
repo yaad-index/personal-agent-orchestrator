@@ -98,12 +98,15 @@ func (l *Layer) planFor(agent string, def int) plan {
 		}
 		byR[r] = append(byR[r], t)
 	}
+	first := map[origin]string{}
 	for _, b := range l.bindingsOf(agent, StreamStdout) {
 		for _, at := range l.resolve(b.To) {
 			if p.covered[at] {
+				l.warnSameConversation(agent, StreamStdout, first[at], b.To.String())
 				continue
 			}
 			p.covered[at] = true
+			first[at] = b.To.String()
 			add(rendering{level: b.Level, prefix: b.Prefix}, target{kind: toBinding, at: at, dest: b.To.String()})
 		}
 	}

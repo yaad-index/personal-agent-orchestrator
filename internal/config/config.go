@@ -559,58 +559,85 @@ func load(path string, withMesh bool) (*Config, error) {
 }
 
 // checkBindings validates the standing bindings against the node's agents,
-// channels and groups, and fills in the defaults. Whether a private destination's
-// subject exists is known only at run time.
+// channels and admitted groups, and fills in their defaults.
 func checkBindings(path string, o *Orchestrator, agents map[string]string) error {
-	groups, channels := map[string]bool{}, map[string]bool{}
+	k := BindingKnown{
+		Agent:    func(name string) bool { return agents[name] != "" },
+		Groups:   map[string]bool{},
+		Channels: map[string]bool{},
+		Level:    o.Level,
+	}
 	for _, c := range o.Channels {
-		channels[c.Name] = true
+		k.Channels[c.Name] = true
 		for _, g := range c.Groups {
-			groups[g.Name] = true
+			k.Groups[g.Name] = true
 		}
 	}
 	seen := map[string]int{}
 	for i := range o.Bindings {
-		b := &o.Bindings[i]
 		at := fmt.Sprintf("%s: bindings[%d]", path, i)
-		if b.Stream == "" {
-			b.Stream = StreamStdout
-		}
-		stderrSet := b.Stream == StreamStderr && (b.Level != 0 || b.Prefix != "")
-		if b.Level == 0 && b.Stream == StreamStdout {
-			b.Level = BindingLevel(o.Level)
-		}
-		d, err := ParseDestination(b.To)
-		switch {
-		case agents[b.Agent] == "":
-			return fmt.Errorf("%s: agent %q is not a configured agent", at, b.Agent)
-		case b.Stream != StreamStdout && b.Stream != StreamStderr:
-			return fmt.Errorf("%s: stream must be %q or %q", at, StreamStdout, StreamStderr)
-		case stderrSet:
-			return fmt.Errorf("%s: a %s binding takes no level and no prefix", at, StreamStderr)
-		case err != nil:
+		if err := CheckBinding(&o.Bindings[i], k); err != nil {
 			return fmt.Errorf("%s: %w", at, err)
-		case d.Kind == DestGroup && !groups[d.Name]:
-			return fmt.Errorf("%s: no admitted group is named %q", at, d.Name)
-		case d.Kind == DestPrivate && d.Channel != "" && !channels[d.Channel]:
-			return fmt.Errorf("%s: no channel is named %q", at, d.Channel)
-		case d.Kind == DestChannel && !reservedChannelNames[d.Name]:
-			return fmt.Errorf("%s: channel %q has several conversations: name one as %s:<name> or %s:<subject>", at, d.Name, DestGroup, DestPrivate)
-		case b.Stream == StreamStdout && b.Level < 1:
-			return fmt.Errorf("%s: level must be at least 1", at)
-		case utf8.RuneCountInString(b.Prefix) > MaxPrefix:
-			return fmt.Errorf("%s: prefix is longer than %d characters", at, MaxPrefix)
-		case strings.ContainsAny(b.Prefix, "\r\n"):
-			return fmt.Errorf("%s: prefix is one line", at)
 		}
-		key := b.Agent + "\x00" + b.Stream + "\x00" + d.String()
+		b := o.Bindings[i]
+		key := b.Key()
 		if prev, dup := seen[key]; dup {
-			return fmt.Errorf("%s: agent %q is already bound to %s at bindings[%d]", at, b.Agent, d, prev)
+			return fmt.Errorf("%s: agent %q is already bound to %s at bindings[%d]", at, b.Agent, b.To, prev)
 		}
 		seen[key] = i
 	}
 	return nil
 }
+
+// BindingKnown is what a binding is checked against: the node's agents, the
+// names of its channels and admitted groups, and its level.
+type BindingKnown struct {
+	Agent    func(name string) bool
+	Groups   map[string]bool
+	Channels map[string]bool
+	Level    int
+}
+
+// CheckBinding validates one binding and fills in its defaults: the stream
+// stdout and a stdout binding's level the node's. Whether a subject exists is not known to the config, so a
+// private destination's subject is not checked here.
+func CheckBinding(b *Binding, k BindingKnown) error {
+	if b.Stream == "" {
+		b.Stream = StreamStdout
+	}
+	stderrSet := b.Stream == StreamStderr && (b.Level != 0 || b.Prefix != "")
+	if b.Level == 0 && b.Stream == StreamStdout {
+		b.Level = BindingLevel(k.Level)
+	}
+	d, err := ParseDestination(b.To)
+	switch {
+	case !k.Agent(b.Agent):
+		return fmt.Errorf("agent %q is not a configured agent", b.Agent)
+	case b.Stream != StreamStdout && b.Stream != StreamStderr:
+		return fmt.Errorf("stream must be %q or %q", StreamStdout, StreamStderr)
+	case stderrSet:
+		return fmt.Errorf("a %s binding takes no level and no prefix", StreamStderr)
+	case err != nil:
+		return err
+	case d.Kind == DestGroup && !k.Groups[d.Name]:
+		return fmt.Errorf("no admitted group is named %q", d.Name)
+	case d.Kind == DestPrivate && d.Channel != "" && !k.Channels[d.Channel]:
+		return fmt.Errorf("no channel is named %q", d.Channel)
+	case d.Kind == DestChannel && !reservedChannelNames[d.Name]:
+		return fmt.Errorf("channel %q has several conversations: name one as %s:<name> or %s:<subject>", d.Name, DestGroup, DestPrivate)
+	case b.Stream == StreamStdout && b.Level < 1:
+		return fmt.Errorf("level must be at least 1")
+	case utf8.RuneCountInString(b.Prefix) > MaxPrefix:
+		return fmt.Errorf("prefix is longer than %d characters", MaxPrefix)
+	case strings.ContainsAny(b.Prefix, "\r\n"):
+		return fmt.Errorf("prefix is one line")
+	}
+	return nil
+}
+
+// Key identifies a checked binding: no agent is bound twice to one destination on
+// one stream.
+func (b Binding) Key() string { return b.Agent + "\x00" + b.Stream + "\x00" + b.To }
 
 // checkLoopback accepts only a host:port whose host is a loopback address.
 func checkLoopback(addr string) error {
