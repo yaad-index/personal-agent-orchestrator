@@ -90,6 +90,7 @@ func knownFor(cfg *config.Config) config.BindingKnown {
 		Groups:   map[string]bool{},
 		Channels: map[string]bool{},
 		Level:    cfg.Orchestrator.Level,
+		Governor: cfg.Orchestrator.Governor.Agent,
 	}
 	for _, c := range cfg.Orchestrator.Channels {
 		k.Channels[c.Name] = true

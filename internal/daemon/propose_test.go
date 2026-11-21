@@ -43,3 +43,14 @@ func TestAProposalThatIsNotOneProposableCommandIsRefused(t *testing.T) {
 	}
 	assert.Empty(t, local.got, "nothing is shown")
 }
+
+func TestANodeThatNarrowsWhatTheGovernorProposesNarrowsEveryProposal(t *testing.T) {
+	ops, local := proposeOps(t)
+	ops.propose = []string{"agents", "view"}
+	err := ops.Propose(context.Background(), access.Agent("a"), "/pao spawn helper")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `"spawn" is not a command a governor may propose`)
+	assert.Empty(t, local.got)
+	require.NoError(t, ops.Propose(context.Background(), access.Agent("a"), "/pao view coder pause"))
+	assert.Len(t, local.got, 1)
+}

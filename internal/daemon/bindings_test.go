@@ -186,3 +186,14 @@ func TestALevelIsReadAndWrittenAsTheConfigWritesIt(t *testing.T) {
 	_, err := parseLevel("loud")
 	assert.Error(t, err)
 }
+
+func TestTheGovernorTakesNoBindingAtRuntime(t *testing.T) {
+	r := newBindingRig(t)
+	r.cfg.Orchestrator.Governor = config.Governor{Agent: "bee"}
+	r.set = r.load(t)
+	_, err := r.set.add(config.Binding{Agent: "bee", To: "private:alice"})
+	require.ErrorIs(t, err, local.ErrBadRequest)
+	assert.Contains(t, err.Error(), "is the governor")
+	_, err = r.set.add(config.Binding{Agent: "wasp", To: "private:alice"})
+	assert.NoError(t, err, "another agent still may be bound")
+}
