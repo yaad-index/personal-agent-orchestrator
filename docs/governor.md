@@ -16,6 +16,8 @@ The governor is an ordinary configured agent with its own profile and working di
 
 The start command must begin a **new session** each time, never resume an earlier one. pao starts the governor afresh whenever a request comes from a different operator than the last. A fresh context is what keeps one operator's request out of another's.
 
+On its first start in a new working directory, Claude Code asks whether to trust the folder. No one is at the governor's terminal to answer, so it would never become ready. Accept the trust for the governor's working directory once, before its first request. One way is to start the backend in that directory yourself and confirm. Trust only that directory, not a parent of it.
+
 ### 2. Its instructions
 
 pao writes the governor's instructions from the command table:
@@ -46,7 +48,7 @@ pao access grant agent:gov --tag team
 ```
 
 - `propose_command` is how the governor answers. Without the grant, the tool is not offered to it.
-- A grant on agents lets the governor **list** them, and the recipes carrying the same tags, so it can match names. pao refuses the governor every other action whatever its grants say: sending to an agent, spawning, killing, starting or stopping, watching output, reading a harvest, and calling a proxied tool.
+- A grant on agents lets the governor **list** them, and the recipes carrying the same tags, so it can match names. Of pao's own tools it is offered only `list_agents`, `list_recipes` and `propose_command`. pao refuses the governor every other action whatever its grants say: sending to an agent, spawning, killing, starting or stopping, watching output, reading a harvest, and calling a proxied tool.
 - While it serves a request, the governor sees only what the requesting operator's own grants reach as well. With no request in hand, it sees nothing.
 
 ## How it behaves

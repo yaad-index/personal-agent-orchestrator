@@ -228,6 +228,20 @@ func (s *Server) addTools(srv *mcp.Server) {
 	}, s.readHarvest)
 }
 
+// ownTools are the names of pao's own tools, as addTools adds them.
+var ownTools = []string{"list_agents", "list_recipes", "send_message", "spawn_agent", "kill_agent", "list_harvests", "read_harvest"}
+
+// notGovernorTools are pao's own tools the governor is not offered.
+func (s *Server) notGovernorTools() []string {
+	var out []string
+	for _, n := range ownTools {
+		if !governorTools[n] {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
 type spawnInput struct {
 	Recipe  string   `json:"recipe" jsonschema:"the recipe to spawn from (see list_recipes)"`
 	Name    string   `json:"name,omitempty" jsonschema:"a name for the agent; generated from the recipe if left out"`

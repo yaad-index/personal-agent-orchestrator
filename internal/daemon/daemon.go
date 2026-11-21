@@ -310,7 +310,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 			return plane.Alive(ctx, agent)
 		}},
 	}
-	mcpServer := mcpsrv.New(ops, resolver, mcpsrv.WithAuthorizer(auth), mcpsrv.WithGate(gt), mcpsrv.WithProxy(proxy))
+	mcpServer := mcpsrv.New(ops, resolver, mcpsrv.WithAuthorizer(auth), mcpsrv.WithGate(gt), mcpsrv.WithProxy(proxy), mcpsrv.WithGovernor(cfg.Orchestrator.Governor.Agent))
 	mcpServers.Store(mcpServer)
 	mcpHandler := mcpServer.Handler()
 

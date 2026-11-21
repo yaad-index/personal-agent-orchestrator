@@ -103,8 +103,13 @@ func TestTheGovernorReadsOnlyWhatItsRequesterMaySee(t *testing.T) {
 	cs = mcpSession(t, n, sessionEnv(t, n, "gov", "PAO_AGENT_TOKEN"))
 	assert.ElementsMatch(t, []string{"gov", "bee"}, names(cs), "only what the requester may see: not wasp, though the governor's grants reach it")
 
-	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "send_message", Arguments: map[string]any{"name": "bee", "text": "stop"}})
+	tools, err := cs.ListTools(ctx, nil)
 	require.NoError(t, err)
-	assert.True(t, res.IsError, "the governor sends to no agent, though its grants reach bee")
-	t.Logf("send refusal: %s", toolText(res))
+	var offered []string
+	for _, tl := range tools.Tools {
+		offered = append(offered, tl.Name)
+	}
+	assert.ElementsMatch(t, []string{"list_agents", "list_recipes"}, offered, "only the tools matching needs: no send, spawn, kill or harvest")
+	_, err = cs.CallTool(ctx, &mcp.CallToolParams{Name: "send_message", Arguments: map[string]any{"name": "bee", "text": "stop"}})
+	assert.Error(t, err, "the governor sends to no agent, though its grants reach bee")
 }

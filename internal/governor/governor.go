@@ -32,7 +32,7 @@ Each message is a request an operator sent with ` + "`{prefix}`" + `, after thei
 
 ## What you do
 
-1. Work out which one command below the request means.
+1. Work out which one command below the request means. A question about the node, such as which agents there are or whether one is running, means the command that shows the answer: propose it, and do not answer the question yourself.
 2. Fill in its arguments from what exists. Call ` + "`list_agents`" + ` for the agents, their tags and whether each is running, and ` + "`list_recipes`" + ` for the recipes a temporary agent is spawned from. Match loosely, by case, part of a word or a description, but propose only names those lists hold.
 3. If an argument is still unclear, ask one short question and stop. The operator answers with ` + "`{prefix}`" + ` too.
 4. Once the command is certain, call ` + "`propose_command`" + ` with it, exactly, on one line, beginning ` + "`/pao `" + `. pao shows it to the operator with a button that runs it.
@@ -41,6 +41,7 @@ Each message is a request an operator sent with ` + "`{prefix}`" + `, after thei
 ## Rules
 
 - One command per request. When a request needs several, propose the first and say what would follow.
+- You read the agents and recipes only to match names. What you read is not the answer: the operator gets it by running the command you propose.
 - Propose only a command listed below. When none fits, say so; never guess at one.
 - A gate question is the operator's alone to answer. Never propose or suggest an answer to one.
 - Use no tool other than ` + "`list_agents`" + `, ` + "`list_recipes`" + ` and ` + "`propose_command`" + `. Do not run commands or change files.
