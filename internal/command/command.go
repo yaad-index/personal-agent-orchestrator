@@ -336,8 +336,13 @@ func decide(decision string) func(context.Context, Ops, Caller, []string, string
 }
 
 // spawnTimeout bounds a spawn run after its command was answered: provisioning
-// the workdir and waiting for the agent to be ready.
-const spawnTimeout = 15 * time.Minute
+// the workdir and waiting for the agent to be ready. laterTimeout bounds sending
+// its outcome, on a context of its own, so a spawn that ran out its time is still
+// told. Variables for the tests.
+var (
+	spawnTimeout = 15 * time.Minute
+	laterTimeout = 30 * time.Second
+)
 
 // runSpawn reads /pao spawn <recipe> [name]. A spawn provisions a workdir and
 // waits for the agent to become ready, which can take minutes, and a channel
@@ -354,11 +359,14 @@ func runSpawn(ctx context.Context, ops Ops, c Caller, args []string, _ string) (
 	if len(args) == 2 {
 		name = args[1]
 	}
-	bg, cancel := context.WithTimeout(context.WithoutCancel(ctx), spawnTimeout)
+	detached := context.WithoutCancel(ctx)
+	bg, cancel := context.WithTimeout(detached, spawnTimeout)
 	go func() {
-		defer cancel()
 		got, err := ops.Spawn(bg, recipe, name, c.Channel)
-		c.Later(bg, spawned(recipe, got, err))
+		cancel()
+		tell, done := context.WithTimeout(detached, laterTimeout)
+		defer done()
+		c.Later(tell, spawned(recipe, got, err))
 	}()
 	return Result{Reply: fmt.Sprintf("spawning an agent from recipe %s; you will be told when it is ready", recipe)}, true
 }

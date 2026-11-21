@@ -27,6 +27,8 @@ type fakeOps struct {
 	// context's error then.
 	hold     chan struct{}
 	spawnCtx error
+	// untilDone keeps Spawn waiting until its context ends.
+	untilDone bool
 }
 
 func (f *fakeOps) Agents(context.Context) ([]Agent, error) {
@@ -73,6 +75,9 @@ func (f *fakeOps) Spawn(ctx context.Context, recipe, name, channel string) (stri
 	if f.hold != nil {
 		<-f.hold
 		f.spawnCtx = ctx.Err()
+	}
+	if f.untilDone {
+		<-ctx.Done()
 	}
 	return f.spawned, f.err
 }
@@ -381,6 +386,22 @@ func TestSpawnRunsAfterTheCommandsContextEnds(t *testing.T) {
 	close(ops.hold)
 	assert.Equal(t, "helper-1 is ready, spawned from recipe helper", <-later)
 	assert.NoError(t, ops.spawnCtx, "the spawn's context outlives the command's")
+}
+
+func TestASpawnThatRunsOutItsTimeIsStillTold(t *testing.T) {
+	defer func(d time.Duration) { spawnTimeout = d }(spawnTimeout)
+	spawnTimeout = 50 * time.Millisecond
+	ops := &fakeOps{spawned: "helper-1", err: context.DeadlineExceeded, untilDone: true}
+	caller, _ := laterCaller()
+	told := make(chan error, 1)
+	caller.Later = func(ctx context.Context, _ string) { told <- ctx.Err() }
+	Run(context.Background(), ops, caller, "/pao spawn helper")
+	select {
+	case err := <-told:
+		assert.NoError(t, err, "the outcome is sent on a context the spawn's bound did not end")
+	case <-time.After(5 * time.Second):
+		t.Fatal("no later answer")
+	}
 }
 
 func TestSpawnAndKillUsage(t *testing.T) {
