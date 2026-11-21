@@ -38,6 +38,7 @@ type CLI struct {
 	Inbound  InboundCmd  `cmd:"" help:"Inbounds the node received but did not act on."`
 	Harvests HarvestsCmd `cmd:"" help:"Outputs harvested from killed temporary agents."`
 	Budget   BudgetCmd   `cmd:"" help:"Each account's budget as the running node last read it."`
+	Tasks    TasksCmd    `cmd:"" help:"Tasks: the units of work pao dispatches to agents."`
 	Hook     HookCmd     `cmd:"" help:"The backend's pre-tool-call hook: ask the node's gate about an action."`
 }
 

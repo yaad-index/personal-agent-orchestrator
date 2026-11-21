@@ -46,6 +46,7 @@ import (
 	"github.com/yaad-index/personal-agent-orchestrator/internal/registry"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/rejected"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/route"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/task"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/temp"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/tmux"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/upstream"
@@ -320,8 +321,9 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 			return plane.Alive(ctx, agent)
 		}},
 	}
+	tasks := &task.Service{Store: &task.Store{Root: filepath.Join(cfg.Orchestrator.StateDir, "tasks")}, Auth: auth, Gate: gt}
 	mcpServer := mcpsrv.New(ops, resolver, mcpsrv.WithAuthorizer(auth), mcpsrv.WithGate(gt), mcpsrv.WithProxy(proxy), mcpsrv.WithGovernor(cfg.Orchestrator.Governor.Agent),
-		mcpsrv.WithChannels(governorChannels(cfg.Orchestrator.Channels, governorServing)))
+		mcpsrv.WithChannels(governorChannels(cfg.Orchestrator.Channels, governorServing)), mcpsrv.WithTasks(tasks))
 	mcpServers.Store(mcpServer)
 	mcpHandler := mcpServer.Handler()
 
@@ -389,7 +391,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	defer stopBudget()
 	book := newBudget(budgetCtx, cfg, layer, opts.BudgetReader)
 	localOpts = append(localOpts, local.WithBudget(budgetJSON(book)))
-	srv, err := local.New(layer, token, append([]local.Option{local.WithDecider(decider), local.WithTemp(tempOps), local.WithStream(streamOps), local.WithStanding(standingOps), local.WithWatch(streamOps), local.WithLifecycle(lifeOps), local.WithRejected(rejectedAPI{rejects}), local.WithIdentity(identityAPI{ids}),
+	srv, err := local.New(layer, token, append([]local.Option{local.WithDecider(decider), local.WithTemp(tempOps), local.WithStream(streamOps), local.WithStanding(standingOps), local.WithWatch(streamOps), local.WithLifecycle(lifeOps), local.WithRejected(rejectedAPI{rejects}), local.WithTasks(taskAPI{tasks}), local.WithIdentity(identityAPI{ids}),
 		local.WithDefaults(newDefaultsAPI(defaults, cfg.Orchestrator.Channels, router.Resolve)), local.WithGrants(grantsAPI{store: grantStore, changed: mcpServer.Refresh}),
 		local.WithMount("/mcp", mcpHandler)}, localOpts...)...)
 	if err != nil {

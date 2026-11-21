@@ -99,6 +99,7 @@ func (c Chain) Resolve(token string) (access.Subject, bool) {
 
 // Server is pao's MCP server.
 type Server struct {
+	tasks    Tasks
 	resolver Resolver
 	auth     access.Authorizer
 	gate     Gate
@@ -220,6 +221,9 @@ func (s *Server) offerFor(who access.Subject) *offer {
 	if !ok {
 		srv := mcp.NewServer(&mcp.Implementation{Name: "pao", Version: "0"}, nil)
 		s.addTools(srv)
+		if s.tasks != nil && !s.isGovernor(who) {
+			s.addTaskTools(srv)
+		}
 		if s.isGovernor(who) {
 			srv.RemoveTools(s.notGovernorTools()...)
 			if s.channels != nil {
