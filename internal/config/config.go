@@ -85,6 +85,53 @@ type Orchestrator struct {
 	// Governor names the node's governor (ADR-0030), the agent /gpao requests
 	// go to. Unset, the node has none.
 	Governor Governor `yaml:"governor"`
+	// Accounts are the accounts the node's agents draw on (ADR-0015 point 3,
+	// ADR-0035). A profile names one by its name.
+	Accounts []Account `yaml:"accounts"`
+}
+
+// Account is one account agents draw on. Whether it is metered is a
+// declaration that must be made (ADR-0035 point 2): an account that leaves it
+// out is refused, so an account is never unmetered by omission.
+type Account struct {
+	// Name is how a profile names the account.
+	Name string `yaml:"name"`
+	// Metered says the account has a budget pao reads. False declares it
+	// unmetered: its agents are never held back for budget.
+	Metered *bool `yaml:"metered"`
+	// Reader names how a metered account's figure is read. It is required on a
+	// metered account and refused on an unmetered one.
+	Reader string `yaml:"reader"`
+}
+
+// ReaderClaudeSubscription reads a subscription account of the coding-agent
+// harness: the share left of its weekly and five-hour windows.
+const ReaderClaudeSubscription = "claude-subscription"
+
+// Readers are the account readers this build knows.
+var Readers = []string{ReaderClaudeSubscription}
+
+// Account returns the account named name.
+func (o Orchestrator) Account(name string) (Account, bool) {
+	for _, a := range o.Accounts {
+		if a.Name == name {
+			return a, true
+		}
+	}
+	return Account{}, false
+}
+
+// CheckAccount reports whether a profile's account is one this node has. A
+// profile that names none passes: its agent has no readable budget, which the
+// budget reader treats as a fault, never as unmetered (ADR-0035 point 3).
+func (o Orchestrator) CheckAccount(name string) error {
+	if name == "" {
+		return nil
+	}
+	if _, ok := o.Account(name); !ok {
+		return fmt.Errorf("account %q is not a configured account", name)
+	}
+	return nil
 }
 
 // Governor configures the node's governor: one agent, shared by the node's
@@ -382,6 +429,29 @@ func checkUpstreams(path string, us []MCPUpstream) error {
 	return nil
 }
 
+func checkAccounts(path string, as []Account) error {
+	names := map[string]bool{}
+	for i, a := range as {
+		at := fmt.Sprintf("%s: accounts[%d]", path, i)
+		if !namePattern.MatchString(a.Name) {
+			return fmt.Errorf("%s: name %q must be lowercase letters, digits, '-' or '_'", at, a.Name)
+		}
+		if names[a.Name] {
+			return fmt.Errorf("%s: name %q is already used", at, a.Name)
+		}
+		names[a.Name] = true
+		switch {
+		case a.Metered == nil:
+			return fmt.Errorf("%s: metered must be set: true for an account with a budget, false to declare it unmetered", at)
+		case !*a.Metered && a.Reader != "":
+			return fmt.Errorf("%s: reader is set on an unmetered account", at)
+		case *a.Metered && !slices.Contains(Readers, a.Reader):
+			return fmt.Errorf("%s: reader %q is not one of %s", at, a.Reader, strings.Join(Readers, ", "))
+		}
+	}
+	return nil
+}
+
 // Temp is the temporary-agent settings.
 type Temp struct {
 	// UnusedAfter is how long after spawning an agent that never received a
@@ -517,6 +587,9 @@ func load(path string, withMesh bool) (*Config, error) {
 	if err := checkUpstreams(path, o.MCPUpstreams); err != nil {
 		return nil, err
 	}
+	if err := checkAccounts(path, o.Accounts); err != nil {
+		return nil, err
+	}
 	var meshDoc *mesh.Document
 	if o.MeshFile != "" && !withMesh {
 		if !filepath.IsAbs(o.MeshFile) {
@@ -561,6 +634,9 @@ func load(path string, withMesh bool) (*Config, error) {
 			return nil, err
 		}
 		if err := validate(p); err != nil {
+			return nil, fmt.Errorf("%s: %w", f, err)
+		}
+		if err := o.CheckAccount(p.Account); err != nil {
 			return nil, fmt.Errorf("%s: %w", f, err)
 		}
 		if prev, dup := seen[p.Name]; dup {

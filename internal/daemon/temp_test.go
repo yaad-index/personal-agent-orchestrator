@@ -332,3 +332,35 @@ func TestAnOperatorSpawnCarriesExtraTagsItHoldsAndNoOthers(t *testing.T) {
 	_, err = n.client.Kill(ctx, "tmp-t")
 	require.NoError(t, err)
 }
+
+func TestASpawnWhoseRecipeNamesAnAccountTheNodeLacksIsRefused(t *testing.T) {
+	withAccount := func(name, account string) string {
+		return strings.Replace(goodRecipe(name), "  backend: claude-code\n", "  backend: claude-code\n  account: "+account+"\n", 1)
+	}
+	no := false
+	n := startNodeWith(t, map[string]string{"boss": ""}, func(dir, script string, cfg *config.Config) {
+		rdir := filepath.Join(dir, "recipes")
+		require.NoError(t, os.MkdirAll(rdir, 0o700))
+		for name, account := range map[string]string{"known": "local", "unknown": "elsewhere"} {
+			body := strings.ReplaceAll(withAccount(name, account), "@@SCRIPT@@", script)
+			require.NoError(t, os.WriteFile(filepath.Join(rdir, name+".yaml"), []byte(body), 0o600))
+		}
+		cfg.Orchestrator.RecipesDir = rdir
+		cfg.Orchestrator.Accounts = []config.Account{{Name: "local", Metered: &no}}
+	})
+	ctx := context.Background()
+
+	_, err := n.client.Spawn(ctx, "unknown", "tmp-u", "", "")
+	require.Error(t, err)
+	assert.True(t, strings.HasPrefix(err.Error(), "400"), "got %q", err)
+	assert.Contains(t, err.Error(), `account "elsewhere" is not a configured account`)
+	assert.NoDirExists(t, filepath.Join(n.stateDir, "temp", "tmp-u"), "nothing was left behind")
+	_, ok := agentByName(t, n, "tmp-u")
+	assert.False(t, ok)
+
+	// The same recipe naming an account the node has spawns.
+	_, err = n.client.Spawn(ctx, "known", "tmp-k", "", "")
+	require.NoError(t, err)
+	_, ok = agentByName(t, n, "tmp-k")
+	assert.True(t, ok)
+}

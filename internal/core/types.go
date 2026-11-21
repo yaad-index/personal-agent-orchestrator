@@ -49,6 +49,10 @@ type Profile struct {
 	// Inherit names the categories of the node user's own environment the agent
 	// loads (ADR-0025 point 3). With none, it loads only its profile's and pao's.
 	Inherit []string `yaml:"inherit"`
+	// Account names the account the agent draws on (ADR-0015 point 3), one of
+	// the node's configured accounts. The account's credential stays in the
+	// orchestrator config, never here (ADR-0015 point 4).
+	Account string `yaml:"account"`
 }
 
 // Transcript locates and names the format of a backend's transcript.

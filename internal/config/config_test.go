@@ -573,3 +573,49 @@ func TestTheGovernorRejects(t *testing.T) {
 		assert.Contains(t, err.Error(), c.want, name)
 	}
 }
+
+func accountsConfig(t *testing.T, accounts, profile string) (*Config, error) {
+	t.Helper()
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "pao.yaml"), "node: n1\nprofiles_dir: profiles\nstate_dir: state\ntoken_env: PAO_TOKEN\n"+accounts)
+	write(t, filepath.Join(dir, "profiles", "a.yaml"), "name: a\nbackend: claude-code\n"+profile+startup)
+	return Load(filepath.Join(dir, "pao.yaml"))
+}
+
+func TestAccountsAreLoadedAndAProfileNamesOne(t *testing.T) {
+	cfg, err := accountsConfig(t, "accounts:\n  - name: sub\n    metered: true\n    reader: claude-subscription\n  - name: local\n    metered: false\n", "account: sub\n")
+	require.NoError(t, err)
+	yes, no := true, false
+	assert.Equal(t, []Account{{Name: "sub", Metered: &yes, Reader: ReaderClaudeSubscription}, {Name: "local", Metered: &no}}, cfg.Orchestrator.Accounts)
+	assert.Equal(t, "sub", cfg.Profiles[0].Account)
+	a, ok := cfg.Orchestrator.Account("local")
+	require.True(t, ok)
+	assert.False(t, *a.Metered)
+	_, ok = cfg.Orchestrator.Account("nope")
+	assert.False(t, ok)
+}
+
+func TestAProfileWithoutAnAccountLoads(t *testing.T) {
+	cfg, err := accountsConfig(t, "", "")
+	require.NoError(t, err)
+	assert.Empty(t, cfg.Profiles[0].Account)
+	assert.NoError(t, cfg.Orchestrator.CheckAccount(""))
+}
+
+func TestAccountsRejects(t *testing.T) {
+	for name, c := range map[string]struct{ accounts, profile, want string }{
+		"metered left out":       {"accounts:\n  - name: a\n    reader: claude-subscription\n", "", "metered must be set"},
+		"metered with no reader": {"accounts:\n  - name: a\n    metered: true\n", "", `reader "" is not one of claude-subscription`},
+		"unknown reader":         {"accounts:\n  - name: a\n    metered: true\n    reader: guess\n", "", `reader "guess"`},
+		"unmetered with reader":  {"accounts:\n  - name: a\n    metered: false\n    reader: claude-subscription\n", "", "reader is set on an unmetered account"},
+		"bad name":               {"accounts:\n  - name: \"A b\"\n    metered: false\n", "", "name"},
+		"duplicate name":         {"accounts:\n  - name: a\n    metered: false\n  - name: a\n    metered: false\n", "", `name "a" is already used`},
+		"credential in config":   {"accounts:\n  - name: a\n    metered: false\n    token: x\n", "", "token"},
+		"unknown account":        {"accounts:\n  - name: a\n    metered: false\n", "account: b\n", `account "b" is not a configured account`},
+		"account with none":      {"", "account: b\n", `account "b" is not a configured account`},
+	} {
+		_, err := accountsConfig(t, c.accounts, c.profile)
+		require.Error(t, err, name)
+		assert.Contains(t, err.Error(), c.want, name)
+	}
+}
