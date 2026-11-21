@@ -2,6 +2,7 @@ package comm
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -122,50 +123,51 @@ func TestTheNodeMayNameAnotherGovernorPrefix(t *testing.T) {
 	assert.Equal(t, "usage: /ask <what you want done, in your own words>", res.Reply)
 }
 
-func TestTheGovernorServesOneSubjectWhileTheNodeRuns(t *testing.T) {
-	l, r, chat, _ := governorSetup(t)
+func TestARequestFromAnotherSubjectStartsTheGovernorAfresh(t *testing.T) {
+	l, r, _, _ := governorSetup(t)
+	var resets int
+	l.SetGovernorReset(func(context.Context) error { resets++; return nil })
+
 	fromChat(t, l, privately("/gpao pause the coder"))
+	assert.Equal(t, 1, resets, "the first request since the node started: a session from before is not reused")
 	fromChat(t, l, privately("/gpao and the other one"))
-	assert.Len(t, r.routed, 2, "alice holds the governor")
+	assert.Equal(t, 1, resets, "the same subject keeps its context")
 
-	reply, d, ok, err := l.CommandAsOperator(context.Background(), Inbound{Source: "local", Sender: "human", Text: "/gpao list my agents"})
+	_, d, _, err := l.CommandAsOperator(context.Background(), Inbound{Source: "local", Sender: "alice", Text: "/gpao from here"})
 	require.NoError(t, err)
-	assert.True(t, ok)
-	assert.Nil(t, d)
-	assert.Equal(t, ReplyGovernorHeld, reply, "another subject is refused")
-	assert.Len(t, r.routed, 2, "and nothing reaches the governor")
+	require.NotNil(t, d)
+	assert.Equal(t, 1, resets, "alice on the local channel is the same alice")
 
-	fromChat(t, l, privately("/gpao one more"))
-	assert.Len(t, r.routed, 3, "alice still holds it")
-	assert.Empty(t, chat.take())
+	_, d, _, err = l.CommandAsOperator(context.Background(), Inbound{Source: "local", Sender: "human", Text: "/gpao list my agents"})
+	require.NoError(t, err)
+	require.NotNil(t, d, "another subject is served, not refused")
+	assert.Equal(t, 2, resets, "on a fresh context")
+
+	fromChat(t, l, privately("/gpao back again"))
+	assert.Equal(t, 3, resets, "and alice again on a fresh one")
+	assert.Len(t, r.routed, 5)
 }
 
-func TestARequestThatDoesNotReachTheGovernorDoesNotHoldIt(t *testing.T) {
+func TestAGovernorThatCannotBeResetIsNotSentTheRequest(t *testing.T) {
 	l, r, _, _ := governorSetup(t)
+	fail := errors.New("no session")
+	l.SetGovernorReset(func(context.Context) error { return fail })
+	res, err := l.ReceiveFromChannel(context.Background(), privately("/gpao pause the coder"))
+	require.NoError(t, err)
+	assert.Equal(t, "the governor could not be started on a fresh context: no session", res.Reply)
+	assert.Empty(t, r.routed)
+
+	fail = nil
+	fromChat(t, l, privately("/gpao pause the coder"))
+	assert.Len(t, r.routed, 1, "the next request tries again")
+}
+
+func TestARequestThatDoesNotReachTheGovernorDoesNotResetIt(t *testing.T) {
+	l, _, _, _ := governorSetup(t)
+	var resets int
+	l.SetGovernorReset(func(context.Context) error { resets++; return nil })
 	res, err := l.ReceiveFromChannel(context.Background(), privately("/gpao"))
 	require.NoError(t, err)
 	assert.Contains(t, res.Reply, "usage")
-	_, d, _, err := l.CommandAsOperator(context.Background(), Inbound{Source: "local", Sender: "human", Text: "/gpao list my agents"})
-	require.NoError(t, err)
-	require.NotNil(t, d, "alice's empty request held nothing, so human holds it now")
-	assert.Len(t, r.routed, 1)
-}
-
-func TestTheGovernorsSubjectIsTheSendersWhereverItWrites(t *testing.T) {
-	l, r, _, _ := governorSetup(t)
-	fromChat(t, l, privately("/gpao pause the coder"))
-	_, d, _, err := l.CommandAsOperator(context.Background(), Inbound{Source: "local", Sender: "alice", Text: "/gpao and from here"})
-	require.NoError(t, err)
-	require.NotNil(t, d, "alice on the local channel is the alice who holds it")
-
-	l2, r2, _, _ := governorSetup(t)
-	_, d, _, err = l2.CommandAsOperator(context.Background(), Inbound{Source: "local", Sender: "human", Text: "/gpao first"})
-	require.NoError(t, err)
-	require.NotNil(t, d)
-	reply, d, _, err := l2.CommandAsOperator(context.Background(), Inbound{Source: "local", Sender: "other", Text: "/gpao second"})
-	require.NoError(t, err)
-	assert.Nil(t, d)
-	assert.Equal(t, ReplyGovernorHeld, reply, "two senders on the local channel are two subjects")
-	assert.Len(t, r.routed, 2)
-	assert.Len(t, r2.routed, 1)
+	assert.Zero(t, resets)
 }

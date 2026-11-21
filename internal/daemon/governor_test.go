@@ -42,3 +42,27 @@ func toolText(res *mcp.CallToolResult) string {
 	}
 	return ""
 }
+
+func TestTheGovernorStartsOnItsFirstRequestAndAfreshForAnotherSubject(t *testing.T) {
+	n := startNodeWith(t, map[string]string{"gov": ""}, func(_, _ string, cfg *config.Config) {
+		cfg.Orchestrator.Governor = config.Governor{Agent: "gov"}
+	})
+	ctx := context.Background()
+	require.False(t, tmuxHasSession(t, n, "gov"), "not started with the node")
+
+	_, err := n.client.Post(ctx, "alice", "/gpao list my agents", "name", "gov")
+	require.NoError(t, err)
+	assert.Equal(t, "echo: [alice]: list my agents", n.next(t).Text)
+	require.True(t, tmuxHasSession(t, n, "gov"), "started by the first request")
+	first := panePID(t, n, "gov")
+
+	_, err = n.client.Post(ctx, "alice", "/gpao and again", "name", "gov")
+	require.NoError(t, err)
+	assert.Equal(t, "echo: [alice]: and again", n.next(t).Text)
+	assert.Equal(t, first, panePID(t, n, "gov"), "the same subject keeps its session")
+
+	_, err = n.client.Post(ctx, "bob", "/gpao pause it", "name", "gov")
+	require.NoError(t, err)
+	assert.Equal(t, "echo: [bob]: pause it", n.next(t).Text)
+	assert.NotEqual(t, first, panePID(t, n, "gov"), "another subject is answered in a new session")
+}

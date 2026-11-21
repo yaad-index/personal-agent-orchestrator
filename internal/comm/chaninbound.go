@@ -307,7 +307,7 @@ func (l *Layer) receiveAsOperator(ctx context.Context, in ChannelInbound, subjec
 	// A /gpao request is pao's too: it goes to the governor alone, and leaves the
 	// sender's last address as it was.
 	if _, ok := l.governorRequest(in.Text); ok {
-		target, request, reply := l.toGovernor(in.Text, subject)
+		target, request, reply := l.toGovernor(ctx, in.Text, subject)
 		if reply != "" {
 			return ChannelResult{Reply: reply}, nil
 		}
@@ -421,7 +421,7 @@ func (l *Layer) later(channel, subject string) func(context.Context, string) {
 // ok is false when in.Text is not a command.
 func (l *Layer) CommandAsOperator(ctx context.Context, in Inbound) (reply string, d *Delivery, ok bool, err error) {
 	if _, isRequest := l.governorRequest(in.Text); isRequest {
-		target, request, reply := l.toGovernor(in.Text, in.Sender)
+		target, request, reply := l.toGovernor(ctx, in.Text, in.Sender)
 		if reply != "" {
 			return reply, nil, true, nil
 		}
