@@ -166,15 +166,12 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	if auth == nil {
 		auth = access.Matrix{Grants: grantStore}
 	}
-	// governorServes is whom the governor is serving, set once the layer exists.
-	var governorServes func() (access.Subject, bool)
+	// governorServes says whether the governor is serving a request, set once
+	// the layer exists.
+	var governorServes func() bool
+	governorServing := func() bool { return governorServes != nil && governorServes() }
 	if g := cfg.Orchestrator.Governor.Agent; g != "" {
-		auth = governorScoped{inner: auth, governor: g, requester: func() (access.Subject, bool) {
-			if governorServes == nil {
-				return access.Subject{}, false
-			}
-			return governorServes()
-		}}
+		auth = governorScoped{inner: auth, governor: g, serving: governorServing}
 	}
 
 	var ctlOpts []control.Option
@@ -310,7 +307,8 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 			return plane.Alive(ctx, agent)
 		}},
 	}
-	mcpServer := mcpsrv.New(ops, resolver, mcpsrv.WithAuthorizer(auth), mcpsrv.WithGate(gt), mcpsrv.WithProxy(proxy), mcpsrv.WithGovernor(cfg.Orchestrator.Governor.Agent))
+	mcpServer := mcpsrv.New(ops, resolver, mcpsrv.WithAuthorizer(auth), mcpsrv.WithGate(gt), mcpsrv.WithProxy(proxy), mcpsrv.WithGovernor(cfg.Orchestrator.Governor.Agent),
+		mcpsrv.WithChannels(governorChannels(cfg.Orchestrator.Channels, governorServing)))
 	mcpServers.Store(mcpServer)
 	mcpHandler := mcpServer.Handler()
 
@@ -365,7 +363,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	}
 
 	layer.SetGovernor(cfg.Orchestrator.Governor.Agent, cfg.Orchestrator.Governor.Prefix)
-	governorServes = servedBy(layer.GovernorRequester, ids.IsOperator)
+	governorServes = servesAnOperator(layer.GovernorRequester, ids.IsOperator)
 	if g := cfg.Orchestrator.Governor.Agent; g != "" {
 		// A request from another subject than the last starts the governor on a
 		// fresh context (ADR-0031 point 6): its session is stopped, and the

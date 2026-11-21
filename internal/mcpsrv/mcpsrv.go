@@ -107,6 +107,9 @@ type Server struct {
 	// governor is the node's governor, offered only the tools matching needs;
 	// empty for none.
 	governor string
+	// channels lists the node's channels for the governor; nil for no
+	// list_channels tool.
+	channels func() []ChannelInfo
 
 	mu       sync.Mutex
 	subjects map[access.Subject]*offer
@@ -143,6 +146,16 @@ type Option func(*Server)
 // besides the proposal tool its grant gives it. Every other call is refused it
 // anyway; a tool it cannot use is not shown, so its model is not invited to try.
 func WithGovernor(agent string) Option { return func(s *Server) { s.governor = agent } }
+
+// WithChannels offers the governor list_channels, answered by list. No other
+// subject is offered it.
+func WithChannels(list func() []ChannelInfo) Option {
+	return func(s *Server) { s.channels = list }
+}
+
+func (s *Server) isGovernor(who access.Subject) bool {
+	return s.governor != "" && who.Kind == access.KindAgent && who.Name == s.governor
+}
 
 // governorTools are pao's own tools the governor is offered.
 var governorTools = map[string]bool{"list_agents": true, "list_recipes": true}
@@ -207,8 +220,11 @@ func (s *Server) offerFor(who access.Subject) *offer {
 	if !ok {
 		srv := mcp.NewServer(&mcp.Implementation{Name: "pao", Version: "0"}, nil)
 		s.addTools(srv)
-		if s.governor != "" && who.Kind == access.KindAgent && who.Name == s.governor {
+		if s.isGovernor(who) {
 			srv.RemoveTools(s.notGovernorTools()...)
+			if s.channels != nil {
+				mcp.AddTool(srv, listChannelsTool, s.listChannels)
+			}
 		}
 		o = &offer{srv: srv, proxied: map[string]upstream.Tool{}}
 		s.subjects[who] = o

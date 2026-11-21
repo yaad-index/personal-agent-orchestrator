@@ -48,8 +48,9 @@ pao access grant agent:gov --tag team
 ```
 
 - `propose_command` is how the governor answers. Without the grant, the tool is not offered to it.
-- A grant on agents lets the governor **list** them, and the recipes carrying the same tags, so it can match names. Of pao's own tools it is offered only `list_agents`, `list_recipes` and `propose_command`. pao refuses the governor every other action whatever its grants say: sending to an agent, spawning, killing, starting or stopping, watching output, reading a harvest, and calling a proxied tool.
-- While it serves a request, the governor sees only what the requesting operator's own grants reach as well. With no request in hand, it sees nothing.
+- A grant on agents lets the governor **list** them, and the recipes carrying the same tags, so it can match names. It is also told the node's channels, by `list_channels`: each one's name and kind, and its groups by name and member policy. Of pao's own tools it is offered only `list_agents`, `list_recipes`, `list_channels` and `propose_command`. pao refuses the governor every other action whatever its grants say: sending to an agent, spawning, killing, starting or stopping, watching output, reading a harvest, and calling a proxied tool.
+- The governor reads under its own grants alone, whoever it serves, so it may name an agent or recipe the requesting operator cannot reach. A proposal for one is answered "not found" when run, as typing it would be. Channels are listed to it whole: no grant names a channel yet. With no request in hand, it reads nothing.
+- **No secret reaches it.** Each read is built from a fixed list of fields. No credential, token or key, no name of the variable that holds one, no adapter option or endpoint, and no group's platform id is ever in what it reads.
 
 ## How it behaves
 
