@@ -33,6 +33,7 @@ type TasksAPI interface {
 	Create(ctx context.Context, n NewTaskJSON) (TaskJSON, error)
 	List(ctx context.Context) ([]TaskJSON, error)
 	Get(ctx context.Context, id string) (TaskJSON, error)
+	Cancel(ctx context.Context, id, reason string) (TaskJSON, error)
 }
 
 // WithTasks serves the task routes.
@@ -45,6 +46,26 @@ func (s *Server) registerTasks(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/tasks", s.auth(s.createTask))
 	mux.HandleFunc("GET /v1/tasks", s.auth(s.listTasks))
 	mux.HandleFunc("GET /v1/tasks/{id}", s.auth(s.getTask))
+	mux.HandleFunc("POST /v1/tasks/{id}/cancel", s.auth(s.cancelTask))
+}
+
+// CancelTaskJSON is a request to cancel a task.
+type CancelTaskJSON struct {
+	Reason string `json:"reason,omitempty"`
+}
+
+func (s *Server) cancelTask(w http.ResponseWriter, r *http.Request) {
+	var req CancelTaskJSON
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "a cancel request is a JSON object")
+		return
+	}
+	t, err := s.tasks.Cancel(r.Context(), r.PathValue("id"), req.Reason)
+	if err != nil {
+		writeError(w, taskStatus(err), err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, t)
 }
 
 func taskStatus(err error) int {
@@ -111,6 +132,13 @@ func (c *Client) CreateTask(ctx context.Context, n NewTaskJSON) (TaskJSON, error
 func (c *Client) Tasks(ctx context.Context) ([]TaskJSON, error) {
 	var out []TaskJSON
 	err := c.do(ctx, http.MethodGet, "/v1/tasks", nil, http.StatusOK, &out)
+	return out, err
+}
+
+// CancelTask cancels a task as the operator.
+func (c *Client) CancelTask(ctx context.Context, id, reason string) (TaskJSON, error) {
+	var out TaskJSON
+	err := c.do(ctx, http.MethodPost, "/v1/tasks/"+url.PathEscape(id)+"/cancel", CancelTaskJSON{Reason: reason}, http.StatusOK, &out)
 	return out, err
 }
 

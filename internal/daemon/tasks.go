@@ -38,3 +38,11 @@ func (a taskAPI) Get(ctx context.Context, id string) (local.TaskJSON, error) {
 	}
 	return local.TaskJSON{Task: e.Task, Folder: e.Folder}, nil
 }
+
+func (a taskAPI) Cancel(ctx context.Context, id, reason string) (local.TaskJSON, error) {
+	t, err := a.svc.Cancel(ctx, access.Operator, id, reason)
+	if err != nil {
+		return local.TaskJSON{}, err
+	}
+	return local.TaskJSON{Task: t, Folder: task.FolderArchive}, nil
+}

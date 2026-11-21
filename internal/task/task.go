@@ -77,6 +77,49 @@ type Task struct {
 	// Created and Updated are when it was made and last changed.
 	Created time.Time `yaml:"created" json:"created"`
 	Updated time.Time `yaml:"updated" json:"updated"`
+	// Log is what was reported on the task, oldest first: the running agent's
+	// comments, status changes and log lines, and a cancel (ADR-0036 point 4).
+	Log []LogEntry `yaml:"log,omitempty" json:"log,omitempty"`
+	// Dropped counts the oldest entries let go to keep the log at MaxLog.
+	Dropped int `yaml:"dropped,omitempty" json:"dropped,omitempty"`
+}
+
+// The kinds of log entry.
+const (
+	EntryComment = "comment"
+	EntryStatus  = "status"
+	EntryLog     = "log"
+)
+
+// LogEntry is one thing reported on a task.
+type LogEntry struct {
+	At time.Time `yaml:"at" json:"at"`
+	// By is who reported it, as grants name a subject.
+	By   string `yaml:"by" json:"by"`
+	Kind string `yaml:"kind" json:"kind"`
+	// Status is the status set, on a status entry.
+	Status Status `yaml:"status,omitempty" json:"status,omitempty"`
+	Text   string `yaml:"text,omitempty" json:"text,omitempty"`
+}
+
+// The bounds on a task's log.
+const (
+	MaxLog   = 500
+	MaxEntry = 4 << 10
+)
+
+// Terminal reports whether a task in status s is over: it takes no more reports
+// and is kept in the archive.
+func (s Status) Terminal() bool { return s == Done || s == Failed || s == Canceled }
+
+// add appends e to the log, letting the oldest entries go past MaxLog.
+func (t *Task) add(e LogEntry) {
+	t.Log = append(t.Log, e)
+	if over := len(t.Log) - MaxLog; over > 0 {
+		t.Log = append([]LogEntry(nil), t.Log[over:]...)
+		t.Dropped += over
+	}
+	t.Updated = e.At
 }
 
 var (
@@ -148,6 +191,23 @@ func (t Task) Validate() error {
 	}
 	if t.Assignee != "" && !namePattern.MatchString(t.Assignee) {
 		return fmt.Errorf("assignee %q is not an agent name", t.Assignee)
+	}
+	if len(t.Log) > MaxLog {
+		return fmt.Errorf("at most %d log entries", MaxLog)
+	}
+	for i, e := range t.Log {
+		switch {
+		case e.Kind != EntryComment && e.Kind != EntryStatus && e.Kind != EntryLog:
+			return fmt.Errorf("log[%d]: kind %q is not comment, status or log", i, e.Kind)
+		case e.Kind == EntryStatus && !e.Status.Valid():
+			return fmt.Errorf("log[%d]: status %q is not a task status", i, e.Status)
+		case e.Kind != EntryStatus && e.Status != "":
+			return fmt.Errorf("log[%d]: only a status entry sets a status", i)
+		case len(e.Text) > MaxEntry:
+			return fmt.Errorf("log[%d]: text must be at most %d bytes", i, MaxEntry)
+		case e.By == "":
+			return fmt.Errorf("log[%d]: by is required", i)
+		}
 	}
 	return nil
 }

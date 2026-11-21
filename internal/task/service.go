@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/access"
@@ -39,6 +41,9 @@ type Service struct {
 	Auth  access.Authorizer
 	Gate  Gate
 	Now   func() time.Time
+
+	// mu serialises read-modify-write of one task file.
+	mu sync.Mutex
 }
 
 // New is what a caller asks to create: everything of a task but what pao sets.
@@ -177,4 +182,125 @@ func (s *Service) approve(ctx context.Context, who access.Subject, action string
 		return fmt.Errorf("%w: %s", ErrDenied, d.Reason)
 	}
 	return nil
+}
+
+// ErrNotAssignee is a report from anyone but the agent working the task.
+var ErrNotAssignee = errors.New("only the agent working a task reports on it")
+
+// The names the gate judges task changes by.
+const (
+	ActionReport = "pao.report_task"
+	ActionCancel = "pao.cancel_task"
+)
+
+// AgentStatuses are the statuses the agent working a task may report: pao sets
+// open and assigned, and the owner cancels.
+var AgentStatuses = []Status{Running, Blocked, Done, Failed}
+
+// Report is what the agent working a task reports: a status, a comment, a log
+// line, or any of them together.
+type Report struct {
+	Status  Status
+	Comment string
+	Log     string
+}
+
+// Report records what the agent working a task reports on it (ADR-0036 point
+// 4). Only its assignee may report, and only while it is not over. A status of
+// done or failed is the agent's own word that the task is over; pao takes it as
+// reported and does not judge it, and the task goes to the archive.
+func (s *Service) Report(ctx context.Context, who access.Subject, id string, r Report) (Task, error) {
+	if r.Status == "" && strings.TrimSpace(r.Comment) == "" && strings.TrimSpace(r.Log) == "" {
+		return Task{}, fmt.Errorf("%w: a report carries a status, a comment or a log line", ErrBadRequest)
+	}
+	if r.Status != "" && !slices.Contains(AgentStatuses, r.Status) {
+		return Task{}, fmt.Errorf("%w: an agent reports a status of running, blocked, done or failed, not %q", ErrBadRequest, r.Status)
+	}
+	for _, text := range []string{r.Comment, r.Log} {
+		if len(text) > MaxEntry {
+			return Task{}, fmt.Errorf("%w: a comment or log line is at most %d bytes", ErrBadRequest, MaxEntry)
+		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, _, err := s.Store.Get(id)
+	if err != nil {
+		return Task{}, s.storeError(who, err)
+	}
+	if !s.visible(who, t) && !assigned(who, t) {
+		return Task{}, ErrNotFound
+	}
+	if !assigned(who, t) {
+		return Task{}, ErrNotAssignee
+	}
+	if t.Status.Terminal() {
+		return Task{}, fmt.Errorf("%w: task %s is %s and takes no more reports", ErrBadRequest, t.ID, t.Status)
+	}
+	if err := s.approve(ctx, who, ActionReport, map[string]string{"id": id, "status": string(r.Status)}); err != nil {
+		return Task{}, err
+	}
+	at := s.now()
+	by := who.String()
+	if r.Comment != "" {
+		t.add(LogEntry{At: at, By: by, Kind: EntryComment, Text: r.Comment})
+	}
+	if r.Log != "" {
+		t.add(LogEntry{At: at, By: by, Kind: EntryLog, Text: r.Log})
+	}
+	if r.Status != "" && r.Status != t.Status {
+		t.Status = r.Status
+		t.add(LogEntry{At: at, By: by, Kind: EntryStatus, Status: r.Status})
+	}
+	folder := FolderOpen
+	if t.Status.Terminal() {
+		folder = FolderArchive
+	}
+	if err := s.Store.Put(folder, t); err != nil {
+		return Task{}, err
+	}
+	return t, nil
+}
+
+// Cancel ends a task that is not over: its owner may, and the operator may for
+// a task it can see. It goes to the archive, with the reason in its log.
+func (s *Service) Cancel(ctx context.Context, who access.Subject, id, reason string) (Task, error) {
+	if len(reason) > MaxEntry {
+		return Task{}, fmt.Errorf("%w: a reason is at most %d bytes", ErrBadRequest, MaxEntry)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, _, err := s.Store.Get(id)
+	if err != nil {
+		return Task{}, s.storeError(who, err)
+	}
+	if !s.visible(who, t) {
+		return Task{}, ErrNotFound
+	}
+	if who.String() != t.Owner && who.Kind != access.KindOperator {
+		return Task{}, fmt.Errorf("%w: only the task's owner or the operator cancels it", ErrDenied)
+	}
+	if t.Status.Terminal() {
+		return Task{}, fmt.Errorf("%w: task %s is already %s", ErrBadRequest, t.ID, t.Status)
+	}
+	if err := s.approve(ctx, who, ActionCancel, map[string]string{"id": id}); err != nil {
+		return Task{}, err
+	}
+	t.Status = Canceled
+	t.add(LogEntry{At: s.now(), By: who.String(), Kind: EntryStatus, Status: Canceled, Text: reason})
+	if err := s.Store.Put(FolderArchive, t); err != nil {
+		return Task{}, err
+	}
+	return t, nil
+}
+
+// assigned reports whether who is the agent working t.
+func assigned(who access.Subject, t Task) bool {
+	return who.Kind == access.KindAgent && t.Assignee != "" && who.Name == t.Assignee
+}
+
+func (s *Service) now() time.Time {
+	if s.Now != nil {
+		return s.Now().UTC().Truncate(time.Second)
+	}
+	return time.Now().UTC().Truncate(time.Second)
 }

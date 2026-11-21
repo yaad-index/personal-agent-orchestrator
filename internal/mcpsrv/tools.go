@@ -157,6 +157,10 @@ func GateRules(server string, proxied ...upstream.Tool) []gate.Rule {
 	// A proposal only puts a command in front of the operator, who runs it or
 	// not; asking first would put a second question to the same person.
 	rules = append(rules, gate.Rule{Tool: ActionPropose, Effect: gate.EffectAllow})
+	// A report changes only the record of the task the agent was given, and
+	// only that agent may make one; asking each time would ask about every
+	// step of the work.
+	rules = append(rules, gate.Rule{Tool: task.ActionReport, Effect: gate.EffectAllow})
 	return rules
 }
 
