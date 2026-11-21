@@ -31,6 +31,7 @@ type CLI struct {
 	Watch    WatchCmd    `cmd:"" help:"Follow an agent's output on demand, here or on another node."`
 	View     ViewCmd     `cmd:"" help:"Pause, resume or backtrack the view of an agent's output."`
 	Agent    AgentCmd    `cmd:"" help:"Start, stop or restart a configured agent."`
+	Governor GovernorCmd `cmd:"" help:"The governor, which turns a request in plain words into one command to commit."`
 	Access   AccessCmd   `cmd:"" help:"The access matrix: which agents each subject may reach."`
 	Identity IdentityCmd `cmd:"" help:"Human subjects and the sender ids bound to them."`
 	Channel  ChannelCmd  `cmd:"" help:"The node's chat channels and their default agents."`
