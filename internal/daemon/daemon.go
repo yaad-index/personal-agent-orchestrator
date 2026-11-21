@@ -23,6 +23,7 @@ import (
 	"github.com/yaad-index/personal-agent-orchestrator/internal/backend"
 	backends "github.com/yaad-index/personal-agent-orchestrator/internal/backend/builtin"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/backend/claudecode"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/budget"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/adapter"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/builtin"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/local"
@@ -65,6 +66,9 @@ type Options struct {
 	MirrorPoll time.Duration
 	// PollInterval is how often startup checks for readiness.
 	PollInterval time.Duration
+	// BudgetReader builds a metered account's reader; nil builds the reader the
+	// account's config names.
+	BudgetReader func(config.Account) (budget.Reader, error)
 	// MeshListener, when set, replaces listening on the configured mesh address.
 	MeshListener net.Listener
 	// Authorizer is the access seam every surface asks. Nil means the access
@@ -381,6 +385,10 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	}
 	layer.SetCommands(chatCommands{streams: streamOps, standing: standingOps, temps: tempOps, decider: decider, agents: ops, auth: auth})
 
+	budgetCtx, stopBudget := context.WithCancel(ctx)
+	defer stopBudget()
+	book := newBudget(budgetCtx, cfg, layer, opts.BudgetReader)
+	localOpts = append(localOpts, local.WithBudget(budgetJSON(book)))
 	srv, err := local.New(layer, token, append([]local.Option{local.WithDecider(decider), local.WithTemp(tempOps), local.WithStream(streamOps), local.WithStanding(standingOps), local.WithWatch(streamOps), local.WithLifecycle(lifeOps), local.WithRejected(rejectedAPI{rejects}), local.WithIdentity(identityAPI{ids}),
 		local.WithDefaults(newDefaultsAPI(defaults, cfg.Orchestrator.Channels, router.Resolve)), local.WithGrants(grantsAPI{store: grantStore, changed: mcpServer.Refresh}),
 		local.WithMount("/mcp", mcpHandler)}, localOpts...)...)
@@ -445,6 +453,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	} else {
 		close(meshDone)
 	}
+	go book.Run(budgetCtx, cfg.Orchestrator.Budget.Poll)
 	slog.Info("pao serving", "node", cfg.Orchestrator.Node, "listen", ln.Addr().String(), "agents", len(cfg.Profiles))
 
 	select {

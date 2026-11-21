@@ -583,10 +583,14 @@ func accountsConfig(t *testing.T, accounts, profile string) (*Config, error) {
 }
 
 func TestAccountsAreLoadedAndAProfileNamesOne(t *testing.T) {
-	cfg, err := accountsConfig(t, "accounts:\n  - name: sub\n    metered: true\n    reader: claude-subscription\n  - name: local\n    metered: false\n", "account: sub\n")
+	cfg, err := accountsConfig(t, "accounts:\n  - name: sub\n    metered: true\n    reader: claude-subscription\n    credentials: creds.json\n  - name: local\n    metered: false\n", "account: sub\n")
 	require.NoError(t, err)
 	yes, no := true, false
-	assert.Equal(t, []Account{{Name: "sub", Metered: &yes, Reader: ReaderClaudeSubscription}, {Name: "local", Metered: &no}}, cfg.Orchestrator.Accounts)
+	creds := cfg.Orchestrator.Accounts[0].Credentials
+	assert.True(t, filepath.IsAbs(creds), "a relative credentials path is resolved against the config's directory")
+	assert.Equal(t, "creds.json", filepath.Base(creds))
+	assert.Equal(t, []Account{{Name: "sub", Metered: &yes, Reader: ReaderClaudeSubscription, Credentials: creds}, {Name: "local", Metered: &no}}, cfg.Orchestrator.Accounts)
+	assert.Equal(t, Budget{Poll: DefaultBudgetPoll}, cfg.Orchestrator.Budget, "budget defaults")
 	assert.Equal(t, "sub", cfg.Profiles[0].Account)
 	a, ok := cfg.Orchestrator.Account("local")
 	require.True(t, ok)
@@ -606,15 +610,39 @@ func TestAccountsRejects(t *testing.T) {
 	for name, c := range map[string]struct{ accounts, profile, want string }{
 		"metered left out":       {"accounts:\n  - name: a\n    reader: claude-subscription\n", "", "metered must be set"},
 		"metered with no reader": {"accounts:\n  - name: a\n    metered: true\n", "", `reader "" is not one of claude-subscription`},
-		"unknown reader":         {"accounts:\n  - name: a\n    metered: true\n    reader: guess\n", "", `reader "guess"`},
-		"unmetered with reader":  {"accounts:\n  - name: a\n    metered: false\n    reader: claude-subscription\n", "", "reader is set on an unmetered account"},
+		"unknown reader":         {"accounts:\n  - name: a\n    metered: true\n    reader: guess\n    credentials: c.json\n", "", `reader "guess"`},
+		"unmetered with reader":  {"accounts:\n  - name: a\n    metered: false\n    reader: claude-subscription\n", "", "this one is unmetered"},
 		"bad name":               {"accounts:\n  - name: \"A b\"\n    metered: false\n", "", "name"},
 		"duplicate name":         {"accounts:\n  - name: a\n    metered: false\n  - name: a\n    metered: false\n", "", `name "a" is already used`},
 		"credential in config":   {"accounts:\n  - name: a\n    metered: false\n    token: x\n", "", "token"},
+		"reader with no creds":   {"accounts:\n  - name: a\n    metered: true\n    reader: claude-subscription\n", "", "needs credentials"},
+		"unmetered with creds":   {"accounts:\n  - name: a\n    metered: false\n    credentials: c.json\n", "", "this one is unmetered"},
+		"negative poll":          {"budget:\n  poll: -1s\n", "", "budget.poll must be positive"},
+		"node-wide floor":        {"budget:\n  floor: 10\n", "", "floor"},
 		"unknown account":        {"accounts:\n  - name: a\n    metered: false\n", "account: b\n", `account "b" is not a configured account`},
 		"account with none":      {"", "account: b\n", `account "b" is not a configured account`},
 	} {
 		_, err := accountsConfig(t, c.accounts, c.profile)
+		require.Error(t, err, name)
+		assert.Contains(t, err.Error(), c.want, name)
+	}
+}
+
+func TestAProfilesBudgetRuleIsLoaded(t *testing.T) {
+	cfg, err := accountsConfig(t, "", "budget:\n  windows: [week]\n  floor: 20\n")
+	require.NoError(t, err)
+	assert.Equal(t, core.BudgetRule{Windows: []string{core.WindowWeek}, Floor: 20}, cfg.Profiles[0].Budget)
+}
+
+func TestAProfilesBudgetRuleRejects(t *testing.T) {
+	for name, c := range map[string]struct{ profile, want string }{
+		"unknown window":   {"budget:\n  windows: [month]\n", `window "month" is not one of week, five_hour`},
+		"window twice":     {"budget:\n  windows: [week, week]\n", `window "week" is named twice`},
+		"negative floor":   {"budget:\n  floor: -1\n", "floor -1 must be at least 0 and below 100"},
+		"floor of 100":     {"budget:\n  floor: 100\n", "floor 100"},
+		"unknown rule key": {"budget:\n  formula: x\n", "formula"},
+	} {
+		_, err := accountsConfig(t, "", c.profile)
 		require.Error(t, err, name)
 		assert.Contains(t, err.Error(), c.want, name)
 	}

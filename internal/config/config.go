@@ -88,6 +88,8 @@ type Orchestrator struct {
 	// Accounts are the accounts the node's agents draw on (ADR-0015 point 3,
 	// ADR-0035). A profile names one by its name.
 	Accounts []Account `yaml:"accounts"`
+	// Budget is how the accounts' figures are kept read.
+	Budget Budget `yaml:"budget"`
 }
 
 // Account is one account agents draw on. Whether it is metered is a
@@ -102,7 +104,23 @@ type Account struct {
 	// Reader names how a metered account's figure is read. It is required on a
 	// metered account and refused on an unmetered one.
 	Reader string `yaml:"reader"`
+	// Credentials is the path of the file the reader reads the account's
+	// credential from, kept orchestrator-side (ADR-0015 point 4). For the
+	// claude-subscription reader it is the harness's credentials file for the
+	// login. A relative path is resolved against the config file's directory.
+	Credentials string `yaml:"credentials"`
 }
+
+// Budget is how accounts' figures are kept read.
+type Budget struct {
+	// Poll is how often each metered account is read. Default 60s. How an
+	// agent's headroom is judged from the figure is the agent's own, in its
+	// profile's budget.
+	Poll time.Duration `yaml:"poll"`
+}
+
+// DefaultBudgetPoll is how often an account is read when budget.poll is unset.
+const DefaultBudgetPoll = 60 * time.Second
 
 // ReaderClaudeSubscription reads a subscription account of the coding-agent
 // harness: the share left of its weekly and five-hour windows.
@@ -443,10 +461,12 @@ func checkAccounts(path string, as []Account) error {
 		switch {
 		case a.Metered == nil:
 			return fmt.Errorf("%s: metered must be set: true for an account with a budget, false to declare it unmetered", at)
-		case !*a.Metered && a.Reader != "":
-			return fmt.Errorf("%s: reader is set on an unmetered account", at)
+		case !*a.Metered && (a.Reader != "" || a.Credentials != ""):
+			return fmt.Errorf("%s: reader and credentials are for a metered account, and this one is unmetered", at)
 		case *a.Metered && !slices.Contains(Readers, a.Reader):
 			return fmt.Errorf("%s: reader %q is not one of %s", at, a.Reader, strings.Join(Readers, ", "))
+		case a.Reader == ReaderClaudeSubscription && a.Credentials == "":
+			return fmt.Errorf("%s: the %s reader needs credentials, the path of the login's credentials file", at, a.Reader)
 		}
 	}
 	return nil
@@ -590,6 +610,18 @@ func load(path string, withMesh bool) (*Config, error) {
 	if err := checkAccounts(path, o.Accounts); err != nil {
 		return nil, err
 	}
+	for i := range o.Accounts {
+		if c := o.Accounts[i].Credentials; c != "" && !filepath.IsAbs(c) {
+			o.Accounts[i].Credentials = filepath.Join(filepath.Dir(path), c)
+		}
+	}
+	if o.Budget.Poll == 0 {
+		o.Budget.Poll = DefaultBudgetPoll
+	}
+	if o.Budget.Poll < 0 {
+		return nil, fmt.Errorf("%s: budget.poll must be positive", path)
+	}
+
 	var meshDoc *mesh.Document
 	if o.MeshFile != "" && !withMesh {
 		if !filepath.IsAbs(o.MeshFile) {
@@ -824,6 +856,9 @@ func validate(p core.Profile) error {
 		if !namePattern.MatchString(t) {
 			return fmt.Errorf("tag %q must be lowercase letters, digits, '-' or '_'", t)
 		}
+	}
+	if err := p.Budget.Validate(); err != nil {
+		return fmt.Errorf("budget: %w", err)
 	}
 	return builtin.Table().Check(p)
 }

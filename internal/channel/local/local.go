@@ -64,6 +64,7 @@ type Server struct {
 	rejected   RejectedAPI
 	identity   IdentityAPI
 	meshStatus func() MeshJSON
+	budget     func() []BudgetJSON
 	mounts     []mount
 	token      []byte
 	heartbeat  time.Duration
@@ -152,6 +153,7 @@ func (s *Server) Handler() http.Handler {
 	s.registerGrants(mux)
 	s.registerStanding(mux)
 	s.registerMesh(mux)
+	s.registerBudget(mux)
 	for _, m := range s.mounts {
 		mux.Handle(m.path, m.h)
 	}
