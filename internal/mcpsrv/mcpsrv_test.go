@@ -74,6 +74,11 @@ func (f fakeOps) Harvest(who access.Subject, id string) (HarvestInfo, error) {
 	f.rec("harvest", who, id)
 	return f.harvest, f.opErr
 }
+func (f fakeOps) Propose(_ context.Context, who access.Subject, command string) error {
+	f.rec("propose", who, command)
+	return f.opErr
+}
+
 func (f fakeOps) Send(_ context.Context, who access.Subject, byTag bool, target, text string, approve func() error) ([]Delivered, error) {
 	kind := "name"
 	if byTag {

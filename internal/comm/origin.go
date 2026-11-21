@@ -16,9 +16,16 @@ type origin struct {
 	conversation string
 }
 
-// claim is an origin set for a delivery, and what it replaced.
+// turn is what starts an agent's turn: the conversation the message came from,
+// and the subject who sent it.
+type turn struct {
+	at        origin
+	requester string
+}
+
+// claim is a turn set for a delivery, and what it replaced.
 type claim struct {
-	set, prev  origin
+	set, prev  turn
 	isSet, had bool
 }
 
@@ -26,9 +33,10 @@ type claim struct {
 // about to be delivered to (ADR-0029 point 2), before it is delivered: an agent may
 // answer as soon as it reads the message. A message from a source that is not a
 // channel, such as another agent or a peer node, starts a turn with no origin. It
-// returns what it replaced, for settleOrigin.
+// returns what it replaced, for settleOrigin. The turn also notes who sent the
+// message, for what pao says to that subject alone (a proposal, ADR-0030).
 func (l *Layer) claimOrigin(in Inbound, targets []core.Profile) map[string]claim {
-	o, fromChannel := origin{channel: in.Source, conversation: in.Conversation}, l.HasChannel(in.Source)
+	o, fromChannel := turn{at: origin{channel: in.Source, conversation: in.Conversation}, requester: in.Sender}, l.HasChannel(in.Source)
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	claims := make(map[string]claim, len(targets))

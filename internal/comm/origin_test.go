@@ -250,7 +250,7 @@ func TestAnAnswerWrittenDuringDeliveryGoesToTheNewOrigin(t *testing.T) {
 
 func TestAFailedDeliveryLeavesAnOriginThatMovedSince(t *testing.T) {
 	l, _, _, _ := originSetup(t)
-	group := origin{channel: "chat", conversation: "-5"}
+	group := turn{at: origin{channel: "chat", conversation: "-5"}, requester: "alice"}
 	claims := l.claimOrigin(Inbound{Source: "chat", Conversation: "op"}, []core.Profile{{Name: "a"}})
 	l.mu.Lock()
 	l.origins["a"] = group // another message moved it while this one was delivered

@@ -116,6 +116,8 @@ type offer struct {
 
 	mu      sync.Mutex
 	proxied map[string]upstream.Tool
+	// propose says whether the propose tool is on the server.
+	propose bool
 }
 
 // Proxy is the upstream servers' tools pao offers as its own (ADR-0024).
@@ -214,6 +216,14 @@ func (s *Server) sync(ctx context.Context, who access.Subject, o *offer) {
 	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	if may := s.mayPropose(who); may != o.propose {
+		if may {
+			mcp.AddTool(o.srv, proposeTool, s.propose)
+		} else {
+			o.srv.RemoveTools(ToolPropose)
+		}
+		o.propose = may
+	}
 	var gone []string
 	for name := range o.proxied {
 		if _, ok := want[name]; !ok {

@@ -105,7 +105,7 @@ type Layer struct {
 	bound map[string]string // agent name to the channel its output goes to
 	// origins is the origin of each agent's current turn, by agent name
 	// (ADR-0029 point 2).
-	origins map[string]origin
+	origins map[string]turn
 	// routes holds the route of each agent message while channels are handed it,
 	// by message id.
 	routes sync.Map
@@ -138,7 +138,7 @@ type Layer struct {
 
 // New returns a Layer.
 func New(store *msgstore.Store, router Router) *Layer {
-	return &Layer{store: store, router: router, pre: make(map[string]Preprocessor), bound: make(map[string]string), origins: map[string]origin{},
+	return &Layer{store: store, router: router, pre: make(map[string]Preprocessor), bound: make(map[string]string), origins: map[string]turn{},
 		channelIDs: map[string]int{}, composites: newCompositeMap(DefaultCompositeWindow)}
 }
 

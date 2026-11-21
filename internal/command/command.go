@@ -402,3 +402,29 @@ func isNumber(s string) bool {
 	_, err := strconv.Atoi(s)
 	return err == nil
 }
+
+// notProposable are the command words a governor may not propose (ADR-0030):
+// help answers nothing to run, and a gate question is answered by the operator
+// alone.
+var notProposable = map[string]bool{"help": true, "allow": true, "always": true, "deny": true}
+
+// Proposable checks that text is exactly one command a governor may propose
+// (ADR-0030 point 3) and returns it trimmed, as it is shown and run: one line,
+// beginning "/pao " and a command word of the table other than help and the gate's
+// answers. The short form "/pao <name> <message>" is not proposed; the long form
+// "/pao agent <name> <message>" says the same and cannot be read as a command.
+func Proposable(text string) (string, error) {
+	text = strings.TrimSpace(text)
+	if strings.ContainsAny(text, "\r\n") {
+		return "", fmt.Errorf("a proposal is one line")
+	}
+	head, rest := cut(text)
+	if head != Prefix {
+		return "", fmt.Errorf("a proposal begins %q", Prefix+" ")
+	}
+	word, _ := cut(rest)
+	if _, ok := lookup(word); !ok || notProposable[word] {
+		return "", fmt.Errorf("%q is not a command a governor may propose", word)
+	}
+	return text, nil
+}
