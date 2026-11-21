@@ -889,3 +889,36 @@ func TestAPressOfACommandWithAListIsAnsweredInThePressersPrivateChat(t *testing.
 	require.Eventually(t, func() bool { return len(svc.calls("answerCallbackQuery")) == 1 }, 5*time.Second, 20*time.Millisecond)
 	assert.Equal(t, "done: the answer is in your private chat with the bot", svc.calls("answerCallbackQuery")[0]["text"])
 }
+
+func TestANoticeAboutTheGovernorGoesToItsRequesterAlone(t *testing.T) {
+	svc := &service{}
+	ts := httptest.NewServer(http.HandlerFunc(svc.handler))
+	t.Cleanup(ts.Close)
+	t.Setenv("PAO_TEST_BOT_TOKEN", "tok-1")
+	const alice, bob, group = 4242, 4343, -700
+
+	n := startNodeWith(t, map[string]string{"gov": neverReady}, func(_, _ string, cfg *config.Config) {
+		cfg.Orchestrator.Governor = config.Governor{Agent: "gov"}
+		cfg.Orchestrator.Channels = []config.Channel{{ID: 1, Name: "chat", Kind: "bot", CredentialEnv: "PAO_TEST_BOT_TOKEN",
+			Options: map[string]any{"endpoint": ts.URL + "/bot{token}/{method}", "poll_timeout": 0},
+			Groups:  []config.Group{{ID: strconv.Itoa(group), Name: "team", Members: config.MembersOperators}}}}
+	}, func(o *Options) { o.Adapters = builtin.Table() })
+	ctx := context.Background()
+
+	for i, who := range []struct {
+		name string
+		id   int
+	}{{"alice", alice}, {"bob", bob}} {
+		require.NoError(t, n.client.AddSubject(ctx, who.name))
+		inv, err := n.client.Invite(ctx, who.name, time.Hour)
+		require.NoError(t, err)
+		svc.push(chatUpdate(1+i, 10+i, who.id, "/register "+inv.Secret))
+		lineWith(t, svc, float64(who.id), "registered.")
+		require.NoError(t, n.client.SetOperator(ctx, who.name, true))
+	}
+
+	svc.push(groupUpdate(3, 12, alice, group, "/gpao pause the bee"))
+	lineWith(t, svc, alice, `agent "gov" is not ready`)
+	assert.Nil(t, svc.sentWith(bob, `agent "gov" is not ready`), "the other operator is not shown it")
+	assert.Nil(t, svc.sentWith(group, `agent "gov" is not ready`), "nor the group it was asked in")
+}

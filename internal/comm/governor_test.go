@@ -7,6 +7,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
 )
 
 // governorSetup is originSetup with the agent a as the node's governor.
@@ -170,4 +172,51 @@ func TestARequestThatDoesNotReachTheGovernorDoesNotResetIt(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, res.Reply, "usage")
 	assert.Zero(t, resets)
+}
+
+func TestPaosMessagesAboutTheGovernorGoToItsRequesterAlone(t *testing.T) {
+	l, _, chat, local := governorSetup(t)
+	fromChat(t, l, inGroup("-5", "op", "/gpao pause the coder"))
+	m, err := l.NotifyAgent(context.Background(), "a", core.Message{Sender: "pao", Text: "not ready", Actions: []core.Action{{Label: "ALLOW", Command: "/pao allow q1"}}})
+	require.NoError(t, err)
+	assert.Equal(t, map[string][]string{"op": {"not ready"}}, chat.take(), "privately to the requester, though asked in the group")
+	assert.Empty(t, local.texts(), "not every operator's conversation, as the default would send it")
+	assert.Equal(t, core.MessageSystemEvent, m.Kind)
+
+	_, _, _, err = l.CommandAsOperator(context.Background(), Inbound{Source: "local", Sender: "human", Text: "/gpao list my agents"})
+	require.NoError(t, err)
+	_, err = l.NotifyAgent(context.Background(), "a", core.Message{Sender: "pao", Text: "asked locally"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"asked locally"}, local.texts(), "a local request: the local channel")
+	assert.Empty(t, chat.take())
+
+	_, err = l.NotifyAgent(context.Background(), "b", core.Message{Sender: "pao", Text: "about b"})
+	require.NoError(t, err)
+	assert.Equal(t, map[string][]string{"op": {"about b"}}, chat.take(), "another agent keeps the default")
+	assert.Equal(t, []string{"asked locally", "about b"}, local.texts())
+}
+
+func TestWithNoRequesterNoOneIsToldAboutTheGovernor(t *testing.T) {
+	l, _, chat, local := governorSetup(t)
+	_, err := l.NotifyAgent(context.Background(), "a", core.Message{Sender: "pao", Text: "not ready"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "serving no request")
+
+	_, err = l.ReceiveAsOperator(context.Background(), Inbound{Source: "mcp", Sender: "b", Text: "hi", Target: byName("a")})
+	require.NoError(t, err)
+	_, err = l.NotifyAgent(context.Background(), "a", core.Message{Sender: "pao", Text: "in another agent's turn"})
+	require.Error(t, err)
+	assert.Empty(t, chat.take())
+	assert.Empty(t, local.texts())
+}
+
+func TestARequesterWithNoPrivateConversationIsToldNothingAboutTheGovernor(t *testing.T) {
+	l, _, chat, local := governorSetup(t)
+	_, err := l.ReceiveAsOperator(context.Background(), Inbound{Source: "chat", Sender: "nobody", Conversation: "-5", Text: "hi", Target: byName("a")})
+	require.NoError(t, err)
+	_, err = l.NotifyAgent(context.Background(), "a", core.Message{Sender: "pao", Text: "not ready"})
+	require.Error(t, err, "no conversation of the requester: an error, so a question is refused")
+	assert.Contains(t, err.Error(), "nobody has no private conversation")
+	assert.Empty(t, chat.take())
+	assert.Empty(t, local.texts())
 }
