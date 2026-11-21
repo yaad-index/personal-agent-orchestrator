@@ -550,3 +550,102 @@ func TestALogBindingMirrorsWhatTheAgentIsSent(t *testing.T) {
 		assert.NotEqual(t, "[alice]: hello", s, "the sender is not shown their own message")
 	}
 }
+
+// TestAStderrBindingTakesTheAgentsGateQuestions runs ADR-0029 point 4 on a real
+// node: the agent's stderr is bound to the group, so its gate question is put to
+// the group and not to the operator privately, and the operator's press there
+// decides it and closes the group's copy.
+func TestAStderrBindingTakesTheAgentsGateQuestions(t *testing.T) {
+	svc := &service{}
+	ts := httptest.NewServer(http.HandlerFunc(svc.handler))
+	t.Cleanup(ts.Close)
+	t.Setenv("PAO_TEST_BOT_TOKEN", "tok-1")
+	const person, group = 4242, -700
+
+	n := startNodeWith(t, map[string]string{"bee": ""}, func(_, _ string, cfg *config.Config) {
+		cfg.Orchestrator.Channels = []config.Channel{{ID: 1, Name: "chat", Kind: "bot", CredentialEnv: "PAO_TEST_BOT_TOKEN",
+			Options: map[string]any{"endpoint": ts.URL + "/bot{token}/{method}", "poll_timeout": 0},
+			Groups:  []config.Group{{ID: strconv.Itoa(group), Name: "team", Members: config.MembersOperators}}}}
+		cfg.Orchestrator.Bindings = []config.Binding{{Agent: "bee", Stream: config.StreamStderr, To: "group:team"}}
+	}, func(o *Options) { o.Adapters = builtin.Table() })
+	ctx := context.Background()
+
+	require.NoError(t, n.client.AddSubject(ctx, "alice"))
+	inv, err := n.client.Invite(ctx, "alice", time.Hour)
+	require.NoError(t, err)
+	svc.push(chatUpdate(1, 10, person, "/register "+inv.Secret))
+	lineWith(t, svc, float64(person), "registered.")
+	require.NoError(t, n.client.SetOperator(ctx, "alice", true))
+
+	decided := make(chan gate.Decision, 1)
+	go func() {
+		d, _ := gate.Ask(ctx, n.gateSock, gate.Request{Agent: "bee", Tool: "Bash", Input: []byte(`{"command":"echo hi"}`)})
+		decided <- d
+	}()
+	lineWith(t, svc, group, `agent "bee" wants to run Bash`)
+	q := svc.sentWith(group, `agent "bee" wants to run Bash`)
+	assert.Contains(t, q["reply_markup"].(string), "/pao allow q1", "the question carries its buttons")
+	assert.Nil(t, svc.sentWith(person, "wants to run"), "not privately: the binding takes the default's place")
+
+	native := func() int {
+		svc.mu.Lock()
+		defer svc.mu.Unlock()
+		for i, m := range svc.sent {
+			if m["chat_id"].(float64) == group && strings.Contains(m["text"].(string), "wants to run") {
+				return 5001 + i
+			}
+		}
+		return 0
+	}()
+	require.NotZero(t, native)
+	press := pressUpdate(30, native, person, "cb-group", "/pao allow q1")
+	press["callback_query"].(map[string]any)["message"].(map[string]any)["chat"] = map[string]any{"id": group, "type": "supergroup"}
+	svc.push(press)
+	select {
+	case d := <-decided:
+		assert.Equal(t, gate.Decision{Allow: true, Via: "operator", Reason: "approved by the operator"}, d)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the operator's press in the group did not decide the question")
+	}
+	require.Eventually(t, func() bool { return len(svc.calls("editMessageText")) == 1 }, 5*time.Second, 20*time.Millisecond, "the group's copy is closed")
+	assert.Equal(t, float64(group), svc.calls("editMessageText")[0]["chat_id"].(float64))
+}
+
+// TestANoticeThatAnAgentIsNotReadyGoesToItsStderrDestinations runs ADR-0029
+// point 4 for a notice about an agent: bee's stderr is bound to the group, so the
+// notice that it did not become ready goes there; wasp has no stderr binding, so
+// its notice goes to the operator privately and not to the admitted group.
+func TestANoticeThatAnAgentIsNotReadyGoesToItsStderrDestinations(t *testing.T) {
+	svc := &service{}
+	ts := httptest.NewServer(http.HandlerFunc(svc.handler))
+	t.Cleanup(ts.Close)
+	t.Setenv("PAO_TEST_BOT_TOKEN", "tok-1")
+	const person, group = 4242, -700
+
+	n := startNodeWith(t, map[string]string{"bee": neverReady, "wasp": neverReady}, func(_, _ string, cfg *config.Config) {
+		cfg.Orchestrator.Channels = []config.Channel{{ID: 1, Name: "chat", Kind: "bot", CredentialEnv: "PAO_TEST_BOT_TOKEN",
+			Options: map[string]any{"endpoint": ts.URL + "/bot{token}/{method}", "poll_timeout": 0},
+			Groups:  []config.Group{{ID: strconv.Itoa(group), Name: "team", Members: config.MembersOperators}}}}
+		cfg.Orchestrator.Bindings = []config.Binding{{Agent: "bee", Stream: config.StreamStderr, To: "group:team"}}
+	}, func(o *Options) { o.Adapters = builtin.Table() })
+	ctx := context.Background()
+
+	require.NoError(t, n.client.AddSubject(ctx, "alice"))
+	inv, err := n.client.Invite(ctx, "alice", time.Hour)
+	require.NoError(t, err)
+	svc.push(chatUpdate(1, 10, person, "/register "+inv.Secret))
+	lineWith(t, svc, float64(person), "registered.")
+	require.NoError(t, n.client.SetOperator(ctx, "alice", true))
+
+	svc.push(chatUpdate(2, 11, person, "/pao agent bee hello"))
+	lineWith(t, svc, group, `agent "bee" is not ready`)
+	assert.Nil(t, svc.sentWith(person, `agent "bee" is not ready`), "bee's notice is not shown privately")
+
+	svc.push(chatUpdate(3, 12, person, "/pao agent wasp hello"))
+	lineWith(t, svc, person, `agent "wasp" is not ready`)
+	assert.Nil(t, svc.sentWith(group, `agent "wasp" is not ready`), "wasp's notice is not shown in the group")
+}
+
+// neverReady starts an agent that stays up and never shows its ready prompt; what
+// pao appends to the command is taken as the shell's own arguments.
+const neverReady = "sh -c 'sleep 30' sh"

@@ -428,7 +428,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 
 // launchHook is the Launcher the router uses: it launches through the control
 // plane, starts following the agent's transcript once it is up, and tells the
-// operator, and only the operator, when an agent does not become ready.
+// agent's stderr destinations when it does not become ready.
 type launchHook struct {
 	plane  *control.Plane
 	layer  *comm.Layer
@@ -449,7 +449,7 @@ func (h *launchHook) Launch(ctx context.Context, p core.Profile) error {
 	}
 	if re, ok := control.AsReadinessError(err); ok {
 		text := fmt.Sprintf("agent %q is not ready after %s. Its terminal pane:\n%s", p.Name, re.Timeout, re.Pane())
-		if _, nerr := h.layer.Notify(ctx, core.Message{Sender: "pao", Text: text}); nerr != nil {
+		if _, nerr := h.layer.NotifyAgent(ctx, p.Name, core.Message{Sender: "pao", Text: text}); nerr != nil {
 			slog.Error("could not show the operator the pane", "agent", p.Name, "error", nerr)
 		}
 	}

@@ -19,7 +19,7 @@ func (l *Layer) mirrorInput(ctx context.Context, in Inbound, m core.Message, age
 	seen := map[origin]bool{}
 	var targets []target
 	for _, a := range agents {
-		for _, b := range l.bindingsOf(a.Name) {
+		for _, b := range l.bindingsOf(a.Name, StreamStdout) {
 			if b.Level < core.LevelLog {
 				continue
 			}

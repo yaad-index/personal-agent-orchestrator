@@ -475,7 +475,10 @@ func TestBindingsAreLoadedWithTheirDefaults(t *testing.T) {
 func TestBindingsRejects(t *testing.T) {
 	for name, c := range map[string]struct{ body, want string }{
 		"unknown agent":      {"  - agent: z\n    to: group:team\n", `agent "z" is not a configured agent`},
-		"stderr":             {"  - agent: a\n    stream: stderr\n    to: group:team\n", `stream must be "stdout"`},
+		"unknown stream":     {"  - agent: a\n    stream: stdin\n    to: group:team\n", `stream must be "stdout" or "stderr"`},
+		"stderr level":       {"  - agent: a\n    stream: stderr\n    to: group:team\n    level: 2\n", "a stderr binding takes no level and no prefix"},
+		"stderr prefix":      {"  - agent: a\n    stream: stderr\n    to: group:team\n    prefix: \"Q:\"\n", "a stderr binding takes no level and no prefix"},
+		"stderr duplicate":   {"  - agent: a\n    stream: stderr\n    to: group:team\n  - agent: a\n    stream: stderr\n    to: group:team\n", `bindings[1]: agent "a" is already bound to group:team`},
 		"no destination":     {"  - agent: a\n", `destination "" must be`},
 		"unknown kind":       {"  - agent: a\n    to: room:team\n", `kind "room"`},
 		"unknown group":      {"  - agent: a\n    to: group:other\n", `no admitted group is named "other"`},
@@ -494,6 +497,19 @@ func TestBindingsRejects(t *testing.T) {
 		require.Error(t, err, name)
 		assert.Contains(t, err.Error(), c.want, name)
 	}
+}
+
+func TestAStderrBindingIsLoadedBesideAStdoutOneToTheSameDestination(t *testing.T) {
+	path, err := channelsConfig(t, bindingsHead+
+		"  - agent: a\n    to: private:alice\n"+
+		"  - agent: a\n    stream: stderr\n    to: private:alice\n")
+	require.NoError(t, err)
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	assert.Equal(t, []Binding{
+		{Agent: "a", Stream: "stdout", To: "private:alice", Level: 2},
+		{Agent: "a", Stream: "stderr", To: "private:alice"},
+	}, cfg.Orchestrator.Bindings, "a stderr binding gets no level")
 }
 
 func TestAPrefixOfTenCharactersIsAllowedCountedAsCharacters(t *testing.T) {

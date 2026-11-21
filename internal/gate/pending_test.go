@@ -251,6 +251,7 @@ func TestAQuestionOffersItsAnswersAsActionsThatAreItsTypedCommands(t *testing.T)
 	res := ask(p, context.Background(), "a", "Bash", `{"command":"ls"}`)
 	q := <-b.asked
 	assert.Equal(t, "s2.q1", q.ID)
+	assert.Equal(t, "a", q.Agent, "the question names the agent whose call raised it")
 	assert.Equal(t, []core.Action{
 		{Label: "ALLOW", Command: "/pao allow s2.q1"},
 		{Label: "ALWAYS", Command: "/pao always s2.q1"},

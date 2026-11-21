@@ -16,8 +16,10 @@ var ErrNoSuchQuestion = errors.New("no such pending question")
 
 // Question is a gate question as it is put to the operator.
 type Question struct {
-	ID   string
-	Text string
+	ID string
+	// Agent is the agent whose call raised the question.
+	Agent string
+	Text  string
 	// Actions are the answers the operator may give, each with the typed command
 	// it stands for (ADR-0027 point 1).
 	Actions []core.Action
@@ -106,7 +108,8 @@ func (p *Pending) Ask(ctx context.Context, req Request, canonicalInput string) (
 	}()
 
 	q := Question{
-		ID: id,
+		ID:    id,
+		Agent: req.Agent,
 		Text: fmt.Sprintf("agent %q wants to run %s: %s\nanswer:  /pao allow %s   |   /pao always %s  (allow and remember)   |   /pao deny %s [reason]",
 			req.Agent, req.Tool, clip(canonicalInput, 1000), id, id, id),
 		Actions: []core.Action{

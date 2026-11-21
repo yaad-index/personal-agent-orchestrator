@@ -12,6 +12,15 @@ const (
 	DestChannel = "channel"
 )
 
+// The streams a binding follows (ADR-0023 point 1).
+const (
+	// StreamStdout is the agent's output.
+	StreamStdout = "stdout"
+	// StreamStderr is pao's gate questions and notices about the agent
+	// (ADR-0029 point 4).
+	StreamStderr = "stderr"
+)
+
 // Dest is a destination by name: an admitted group by its name, an operator's
 // private conversation by the subject (and, where it has bindings on several
 // channels, the channel), or a channel with one conversation by the channel's name.
@@ -30,12 +39,15 @@ func (d Dest) String() string {
 	return s
 }
 
-// Binding is a standing binding: Dest follows the agent's output at Level
-// (ADR-0029 point 3). A binding carries all of the agent's output, whichever
-// conversation a turn began in. Prefix, when set, is shown before each message in
-// place of the agent's name (point 5).
+// Binding is a standing binding: To follows one of the agent's streams (ADR-0029
+// point 3). A stdout binding carries all of the agent's output at Level, whichever
+// conversation a turn began in; Prefix, when set, is shown before each message in
+// place of the agent's name (point 5). A stderr binding carries pao's gate
+// questions and notices about the agent (point 4), and has no level or prefix. An
+// empty Stream is stdout.
 type Binding struct {
 	Agent  string
+	Stream string
 	To     Dest
 	Level  int
 	Prefix string
@@ -49,13 +61,17 @@ func (l *Layer) SetBindings(bs []Binding) {
 	l.bindings = slices.Clone(bs)
 }
 
-// bindingsOf returns the agent's standing bindings.
-func (l *Layer) bindingsOf(agent string) []Binding {
+// bindingsOf returns the agent's standing bindings of a stream.
+func (l *Layer) bindingsOf(agent, stream string) []Binding {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 	var out []Binding
 	for _, b := range l.bindings {
-		if b.Agent == agent {
+		s := b.Stream
+		if s == "" {
+			s = StreamStdout
+		}
+		if b.Agent == agent && s == stream {
 			out = append(out, b)
 		}
 	}
