@@ -93,3 +93,24 @@ func TestAnAccountWithNoReaderInThisBuildIsAFaultToldAtStart(t *testing.T) {
 	assert.Contains(t, got.Text, `account "sub" cannot be read (no reader "elsewhere" in this build)`)
 	assert.Equal(t, "fault", budgetOf(t, n, "sub").State)
 }
+
+func TestARateLimitedReadKeepsTheFigureAndTellsNoOne(t *testing.T) {
+	yes := true
+	r := &switchReader{}
+	n := startNodeWith(t, map[string]string{"a": ""}, func(_, _ string, cfg *config.Config) {
+		cfg.Orchestrator.Accounts = []config.Account{{Name: "sub", Metered: &yes, Reader: config.ReaderClaudeSubscription, Credentials: "/unused"}}
+		cfg.Orchestrator.Budget = config.Budget{Poll: 20 * time.Millisecond, MaxStale: time.Hour}
+	}, func(o *Options) { o.BudgetReader = func(config.Account) (budget.Reader, error) { return r, nil } })
+	require.Eventually(t, func() bool { return budgetOf(t, n, "sub").State == "readable" }, 5*time.Second, 10*time.Millisecond)
+	r.fail(&budget.TransientError{Err: errors.New("usage endpoint answered HTTP 429")})
+	require.Eventually(t, func() bool { return budgetOf(t, n, "sub").Retrying != "" }, 5*time.Second, 10*time.Millisecond)
+	sub := budgetOf(t, n, "sub")
+	assert.Equal(t, "readable", sub.State)
+	assert.True(t, sub.Headroom)
+	assert.Equal(t, "usage endpoint answered HTTP 429", sub.Retrying)
+	select {
+	case m := <-n.events:
+		t.Fatalf("no one is told of a failure that passes, got %q", m.Text)
+	case <-time.After(200 * time.Millisecond):
+	}
+}

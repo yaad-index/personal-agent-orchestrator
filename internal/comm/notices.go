@@ -96,3 +96,21 @@ func (l *Layer) governorStderr(agent string, m core.Message) ([]target, error) {
 func (l *Layer) noticeMay(at origin, m core.Message) bool {
 	return at.conversation == "" || l.originMay(at, m)
 }
+
+// NotifyOperators sends pao's own message about the node, not about one agent,
+// such as an account whose budget cannot be read, to the private conversation
+// of each operator bound on a channel, as an agent's notice goes where it has no
+// stderr binding (ADR-0029 point 4). Never to a group, and never to every
+// conversation as Notify does. Like Notify, it is stored in no agent's scope.
+func (l *Layer) NotifyOperators(ctx context.Context, m core.Message) (core.Message, error) {
+	m.Kind = core.MessageSystemEvent
+	var targets []target
+	for _, ch := range l.Channels() {
+		targets = append(targets, target{kind: toPrivate, at: origin{channel: ch}})
+	}
+	stored, err := l.store.Add(m)
+	if err != nil {
+		return core.Message{}, err
+	}
+	return stored, l.sendRouted(ctx, stored, outRoute{targets: targets})
+}

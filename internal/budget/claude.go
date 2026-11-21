@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -62,13 +63,18 @@ func (c ClaudeSubscription) Read(ctx context.Context) (Figure, error) {
 	resp, err := client.Do(req)
 	if err != nil {
 		// The URL is the only part of the request in a transport error.
-		return Figure{}, fmt.Errorf("usage request failed: %w", unwrapURL(err))
+		return Figure{}, &TransientError{Err: fmt.Errorf("usage request failed: %w", unwrapURL(err))}
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<16))
-		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		switch {
+		case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
 			return Figure{}, fmt.Errorf("usage endpoint refused the login's token (HTTP %d); it is read again from the credentials file on the next poll", resp.StatusCode)
+		case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500:
+			// A rate limit or a server error passes: the reading is kept while
+			// the read is tried again later.
+			return Figure{}, &TransientError{Err: fmt.Errorf("usage endpoint answered HTTP %d", resp.StatusCode), RetryAfter: retryAfter(resp.Header.Get("Retry-After"), time.Now())}
 		}
 		return Figure{}, fmt.Errorf("usage endpoint answered HTTP %d", resp.StatusCode)
 	}
@@ -137,4 +143,19 @@ func unwrapURL(err error) error {
 		return ue.Err
 	}
 	return err
+}
+
+// retryAfter reads a Retry-After header, in seconds or as an HTTP date, as a
+// wait from now. Anything else, or a time already past, is no wait.
+func retryAfter(v string, now time.Time) time.Duration {
+	if v == "" {
+		return 0
+	}
+	if secs, err := strconv.Atoi(v); err == nil && secs > 0 {
+		return time.Duration(secs) * time.Second
+	}
+	if t, err := http.ParseTime(v); err == nil && t.After(now) {
+		return t.Sub(now)
+	}
+	return 0
 }
