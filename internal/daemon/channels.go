@@ -85,6 +85,10 @@ func admittedGroups(chs []config.Channel) map[string]map[string]comm.Group {
 				out[c.Name] = map[string]comm.Group{}
 			}
 			out[c.Name][g.ID] = comm.Group{Name: g.Name, Policy: policy}
+			// A named topic is read by its group's readers (ADR-0038 point 10).
+			for _, t := range g.Topics {
+				out[c.Name][comm.TopicConversation(g.ID, t.ID)] = comm.Group{Name: t.Name, Policy: policy, Topic: true}
+			}
 		}
 	}
 	return out

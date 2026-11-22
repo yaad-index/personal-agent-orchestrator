@@ -685,3 +685,43 @@ func TestSecretsRejects(t *testing.T) {
 		assert.Contains(t, err.Error(), c.want, name)
 	}
 }
+
+func TestAGroupsNamedTopicsAreLoadedAndNameDestinations(t *testing.T) {
+	path, err := channelsConfig(t, "channels:\n  - id: 1\n    name: chat\n    kind: bot\n    credential_env: PAO_BOT\n    groups:\n      - id: \"-5\"\n        name: team\n        members: operators\n        topics:\n          - id: \"42\"\n            name: games\n"+
+		"bindings:\n  - agent: a\n    to: group:games\n")
+	require.NoError(t, err)
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	g := cfg.Orchestrator.Channels[0].Groups[0]
+	assert.Equal(t, []Topic{{ID: "42", Name: "games"}}, g.Topics)
+	assert.Equal(t, []string{"team", "games"}, g.Names())
+	assert.Equal(t, "group:games", cfg.Orchestrator.Bindings[0].To, "a named topic is a destination")
+}
+
+func TestAGroupsTopicsRejects(t *testing.T) {
+	head := "channels:\n  - id: 1\n    name: chat\n    kind: bot\n    credential_env: PAO_BOT\n    groups:\n      - id: \"-5\"\n        name: team\n        members: operators\n        topics:\n"
+	for name, c := range map[string]struct{ body, want string }{
+		"no id":          {"          - name: a\n", "topics[0]: id is required"},
+		"padded id":      {"          - id: \" 4\"\n            name: a\n", "no surrounding space"},
+		"slash id":       {"          - id: \"4/2\"\n            name: a\n", "no '/'"},
+		"bad name":       {"          - id: \"4\"\n            name: Games\n", `name "Games" must be`},
+		"duplicate id":   {"          - id: \"4\"\n            name: a\n          - id: \"4\"\n            name: b\n", `topics[1]: id "4" is already listed`},
+		"duplicate name": {"          - id: \"4\"\n            name: a\n          - id: \"5\"\n            name: a\n", `topics[1]: name "a" is already`},
+		"its group's":    {"          - id: \"4\"\n            name: team\n", `topics[0]: name "team" is already`},
+		"unknown field":  {"          - id: \"4\"\n            name: a\n            members: operators\n", "members"},
+	} {
+		_, err := channelsConfig(t, head+c.body)
+		require.Error(t, err, name)
+		assert.Contains(t, err.Error(), c.want, name)
+	}
+	_, err := channelsConfig(t, "channels:\n  - id: 1\n    name: chat\n    kind: bot\n    credential_env: PAO_BOT\n    groups:\n      - id: \"-5/1\"\n        name: team\n        members: operators\n        topics:\n          - id: \"4\"\n            name: a\n")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must not contain '/'", "a group with topics needs an id a topic's conversation can be told from")
+	_, err = channelsConfig(t, "channels:\n  - id: 1\n    name: chat\n    kind: bot\n    credential_env: PAO_BOT\n    groups:\n      - id: \"-5/1\"\n        name: team\n        members: operators\n")
+	require.NoError(t, err, "a group without topics is accepted as before, whatever its id")
+	_, err = channelsConfig(t, "channels:\n  - id: 1\n    name: chat\n    kind: bot\n    credential_env: PAO_BOT\n    groups:\n      - id: \"-5\"\n        name: team\n        members: operators\n        topics:\n          - id: \"4\"\n            name: games\n"+
+		"  - id: 2\n    name: other\n    kind: bot\n    credential_env: PAO_BOT2\n    groups:\n      - id: \"-6\"\n        name: games\n        members: operators\n")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `channels[1].groups[0]: name "games" is already`, "a topic's name is unique among the node's groups too")
+	assert.Contains(t, err.Error(), "channels[0].groups[0].topics[0]", "the error says where the name was first used")
+}

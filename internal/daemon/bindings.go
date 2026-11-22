@@ -95,7 +95,9 @@ func knownFor(cfg *config.Config) config.BindingKnown {
 	for _, c := range cfg.Orchestrator.Channels {
 		k.Channels[c.Name] = true
 		for _, g := range c.Groups {
-			k.Groups[g.Name] = true
+			for _, n := range g.Names() {
+				k.Groups[n] = true
+			}
 		}
 	}
 	return k

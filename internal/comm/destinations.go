@@ -42,7 +42,9 @@ func (l *Layer) wide(channel string, m core.Message) []string {
 	}
 	var groups []string
 	for id, g := range l.groups[channel] {
-		if id != "" && l.readersMay(g.Policy, m) {
+		// A named topic is a conversation for replies and bindings, not one of
+		// the channel's conversations as a whole (ADR-0038 point 10).
+		if id != "" && !g.Topic && l.readersMay(g.Policy, m) {
 			groups = append(groups, id)
 		}
 	}

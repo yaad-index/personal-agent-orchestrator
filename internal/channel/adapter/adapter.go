@@ -47,6 +47,10 @@ type Handler interface {
 	// DefaultAgent returns the channel's default agent, whose output the adapter
 	// shows without a name prefix (ADR-0023 point 5).
 	DefaultAgent(channel string) (agent string, ok bool)
+	// DefaultAgentIn returns the default agent of one conversation on the
+	// channel: its own, if it has one, and otherwise the channel's (ADR-0038
+	// point 5). Its output in that conversation carries no name prefix.
+	DefaultAgentIn(channel, conversation string) (agent string, ok bool)
 }
 
 // Adapter is a channel the node brings up: the channel contract of ADR-0009 and the

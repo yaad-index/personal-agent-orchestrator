@@ -313,9 +313,58 @@ func selfID(credential string) int64 {
 
 // lastKey is where a sender's last address is kept: per sender and per
 // conversation, so an address made in a group does not steer what the same person
-// types privately (ADR-0028 point 4).
-func lastKey(chat int64, sender string) string {
-	return strconv.FormatInt(chat, 10) + "/" + sender
+// types privately (ADR-0028 point 4), nor one made in a topic what they type in
+// another (ADR-0038 point 12).
+func lastKey(at addr, sender string) string {
+	return at.String() + "\x00" + sender
+}
+
+// addr is where a message is sent: a chat, and within a group split into topics,
+// a topic of it. A zero topic is the chat itself: a private chat, a group without
+// topics, or the general topic of a group with them.
+type addr struct {
+	chat  int64
+	topic int
+}
+
+// String is the conversation's id as the layer knows it: the chat's id, or for a
+// topic the chat's and the topic's together (ADR-0038 point 9).
+func (a addr) String() string {
+	chat := strconv.FormatInt(a.chat, 10)
+	if a.topic == 0 {
+		return chat
+	}
+	return comm.TopicConversation(chat, strconv.Itoa(a.topic))
+}
+
+// parseAddr reads a conversation's id as the layer gives it.
+func parseAddr(s string) (addr, error) {
+	chat, topic := s, ""
+	if g, t, ok := comm.SplitTopic(s); ok {
+		chat, topic = g, t
+	}
+	c, err := strconv.ParseInt(chat, 10, 64)
+	if err != nil {
+		return addr{}, fmt.Errorf("destination %q is not a chat id", s)
+	}
+	a := addr{chat: c}
+	if topic != "" {
+		if a.topic, err = strconv.Atoi(topic); err != nil || a.topic <= 0 {
+			return addr{}, fmt.Errorf("destination %q does not name a topic by its id", s)
+		}
+	}
+	return a, nil
+}
+
+// addrOf is where a message was written. The service gives a message a thread id
+// in other cases too, such as a reply inside a group without topics; only a
+// message it marks as written in a topic is that topic's (ADR-0038 point 9).
+func addrOf(m *models.Message) addr {
+	a := addr{chat: m.Chat.ID}
+	if m.Chat.Type != models.ChatTypePrivate && m.IsTopicMessage && m.MessageThreadID > 0 {
+		a.topic = m.MessageThreadID
+	}
+	return a
 }
 
 // Run polls for updates until ctx is done, handling each before the next. An update
@@ -356,9 +405,10 @@ func (b *Bot) handle(ctx context.Context, u *models.Update) {
 		return
 	}
 	sender := strconv.FormatInt(m.From.ID, 10)
+	at := addrOf(m)
 	in := comm.ChannelInbound{Channel: b.name, Sender: sender, Native: native(m.Chat.ID, m.ID), Raw: truncate(m.Text, 4096)}
 	if group {
-		in.Group, in.Conversation = true, strconv.FormatInt(m.Chat.ID, 10)
+		in.Group, in.Conversation = true, at.String()
 	}
 	if m.ReplyToMessage != nil {
 		in.ReplyNative = native(m.Chat.ID, m.ReplyToMessage.ID)
@@ -377,7 +427,7 @@ func (b *Bot) handle(ctx context.Context, u *models.Update) {
 		in.Text = m.Text
 		if m.ReplyToMessage == nil {
 			b.mu.Lock()
-			in.Target = b.last[lastKey(m.Chat.ID, sender)]
+			in.Target = b.last[lastKey(at, sender)]
 			b.mu.Unlock()
 		}
 	}
@@ -387,17 +437,17 @@ func (b *Bot) handle(ctx context.Context, u *models.Update) {
 	case errors.Is(err, comm.ErrRecord):
 		slog.Error("channel could not record a rejected inbound", "channel", b.name, "error", err)
 	case errors.Is(err, core.ErrNoTarget):
-		b.reply(ctx, m.Chat.ID, usage)
+		b.reply(ctx, at, usage)
 	case err != nil:
-		b.reply(ctx, m.Chat.ID, truncate(err.Error(), 400))
+		b.reply(ctx, at, truncate(err.Error(), 400))
 	default:
 		if res.Addressed != nil && res.Delivery != nil {
 			b.mu.Lock()
-			b.last[lastKey(m.Chat.ID, sender)] = *res.Addressed
+			b.last[lastKey(at, sender)] = *res.Addressed
 			b.mu.Unlock()
 		}
 		if res.Reply != "" {
-			b.reply(ctx, m.Chat.ID, res.Reply)
+			b.reply(ctx, at, res.Reply)
 		}
 	}
 }
@@ -451,16 +501,17 @@ func fitsPressAnswer(s string) bool {
 	return !strings.Contains(s, "\n") && utf8.RuneCountInString(s) <= maxPressAnswer
 }
 
-func (b *Bot) reply(ctx context.Context, chat int64, text string) {
-	if _, err := b.send(ctx, chat, text, nil); err != nil {
+func (b *Bot) reply(ctx context.Context, at addr, text string) {
+	if _, err := b.send(ctx, at, text, nil); err != nil {
 		slog.Warn("channel could not reply", "channel", b.name, "error", err)
 	}
 }
 
-// send posts one message to a chat, with buttons when keys is set, and returns the
-// service's id for it.
-func (b *Bot) send(ctx context.Context, chat int64, text string, keys models.ReplyMarkup) (int, error) {
-	m, err := b.api.SendMessage(ctx, &api.SendMessageParams{ChatID: chat, Text: text, ReplyMarkup: keys})
+// send posts one message to a chat, or to a topic of it, with buttons when keys is
+// set, and returns the service's id for it. A chat itself is sent to with no topic
+// named, as before topics (ADR-0038 point 11).
+func (b *Bot) send(ctx context.Context, at addr, text string, keys models.ReplyMarkup) (int, error) {
+	m, err := b.api.SendMessage(ctx, &api.SendMessageParams{ChatID: at.chat, MessageThreadID: at.topic, Text: text, ReplyMarkup: keys})
 	if err != nil {
 		return 0, b.describe(err)
 	}
@@ -479,40 +530,40 @@ func (b *Bot) Send(ctx context.Context, m core.Message) error {
 func (b *Bot) SendNative(ctx context.Context, m core.Message) ([]string, error) {
 	var natives []string
 	var errs []error
-	pieces := split(b.line(m), b.limit)
 	keys := keyboard(m.Actions)
 	for _, to := range b.h.Destinations(b.name, m) {
-		chat, err := strconv.ParseInt(to, 10, 64)
+		at, err := parseAddr(to)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("destination %q is not a chat id", to))
+			errs = append(errs, err)
 			continue
 		}
+		pieces := split(b.line(m, to), b.limit)
 		for i, p := range pieces {
 			var markup models.ReplyMarkup
 			if keys != nil && i == len(pieces)-1 {
 				markup = keys
 			}
-			id, err := b.send(ctx, chat, p, markup)
+			id, err := b.send(ctx, at, p, markup)
 			if err != nil {
 				errs = append(errs, err)
 				break
 			}
 			if i == 0 {
-				natives = append(natives, native(chat, id))
+				natives = append(natives, native(at.chat, id))
 			}
 			if markup != nil {
-				b.remember(m.ID, shown{chat: chat, id: id, text: p})
+				b.remember(m.ID, shown{chat: at.chat, id: id, text: p})
 			}
 		}
 	}
 	return natives, errors.Join(errs...)
 }
 
-// line is the text a message is shown as: its sender's name before it, except for
-// the channel's default agent, which speaks as the channel's own voice (ADR-0023
-// point 5).
-func (b *Bot) line(m core.Message) string {
-	if agent, ok := b.h.DefaultAgent(b.name); ok && agent == m.Sender && m.Label == "" {
+// line is the text a message is shown as in a conversation: its sender's name
+// before it, except for that conversation's default agent, which speaks as the
+// channel's own voice (ADR-0023 point 5, ADR-0038 point 5).
+func (b *Bot) line(m core.Message, conversation string) string {
+	if agent, ok := b.h.DefaultAgentIn(b.name, conversation); ok && agent == m.Sender && m.Label == "" {
 		return m.Text
 	}
 	return m.Shown()
@@ -627,7 +678,7 @@ func (b *Bot) press(ctx context.Context, q *models.CallbackQuery) {
 	answer := ""
 	defer func() {
 		if !fitsPressAnswer(answer) {
-			if _, err := b.send(ctx, q.From.ID, answer, nil); err != nil {
+			if _, err := b.send(ctx, addr{chat: q.From.ID}, answer, nil); err != nil {
 				slog.Warn("channel could not send a press's answer to the presser's private chat", "channel", b.name, "error", err)
 			} else {
 				answer = pressAnsweredPrivately
@@ -659,7 +710,11 @@ func (b *Bot) press(ctx context.Context, q *models.CallbackQuery) {
 			in.Pressed = native(where.ID, q.Message.Message.ID)
 		}
 		if where.Type != models.ChatTypePrivate {
-			in.Group, in.Conversation = true, strconv.FormatInt(where.ID, 10)
+			at := addr{chat: where.ID}
+			if q.Message.Message != nil {
+				at = addrOf(q.Message.Message)
+			}
+			in.Group, in.Conversation = true, at.String()
 		}
 	default:
 		// A press on no message the service names cannot be placed; it is

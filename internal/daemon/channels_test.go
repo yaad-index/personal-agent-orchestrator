@@ -200,3 +200,14 @@ func TestAdmittedGroupsAreEachChannelsListedGroupsWithTheirNameAndPolicy(t *test
 		"-6": {Name: "ops", Policy: comm.PolicyOperators},
 	}}, got, "a channel with no groups admits none, and a policy with no name in the layer is left out")
 }
+
+func TestAGroupsNamedTopicsAreAdmittedWithTheGroupsPolicy(t *testing.T) {
+	got := admittedGroups([]config.Channel{
+		{Name: "chat", Groups: []config.Group{{ID: "-5", Name: "team", Members: config.MembersOperators, Topics: []config.Topic{{ID: "42", Name: "games"}}}}},
+		{Name: "odd", Groups: []config.Group{{ID: "-7", Name: "odd", Members: "everyone", Topics: []config.Topic{{ID: "1", Name: "oddtopic"}}}}},
+	})
+	assert.Equal(t, map[string]map[string]comm.Group{"chat": {
+		"-5":    {Name: "team", Policy: comm.PolicyOperators},
+		"-5/42": {Name: "games", Policy: comm.PolicyOperators, Topic: true},
+	}}, got, "a topic of a group left out is left out with it")
+}

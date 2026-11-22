@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/command"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
@@ -123,6 +124,23 @@ const PolicyOperators = "operators"
 type Group struct {
 	Name   string
 	Policy string
+	// Topic marks a named topic of a group (ADR-0038 point 10): a conversation of
+	// its own for replies and destinations, never one of the channel's
+	// conversations as a whole. Its policy is its group's.
+	Topic bool
+}
+
+// TopicConversation is the conversation of a topic of a group, named by the
+// group's id and the topic's id together (ADR-0038 point 9). An adapter names a
+// message's conversation this way only where the platform marks the message as
+// written in a topic.
+func TopicConversation(group, topic string) string { return group + "/" + topic }
+
+// SplitTopic returns the group and the topic of a topic's conversation, and false
+// for any other conversation: a group's own or a private one.
+func SplitTopic(conversation string) (group, topic string, ok bool) {
+	group, topic, ok = strings.Cut(conversation, "/")
+	return group, topic, ok && group != "" && topic != ""
 }
 
 // SetGroups gives the layer the group conversations each channel admits, by
@@ -130,10 +148,21 @@ type Group struct {
 // refused. Call it before the layer starts receiving.
 func (l *Layer) SetGroups(groups map[string]map[string]Group) { l.groups = groups }
 
-// group returns an admitted group.
+// group returns an admitted group, or a named topic of one. A topic that is not
+// named is its group's: it is served as its group is, and read by its group's
+// readers (ADR-0038 point 10).
 func (l *Layer) group(channel, conversation string) (Group, bool) {
-	g, ok := l.groups[channel][conversation]
-	return g, ok && conversation != ""
+	if conversation == "" {
+		return Group{}, false
+	}
+	if g, ok := l.groups[channel][conversation]; ok {
+		return g, true
+	}
+	if parent, _, ok := SplitTopic(conversation); ok {
+		g, ok := l.groups[channel][parent]
+		return g, ok && !g.Topic
+	}
+	return Group{}, false
 }
 
 // admits reports whether a group's member policy lets subject act in it. A policy
@@ -174,6 +203,27 @@ func (l *Layer) DefaultAgent(channel string) (string, bool) {
 	}
 	return l.defaults.Get(channel)
 }
+
+// DefaultAgentIn returns the default agent of a conversation on a channel: the
+// conversation's own, if it has one, and otherwise the channel's (ADR-0038 point
+// 5). An admitted group and a named topic may have one of their own, stored under
+// their destination name; a topic that is not named has its group's.
+func (l *Layer) DefaultAgentIn(channel, conversation string) (string, bool) {
+	if l.defaults == nil {
+		return "", false
+	}
+	if g, ok := l.group(channel, conversation); ok {
+		if agent, ok := l.defaults.Get(DefaultKey(g.Name)); ok {
+			return agent, true
+		}
+	}
+	return l.defaults.Get(channel)
+}
+
+// DefaultKey is where an admitted group's or a named topic's own default agent is
+// stored among the channels' defaults: under its destination name, which no
+// channel's name can be.
+func DefaultKey(group string) string { return "group:" + group }
 
 // SetOperatorAccess bounds what the operator's own messages may reach: an agent
 // allow returns false for is left out of the operator's routing as if it did not
@@ -341,14 +391,14 @@ func (l *Layer) receiveAsOperator(ctx context.Context, in ChannelInbound, subjec
 			}
 		}
 	}
-	if target.Kind == 0 {
-		if agent, ok := l.DefaultAgent(in.Channel); ok {
-			target = core.Target{Kind: core.ByName, Value: agent}
-		}
-	}
 	conversation := in.Sender
 	if in.Group {
 		conversation = in.Conversation
+	}
+	if target.Kind == 0 {
+		if agent, ok := l.DefaultAgentIn(in.Channel, conversation); ok {
+			target = core.Target{Kind: core.ByName, Value: agent}
+		}
 	}
 	d, err := l.ReceiveAsOperator(ctx, Inbound{
 		Source:       in.Channel,

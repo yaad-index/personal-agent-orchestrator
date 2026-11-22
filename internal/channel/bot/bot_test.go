@@ -61,6 +61,10 @@ type message struct {
 	ReplyTo *struct {
 		ID int64 `json:"message_id"`
 	} `json:"reply_to_message,omitempty"`
+	// Thread is the thread the service puts the message in, and Topic its mark
+	// that the message was written in a topic of a group split into topics.
+	Thread int  `json:"message_thread_id,omitempty"`
+	Topic  bool `json:"is_topic_message,omitempty"`
 	// The service's reports about a group.
 	NewMembers  []member `json:"new_chat_members,omitempty"`
 	MigrateTo   int64    `json:"migrate_to_chat_id,omitempty"`
@@ -259,6 +263,15 @@ func (h *handler) NativeOf(string, string) (string, bool)     { return "", false
 func (h *handler) DefaultAgent(channel string) (string, bool) {
 	a, ok := h.defaults[channel]
 	return a, ok
+}
+
+// DefaultAgentIn is a conversation's own default, keyed "channel/conversation" in
+// defaults, and otherwise the channel's.
+func (h *handler) DefaultAgentIn(channel, conversation string) (string, bool) {
+	if a, ok := h.defaults[channel+"/"+conversation]; ok {
+		return a, true
+	}
+	return h.DefaultAgent(channel)
 }
 func (h *handler) inbound() []comm.ChannelInbound {
 	h.mu.Lock()
@@ -653,7 +666,7 @@ func TestTheTokenIsNeverInAnError(t *testing.T) {
 	b, err := newBot(spec(s, nil), &handler{})
 	require.NoError(t, err)
 	s.ts.Close()
-	_, err = b.send(context.Background(), 900, "x", nil)
+	_, err = b.send(context.Background(), addr{chat: 900}, "x", nil)
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), tok, "a transport error names the URL, the URL holds the token")
 	assert.NotContains(t, err.Error(), "http://", "and the URL itself is not in the log either")
@@ -664,7 +677,7 @@ func TestTheTokenIsNeverInAnError(t *testing.T) {
 	sp.Credential = "WRONG"
 	b2, err := newBot(sp, &handler{})
 	require.NoError(t, err)
-	_, err = b2.send(context.Background(), 900, "x", nil)
+	_, err = b2.send(context.Background(), addr{chat: 900}, "x", nil)
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "WRONG")
 	assert.Equal(t, "the service's answer could not be used", err.Error())
@@ -675,12 +688,12 @@ func TestAnErrorIsInTheAdaptersWordsNotTheLibrarys(t *testing.T) {
 	s.mode = "unknown"
 	b, err := newBot(spec(s, nil), &handler{})
 	require.NoError(t, err)
-	_, err = b.send(context.Background(), 900, "x", nil)
+	_, err = b.send(context.Background(), addr{chat: 900}, "x", nil)
 	require.Error(t, err)
 	assert.Equal(t, "the service's answer could not be used", err.Error(), "an answer the adapter has no word for is not quoted")
 
 	s.failSend[901] = true
-	_, err = b.send(context.Background(), 901, "x", nil)
+	_, err = b.send(context.Background(), addr{chat: 901}, "x", nil)
 	assert.EqualError(t, err, "forbidden: blocked", "a known kind keeps what the service said")
 }
 
@@ -689,7 +702,7 @@ func TestAnAnswerPastTheCapIsRefused(t *testing.T) {
 	s.huge = true
 	b, err := newBot(spec(s, nil), &handler{})
 	require.NoError(t, err)
-	_, err = b.send(context.Background(), 900, "x", nil)
+	_, err = b.send(context.Background(), addr{chat: 900}, "x", nil)
 	assert.EqualError(t, err, "the service's answer was too large")
 }
 
@@ -726,7 +739,7 @@ func TestTheTokenIsScrubbedFromWhatTheServiceSays(t *testing.T) {
 	s.mode, s.describe = "okfalse", "your token "+tok+" is bad"
 	b, err := newBot(spec(s, nil), &handler{})
 	require.NoError(t, err)
-	_, err = b.send(context.Background(), 900, "x", nil)
+	_, err = b.send(context.Background(), addr{chat: 900}, "x", nil)
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), tok)
 	assert.Equal(t, "bad request: your token *** is bad", err.Error())
