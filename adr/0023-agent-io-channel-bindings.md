@@ -2,6 +2,8 @@
 
 **Status:** Accepted (2026-11-17)
 
+**Superseded-by:** ADR-0038 (a group's topics are conversations of that group)
+
 Extends ADR-0003 (routing), ADR-0008 (verbosity), ADR-0009 (channels), ADR-0012 (access), ADR-0013 (cross-node output), ADR-0019 (adapters + identity).
 
 ## Context
