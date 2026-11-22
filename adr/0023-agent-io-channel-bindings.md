@@ -2,7 +2,7 @@
 
 **Status:** Accepted (2026-11-17)
 
-**Point 9 superseded-by:** ADR-0038 (a group's topics are conversations of that group)
+**Superseded-by:** ADR-0038 (a group's topics are conversations of that group)
 
 Extends ADR-0003 (routing), ADR-0008 (verbosity), ADR-0009 (channels), ADR-0012 (access), ADR-0013 (cross-node output), ADR-0019 (adapters + identity).
 
@@ -33,7 +33,7 @@ A common deployment has a single agent serving several channels, with the agent 
 
 8. **A channel is a resource in the access matrix; one channel, many subjects (ADR-0012).** A channel (stdin and/or stdout) is a resource row, and any subject with access may use it. pao attributes each inbound to its subject (ADR-0019) and gates per message, so isolation comes from the matrix, not from a separate bot or front per subject. This decides what a channel grant means for a human beyond a front they may use, which ADR-0012 left open: a channel is a resource any granted subject may use for stdin and/or stdout.
 
-9. *(Superseded by ADR-0038: a topic is a conversation of its group, not a channel.)* **A platform whose direct chat is a single conversation maps a topic-enabled group's topics to channels.** Where a platform's direct chat cannot carry several channels, each topic of a topic-enabled group is a channel, giving that platform the same channel model as one with native channels. **This is not free of adapter work.** A channel spec today builds one adapter with its own receive loop (ADR-0020 point 6); a platform whose credential allows only one polling consumer cannot run one loop per topic channel, so N topic channels on one credential need a single receiver dispatching to N channels — an adapter that serves several channels, which is a change to the one-adapter-per-channel shape, or a stated deferral. Topic traffic is also group traffic, so it depends on ADR-0019 point 6's group configuration (which subjects a group admits), deny-by-default until configured.
+9. **A platform whose direct chat is a single conversation maps a topic-enabled group's topics to channels.** Where a platform's direct chat cannot carry several channels, each topic of a topic-enabled group is a channel, giving that platform the same channel model as one with native channels. **This is not free of adapter work.** A channel spec today builds one adapter with its own receive loop (ADR-0020 point 6); a platform whose credential allows only one polling consumer cannot run one loop per topic channel, so N topic channels on one credential need a single receiver dispatching to N channels — an adapter that serves several channels, which is a change to the one-adapter-per-channel shape, or a stated deferral. Topic traffic is also group traffic, so it depends on ADR-0019 point 6's group configuration (which subjects a group admits), deny-by-default until configured.
 
 ## What this ADR deliberately does NOT decide
 
