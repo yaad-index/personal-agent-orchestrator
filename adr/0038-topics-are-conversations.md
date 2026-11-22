@@ -1,6 +1,6 @@
 # ADR 0038: A group's topics are conversations of that group
 
-**Status:** Proposed
+**Status:** Accepted (2026-11-22)
 
 Supersedes ADR-0023 (agent I/O: channel bindings and the default agent). Keeps its points 1, 2 and 6 to 8 unchanged, and its deferred list except the item point 9 raised. Changes points 3 to 5, so that a conversation may have a default agent of its own, and replaces point 9: a topic of a topic-enabled group is a conversation of that group, not a channel. Decides two items on ADR-0028's deferred list, which ADR-0029 keeps: topics, and a group's own default agent. Extends ADR-0003, ADR-0008, ADR-0009, ADR-0012, ADR-0013 and ADR-0019, as ADR-0023 does, and builds on ADR-0028's group points and ADR-0029 (output routing).
 
