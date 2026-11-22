@@ -376,6 +376,30 @@ type Group struct {
 	Name string `yaml:"name"`
 	// Members is the group's member policy: who may act in it.
 	Members string `yaml:"members"`
+	// Topics names some of the group's topics, on a platform that splits a group
+	// into topics (ADR-0038 point 10). Every topic of an admitted group is served
+	// whether it is named or not; a named one is also a destination, group:<name>.
+	Topics []Topic `yaml:"topics"`
+}
+
+// Topic names one topic of an admitted group (ADR-0038 point 10). It has no
+// member policy of its own: its readers are its group's.
+type Topic struct {
+	// ID is the platform's own id for the topic within its group.
+	ID string `yaml:"id"`
+	// Name is the operator's handle for the topic, unique among the node's
+	// groups and topics, in the same form as a group's name.
+	Name string `yaml:"name"`
+}
+
+// Names returns the names the group gives the node's destinations: its own, and
+// each of its named topics'.
+func (g Group) Names() []string {
+	out := []string{g.Name}
+	for _, t := range g.Topics {
+		out = append(out, t.Name)
+	}
+	return out
 }
 
 var (
@@ -427,6 +451,8 @@ func checkGroups(at string, gs []Group, names map[string]string) error {
 		switch {
 		case strings.TrimSpace(g.ID) == "" || g.ID != strings.TrimSpace(g.ID):
 			return fmt.Errorf("%s: id is required, with no surrounding space", gat)
+		case len(g.Topics) > 0 && strings.Contains(g.ID, "/"):
+			return fmt.Errorf("%s: id %q of a group with topics must not contain '/'", gat, g.ID)
 		case !channelNamePattern.MatchString(g.Name):
 			return fmt.Errorf("%s: name %q must be lowercase letters, digits, '-' or '_', at most 32", gat, g.Name)
 		case g.Members != MembersOperators:
@@ -438,6 +464,31 @@ func checkGroups(at string, gs []Group, names map[string]string) error {
 			return fmt.Errorf("%s: name %q is already %s", gat, g.Name, prev)
 		}
 		seen[g.ID], names[g.Name] = true, gat
+		if err := checkTopics(gat, g.Topics, names); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// checkTopics validates one group's named topics. names holds the group and topic
+// names already used on the node; a topic's name is added to it.
+func checkTopics(at string, ts []Topic, names map[string]string) error {
+	seen := map[string]bool{}
+	for i, t := range ts {
+		tat := fmt.Sprintf("%s.topics[%d]", at, i)
+		switch {
+		case strings.TrimSpace(t.ID) == "" || t.ID != strings.TrimSpace(t.ID) || strings.Contains(t.ID, "/"):
+			return fmt.Errorf("%s: id is required, with no surrounding space and no '/'", tat)
+		case !channelNamePattern.MatchString(t.Name):
+			return fmt.Errorf("%s: name %q must be lowercase letters, digits, '-' or '_', at most 32", tat, t.Name)
+		case seen[t.ID]:
+			return fmt.Errorf("%s: id %q is already listed", tat, t.ID)
+		}
+		if prev, dup := names[t.Name]; dup {
+			return fmt.Errorf("%s: name %q is already %s", tat, t.Name, prev)
+		}
+		seen[t.ID], names[t.Name] = true, tat
 	}
 	return nil
 }
@@ -792,7 +843,9 @@ func checkBindings(path string, o *Orchestrator, agents map[string]string) error
 	for _, c := range o.Channels {
 		k.Channels[c.Name] = true
 		for _, g := range c.Groups {
-			k.Groups[g.Name] = true
+			for _, n := range g.Names() {
+				k.Groups[n] = true
+			}
 		}
 	}
 	seen := map[string]int{}

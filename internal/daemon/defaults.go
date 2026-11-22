@@ -7,6 +7,7 @@ import (
 	"sort"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/local"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/comm"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/config"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/defaultagent"
@@ -18,7 +19,8 @@ const defaultsFile = "channel-defaults.json"
 
 // defaultsAPI is the operator's control of the channels' default agents
 // (local.DefaultsAPI). A default can be set only on a configured channel that
-// receives chat, and only to an agent the node can route to by name.
+// receives chat, or on an admitted group or named topic as group:<name>, and only
+// to an agent the node can route to by name.
 type defaultsAPI struct {
 	store    *defaultagent.Store
 	channels map[string]bool
@@ -29,6 +31,13 @@ func newDefaultsAPI(store *defaultagent.Store, chs []config.Channel, resolve fun
 	names := make(map[string]bool, len(chs))
 	for _, c := range chs {
 		names[c.Name] = true
+		// An admitted group and a named topic may have a default of their own,
+		// under their destination name (ADR-0038 point 5).
+		for _, g := range c.Groups {
+			for _, n := range g.Names() {
+				names[comm.DefaultKey(n)] = true
+			}
+		}
 	}
 	for ch, agent := range store.Document().Defaults {
 		if !names[ch] {
@@ -76,7 +85,7 @@ func (a defaultsAPI) ClearDefault(_ context.Context, channel string) (local.Defa
 
 func (a defaultsAPI) chatChannel(channel string) error {
 	if !a.channels[channel] {
-		return translated{local.ErrNotFound, fmt.Errorf("no chat channel %q: a default agent is set on a configured channel", channel)}
+		return translated{local.ErrNotFound, fmt.Errorf("no chat channel or group %q: a default agent is set on a configured channel, or on an admitted group or named topic as group:<name>", channel)}
 	}
 	return nil
 }

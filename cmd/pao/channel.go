@@ -18,8 +18,8 @@ type ChannelCmd struct {
 // ChannelDefaultCmd sets or clears a channel's default agent.
 type ChannelDefaultCmd struct {
 	NodeFlags
-	Channel string `arg:"" help:"Configured channel."`
-	Agent   string `arg:"" optional:"" help:"Agent to make its default. It stops being the default of any other channel."`
+	Channel string `arg:"" help:"Configured channel, or an admitted group or named topic as group:<name>."`
+	Agent   string `arg:"" optional:"" help:"Agent to make its default. It stops being the default of any other channel, group or topic."`
 	Clear   bool   `help:"Remove the channel's default agent."`
 }
 

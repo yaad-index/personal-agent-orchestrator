@@ -33,9 +33,10 @@ type nilHandler struct{}
 func (nilHandler) ReceiveFromChannel(context.Context, comm.ChannelInbound) (comm.ChannelResult, error) {
 	return comm.ChannelResult{}, nil
 }
-func (nilHandler) Destinations(string, core.Message) []string { return nil }
-func (nilHandler) NativeOf(string, string) (string, bool)     { return "", false }
-func (nilHandler) DefaultAgent(string) (string, bool)         { return "", false }
+func (nilHandler) Destinations(string, core.Message) []string   { return nil }
+func (nilHandler) NativeOf(string, string) (string, bool)       { return "", false }
+func (nilHandler) DefaultAgent(string) (string, bool)           { return "", false }
+func (nilHandler) DefaultAgentIn(string, string) (string, bool) { return "", false }
 
 func TestTheTableListsKindsSorted(t *testing.T) {
 	assert.Equal(t, []string{"a", "b"}, Table{"b": {New: okFactory}, "a": {New: okFactory}}.Kinds())
