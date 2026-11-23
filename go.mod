@@ -8,7 +8,7 @@ require (
 )
 
 require (
-	github.com/go-telegram/bot v1.28.0
+	github.com/go-telegram/bot v1.30.0
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	go.etcd.io/bbolt v1.5.0
 	go.yaml.in/yaml/v3 v3.0.6
