@@ -1,6 +1,6 @@
 # ADR 0041: Task-agents are ephemeral instances of templates, not standing peers
 
-**Status:** Proposed (2026-11-25)
+**Status:** Accepted (2026-11-25)
 
 ## Context
 
