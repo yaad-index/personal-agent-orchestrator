@@ -14,6 +14,7 @@ import (
 	"github.com/yaad-index/personal-agent-orchestrator/internal/budget"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/local"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/config"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
 )
 
 type switchReader struct {
@@ -84,14 +85,41 @@ func TestTheNodeReadsItsAccountsAndTellsTheOperatorOfAFault(t *testing.T) {
 	assert.Equal(t, "readable", budgetOf(t, n, "sub").State)
 }
 
-func TestAnAccountWithNoReaderInThisBuildIsAFaultToldAtStart(t *testing.T) {
+func TestAnAccountWithNoReaderInThisBuildIsAFaultAtStart(t *testing.T) {
 	yes := true
 	n := startNodeWith(t, map[string]string{"a": ""}, func(_, _ string, cfg *config.Config) {
 		cfg.Orchestrator.Accounts = []config.Account{{Name: "sub", Metered: &yes, Reader: "elsewhere"}}
 	})
-	got := n.next(t)
-	assert.Contains(t, got.Text, `account "sub" cannot be read (no reader "elsewhere" in this build)`)
-	assert.Equal(t, "fault", budgetOf(t, n, "sub").State)
+	sub := budgetOf(t, n, "sub")
+	assert.Equal(t, "fault", sub.State)
+	assert.Equal(t, `no reader "elsewhere" in this build`, sub.Fault)
+	assert.False(t, sub.Headroom)
+}
+
+type operatorInbox struct{ got chan core.Message }
+
+func (o operatorInbox) NotifyOperators(_ context.Context, m core.Message) (core.Message, error) {
+	o.got <- m
+	return m, nil
+}
+
+// The tell at start is sent before any local stream can be open, so it is
+// checked here at the notifier rather than on a stream.
+func TestAnAccountWithNoReaderInThisBuildIsToldToTheOperatorAtStart(t *testing.T) {
+	yes := true
+	cfg := &config.Config{}
+	cfg.Orchestrator.Accounts = []config.Account{{Name: "sub", Metered: &yes, Reader: "elsewhere"}}
+	inbox := operatorInbox{got: make(chan core.Message, 4)}
+	book := newBudget(context.Background(), cfg, inbox, nil)
+	// Run tells first; ended already, it then returns rather than poll.
+	ended, cancel := context.WithCancel(context.Background())
+	cancel()
+	book.Run(ended, time.Hour)
+	require.Len(t, inbox.got, 1)
+	m := <-inbox.got
+	assert.Equal(t, "pao", m.Sender)
+	assert.Contains(t, m.Text, `account "sub" cannot be read (no reader "elsewhere" in this build)`)
+	assert.Contains(t, m.Text, "running work is not stopped")
 }
 
 func TestARateLimitedReadKeepsTheFigureAndTellsNoOne(t *testing.T) {
