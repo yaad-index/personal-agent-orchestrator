@@ -1,6 +1,6 @@
 # ADR 0040: One always-on orchestrator per user, backed by that user's vault
 
-**Status:** Proposed (2026-11-25)
+**Status:** Accepted (2026-11-25)
 
 ## Context
 
