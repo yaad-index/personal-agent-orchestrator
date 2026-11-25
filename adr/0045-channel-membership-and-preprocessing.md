@@ -1,6 +1,6 @@
 # ADR 0045: Channel membership as a reader policy, and per-type inbound preprocessing
 
-**Status:** Proposed (2026-11-25)
+**Status:** Accepted (2026-11-25)
 
 ## Context
 
