@@ -21,13 +21,13 @@ ADR-0041 deferred how a template's access and memory are expressed and bound, an
 
 3. **Tag-as-grant and tag-as-retrieval-key are two roles of the same tag, not a contradiction.** Here a tag grants access to the resources carrying it (ADR-0012 point 3); in ADR-0043 the same tag is the retrieval key within the memory namespaces a reader is already granted. The grant decides what is reachable; the key filters within it. ADR-0043 point 1's "a tag does not reach across a namespace boundary" is about retrieval and holds alongside this grant role.
 
-4. **A tag grants its pieces but bypasses no gate, and defining a tag is itself gated.** Assigning a tag is a grant over ADR-0012 point 2's default-deny, and every piece is still checked at use by the gate (ADR-0004); the tag grants access, it exempts no call. **Tagging or untagging a resource needs a grant and passes the gate** (ADR-0005 point 2, ADR-0004), since that is the act that puts a resource into a tag's reach and a tag is powerful; who holds that grant is left open.
+4. **A tag grants its pieces but bypasses no gate, and tagging a resource is itself gated.** Assigning a tag is a grant over ADR-0012 point 2's default-deny, and every piece is still checked at use by the gate (ADR-0004); the tag grants access, it exempts no call. **Tagging or untagging a resource needs a grant and passes the gate** (ADR-0005 point 2, ADR-0004), since that is the act that puts a resource into a tag's reach and a tag is powerful; who holds that grant is left open.
 
 5. **A tag may be assigned to a human subject (ADR-0012 point 1).** The pieces that are agent-run material, a skill to run or a memory namespace read as an agent, have no meaning for a human and do not apply; a human's tag grants the access pieces it is a subject for, the tools, resources and command grants, as ADR-0012 already grants a human a tagged resource.
 
 6. **This settles where a template's access and memory bind** (ADR-0041, ADR-0043): a template carries tags, and its access and its memory are what those tags carry; an instance inherits its template's tags (ADR-0041 point 3) and so the capability.
 
-The internals left open: who holds the grant to tag or untag a resource, and how a tag's membership is recorded; how tags combine over a profile inheritance chain (ADR-0015 point 2 defers this and warns inheritance changes which subjects reach an agent, now widened to a whole capability); how a per-user namespace named by a tag resolves to the assignee; the tag taxonomy; and the migration of today's scattered per-category and per-cell grants onto tags.
+The internals left open: who holds the grant to tag or untag a resource, and how a tag's membership is recorded; how tags combine over a profile inheritance chain (ADR-0015 point 2 defers this and warns inheritance changes which subjects reach an agent, now widened to a whole capability); how a per-user namespace carrying a tag resolves to the assignee's user; the tag taxonomy; and the migration of today's scattered per-category and per-cell grants onto tags.
 
 ## Consequences
 
