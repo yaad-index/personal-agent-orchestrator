@@ -1,6 +1,6 @@
 # ADR 0042: The data source a task runs on, and its versioned, non-destructive round-trip
 
-**Status:** Proposed (2026-11-25)
+**Status:** Accepted (2026-11-25)
 
 ## Context
 
