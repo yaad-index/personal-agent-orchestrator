@@ -18,11 +18,11 @@ The external capabilities, each its own driver plane, are:
 2. **Memory** — storing and retrieving what an agent or template should remember.
 3. **Connectivity** — the MCP/tool plane pao already proxies (ADR-0024) and the secret/credential plane that fronts an agent's outbound tool calls.
 4. **Data source** — the working material a task runs on (a repository, a folder within one, or an archive), provisioned by the orchestrator.
-5. **Secrets** — resolving a reference to a real credential at run time, so the value never lives in a task file or on a channel (ADR-0036 already requires this).
+5. **Secrets** — resolving a reference to a real credential at run time, so the value never lives in a task file or on a channel (ADR-0037 already requires this).
 
 Each plane follows the same rule, which is the principle behind the whole design: **do not reinvent the wheel; put an interface between pao and the thing.** A plane ships a **simple first implementation** that pao can run with no external dependency, plus a **contract test** that any implementation must pass (as ADR-0011 established for the backend). A mature external system may then replace that first implementation **behind the same interface**, and this ADR names no such system as mandatory; the choice of backend for a plane is configuration, decided in that plane's own ADR, never baked into the core. A driver that cannot meet a guarantee **declares so** rather than failing silently, the same stance ADRs 0025 and 0033 take for a backend that cannot isolate context.
 
-The planes are detailed in the ADRs that follow this one, each routed and accepted before the code it governs: the per-user orchestrator and the ephemeral task-agents, the data-source provisioning and its versioned round-trip, the memory driver, the tag as the capability primitive, the channel and preprocessing model, the UI surface, pao-native budgeting, and the credential-injection connectivity plane.
+The redesign is carried out in the ADRs that follow this one, each routed and accepted before the code it governs, and they fall into two kinds. Some refine the orchestration **core** itself, the part line 13 above names as pao's own: the per-user orchestrator and the ephemeral task-agents, the tag as the capability primitive, the channel and preprocessing model, the UI surface, and pao-native budgeting. The rest draw a **driver plane** named here: the data-source provisioning and its versioned round-trip, the memory driver, and the credential-injection connectivity plane. Of the five planes, two need no new ADR and are cited above: the agent-runtime plane is ADR-0011, generalised by this one, and the Secrets plane is already governed by ADR-0037.
 
 ## Consequences
 
