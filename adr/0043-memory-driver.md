@@ -1,6 +1,6 @@
 # ADR 0043: The memory driver, storing and retrieving what an agent or template remembers
 
-**Status:** Proposed (2026-11-25)
+**Status:** Accepted (2026-11-25)
 
 ## Context
 
