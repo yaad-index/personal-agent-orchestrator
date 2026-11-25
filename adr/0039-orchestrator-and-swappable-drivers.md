@@ -1,6 +1,6 @@
 # ADR 0039: pao is the orchestrator; every external capability is a swappable driver
 
-**Status:** Proposed (2026-11-25)
+**Status:** Accepted (2026-11-25)
 
 ## Context
 
