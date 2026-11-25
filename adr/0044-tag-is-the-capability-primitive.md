@@ -1,6 +1,6 @@
 # ADR 0044: The tag is the single capability primitive
 
-**Status:** Proposed (2026-11-25)
+**Status:** Accepted (2026-11-25)
 
 ## Context
 
