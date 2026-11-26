@@ -1,6 +1,7 @@
 package egress
 
 import (
+	"bytes"
 	"compress/gzip"
 	"crypto/tls"
 	"encoding/base64"
@@ -53,7 +54,11 @@ func (d *Driver) injector(r *run, host string) (http.Handler, *http.Transport) {
 }
 
 // fill replaces the rule's placeholder with its value in every header, and in
-// a Basic authorization's decoded user:password.
+// a Basic authorization's decoded user:password. Only headers are filled: a
+// placeholder in the URL or the body goes out as it is. A copy of the value is
+// made only for a header that carries the placeholder; the filled header is
+// itself a string the runtime cannot clear, so clearing at Close covers the
+// run's own copy, not every request that used it.
 func fill(h http.Header, ru *rule) {
 	ph := ru.placeholder
 	for k, vs := range h {
@@ -64,7 +69,9 @@ func fill(h http.Header, ru *rule) {
 					continue
 				}
 			}
-			vs[i] = strings.ReplaceAll(v, ph, string(ru.value))
+			if strings.Contains(v, ph) {
+				vs[i] = strings.ReplaceAll(v, ph, string(ru.value))
+			}
 		}
 	}
 }
@@ -102,7 +109,10 @@ func scrub(resp *http.Response, pairs []pair) error {
 	for _, vs := range resp.Header {
 		for i, v := range vs {
 			for _, p := range pairs {
-				v = strings.ReplaceAll(v, string(p.value), string(p.placeholder))
+				// Compared as bytes, so checking a header makes no copy of the value.
+				if b := []byte(v); bytes.Contains(b, p.value) {
+					v = string(bytes.ReplaceAll(b, p.value, p.placeholder))
+				}
 			}
 			vs[i] = v
 		}
