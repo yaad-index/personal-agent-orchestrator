@@ -30,10 +30,13 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"sync"
 	"syscall"
 	"unsafe"
+
+	"golang.org/x/sys/unix"
 )
 
 // BridgeAddr is where, inside, the command reaches the proxy.
@@ -48,7 +51,8 @@ type Spec struct {
 	// Socket is the proxy's socket on the host; the bridge connects to it.
 	Socket string `json:"socket"`
 	// Mask lists host paths the command does not see: a directory shows
-	// empty, a file shows as empty, a missing path is left alone.
+	// empty, a file shows as empty, and a path that does not exist stays
+	// unseen even if the host makes it while the command runs.
 	Mask []string `json:"mask"`
 	// Command is the program and its arguments.
 	Command []string `json:"command"`
@@ -195,6 +199,12 @@ func setup(s Spec) error {
 	if err := syscall.Mount("proc", "/proc", "proc", syscall.MS_NOSUID|syscall.MS_NODEV|syscall.MS_NOEXEC, ""); err != nil {
 		return fmt.Errorf("mount /proc: %w", err)
 	}
+	// A masked path that does not exist yet must not show if it is made
+	// while the command runs, so its directory is shadowed first; the masks
+	// of paths that exist go on top.
+	if err := shadowMissing(s.Mask); err != nil {
+		return err
+	}
 	for _, p := range s.Mask {
 		if err := mask(p); err != nil {
 			return fmt.Errorf("mask %s: %w", p, err)
@@ -203,9 +213,142 @@ func setup(s Spec) error {
 	return loopbackUp()
 }
 
+// shadowMissing covers, for every masked path that does not exist, the
+// nearest directory above it that does: an empty tmpfs goes over that
+// directory, and everything already in it is put back except the missing
+// name. Whatever the host makes there later, the socket a service starts
+// once the command is running among it, stays out of sight.
+func shadowMissing(paths []string) error {
+	hide := map[string]map[string]bool{}
+	var order []string
+	for _, p := range paths {
+		if _, err := os.Stat(p); !errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		dir, name := filepath.Dir(p), filepath.Base(p)
+		for {
+			if _, err := os.Stat(dir); err == nil {
+				break
+			} else if !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("mask %s: %w", p, err)
+			}
+			dir, name = filepath.Dir(dir), filepath.Base(dir)
+		}
+		real, err := filepath.EvalSymlinks(dir)
+		if err != nil {
+			return fmt.Errorf("mask %s: %w", p, err)
+		}
+		if real == "/" {
+			return fmt.Errorf("mask %s: it would shadow the root", p)
+		}
+		if hide[real] == nil {
+			hide[real] = map[string]bool{}
+			order = append(order, real)
+		}
+		hide[real][name] = true
+	}
+	for _, dir := range order {
+		if err := shadow(dir, hide[dir]); err != nil {
+			return fmt.Errorf("shadow %s: %w", dir, err)
+		}
+	}
+	return nil
+}
+
+// shadow puts an empty tmpfs over dir and its entries back on it, all but the
+// hidden names: a directory, file or socket is mounted back from a handle held
+// across the tmpfs, and a symbolic link is made again.
+func shadow(dir string, hide map[string]bool) error {
+	fi, err := os.Stat(dir)
+	if err != nil {
+		return err
+	}
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	type held struct {
+		path, link string
+		fd         int
+		dir        bool
+	}
+	var back []held
+	defer func() {
+		for _, h := range back {
+			if h.fd >= 0 {
+				_ = unix.Close(h.fd)
+			}
+		}
+	}()
+	for _, e := range ents {
+		path := filepath.Join(dir, e.Name())
+		if hide[e.Name()] {
+			continue
+		}
+		if e.Type()&os.ModeSymlink != 0 {
+			link, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			back = append(back, held{path: path, link: link, fd: -1})
+			continue
+		}
+		fd, err := unix.Open(path, unix.O_PATH|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+		if errors.Is(err, unix.ENOENT) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		back = append(back, held{path: path, fd: fd, dir: e.IsDir()})
+	}
+	mode := fi.Mode().Perm()
+	if fi.Mode()&os.ModeSticky != 0 {
+		mode |= 0o1000
+	}
+	if err := unix.Mount("tmpfs", dir, "tmpfs", unix.MS_NOSUID, fmt.Sprintf("mode=%o", mode)); err != nil {
+		return err
+	}
+	for _, h := range back {
+		if h.fd < 0 {
+			if err := os.Symlink(h.link, h.path); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := keepAt(h.path, h.fd, h.dir); err != nil {
+			return fmt.Errorf("put back %s: %w", h.path, err)
+		}
+	}
+	return nil
+}
+
+// keepAt mounts the open path fd back at path, making a place for it first
+// where a mask left none.
+func keepAt(path string, fd int, dir bool) error {
+	if dir {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			return err
+		}
+	} else {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return err
+		}
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_RDONLY, 0o600)
+		if err != nil && !errors.Is(err, unix.ENXIO) {
+			return err
+		}
+		if f != nil {
+			_ = f.Close()
+		}
+	}
+	return unix.Mount(fmt.Sprintf("/proc/self/fd/%d", fd), path, "", unix.MS_BIND, "")
+}
+
 func mask(p string) error {
 	fi, err := os.Stat(p)
 	if errors.Is(err, os.ErrNotExist) {
+		// Shadowed already: see shadowMissing.
 		return nil
 	}
 	if err != nil {
