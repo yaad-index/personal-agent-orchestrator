@@ -1,3 +1,5 @@
+//go:build linux
+
 package confine
 
 import (
@@ -57,6 +59,24 @@ func inside(act string) int {
 		_, _ = fmt.Fprintln(c, "ping")
 		line, err := bufio.NewReader(c).ReadString('\n')
 		return check(err == nil && line == "pong\n", "bridge answered %q, %v", line, err)
+	case "forward":
+		c, err := net.DialTimeout("tcp", os.Getenv("FORWARD_ADDR"), 2*time.Second)
+		if err != nil {
+			return check(false, "dial forward: %v", err)
+		}
+		defer func() { _ = c.Close() }()
+		_, _ = fmt.Fprintln(c, "ping")
+		line, err := bufio.NewReader(c).ReadString('\n')
+		return check(err == nil && line == "pong\n", "forward answered %q, %v", line, err)
+	case "kept":
+		if _, err := os.Stat(os.Getenv("HIDDEN_FILE")); err == nil {
+			return check(false, "a file in the masked dir that is not kept is visible")
+		}
+		b, err := os.ReadFile(os.Getenv("KEPT_FILE"))
+		if err != nil || string(b) != "mine" {
+			return check(false, "a kept dir's file reads %q, %v", b, err)
+		}
+		return inside("forward")
 	case "late":
 		// Ready, then wait for the host to make the masked paths.
 		marks := os.Getenv("MARK_DIR")
@@ -219,6 +239,40 @@ func TestConfined(t *testing.T) {
 	t.Run("the bridge reaches the proxy", func(t *testing.T) {
 		assert.Equal(t, 0, run(t, self, spec, "bridge"))
 	})
+	t.Run("a forward reaches its socket", func(t *testing.T) {
+		fwd := spec
+		fwd.Forwards = []Forward{{Addr: "127.0.0.1:7777", Socket: proxy(t)}}
+		assert.Equal(t, 0, run(t, self, fwd, "forward", "FORWARD_ADDR=127.0.0.1:7777"))
+	})
+	t.Run("a kept path stays visible inside a masked dir", func(t *testing.T) {
+		state := t.TempDir()
+		sock := filepath.Join(state, "gate.sock")
+		ln, err := net.Listen("unix", sock)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = ln.Close() })
+		go func() {
+			for {
+				c, err := ln.Accept()
+				if err != nil {
+					return
+				}
+				go func() {
+					defer func() { _ = c.Close() }()
+					if _, err := bufio.NewReader(c).ReadString('\n'); err == nil {
+						_, _ = fmt.Fprintln(c, "pong")
+					}
+				}()
+			}
+		}()
+		own := filepath.Join(state, "temp", "agent-1")
+		require.NoError(t, os.MkdirAll(own, 0o700))
+		require.NoError(t, os.WriteFile(filepath.Join(own, "f"), []byte("mine"), 0o600))
+		other := filepath.Join(state, "mesh.key")
+		require.NoError(t, os.WriteFile(other, []byte("node key"), 0o600))
+		kept := Spec{Socket: sock, Mask: []string{state}, Keep: []string{sock, own, filepath.Join(state, "absent")},
+			Forwards: []Forward{{Addr: "127.0.0.1:7778", Socket: sock}}}
+		assert.Equal(t, 0, run(t, self, kept, "kept", "HIDDEN_FILE="+other, "KEPT_FILE="+filepath.Join(own, "f"), "FORWARD_ADDR=127.0.0.1:7778"))
+	})
 	t.Run("masked paths are hidden and the rest is not", func(t *testing.T) {
 		assert.Equal(t, 0, run(t, self, spec, "masked", "MASKED_DIR="+maskedDir, "MASKED_FILE="+maskedFile, "OPEN_FILE="+openFile))
 		b, err := os.ReadFile(filepath.Join(maskedDir, "token"))
@@ -288,4 +342,8 @@ func TestRunNeedsACommandAndASocket(t *testing.T) {
 	assert.Error(t, err)
 	_, err = Run("/bin/true", Spec{Command: []string{"true"}})
 	assert.Error(t, err)
+	for _, f := range []Forward{{Addr: "10.0.0.1:80", Socket: "/x"}, {Addr: BridgeAddr, Socket: "/x"}, {Addr: "127.0.0.1:80"}, {Addr: "nope", Socket: "/x"}} {
+		_, err = Run("/bin/true", Spec{Socket: "/x", Command: []string{"true"}, Forwards: []Forward{f}})
+		assert.Error(t, err, "%+v", f)
+	}
 }

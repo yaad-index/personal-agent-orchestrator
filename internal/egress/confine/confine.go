@@ -1,3 +1,5 @@
+//go:build linux
+
 // Package confine runs a command where its only way out is the egress proxy
 // (ADR-0049): its own network, holding only loopback and a bridge to the
 // proxy's socket, its own process table, and its own view of the filesystem
@@ -39,24 +41,9 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// BridgeAddr is where, inside, the command reaches the proxy.
-const BridgeAddr = "127.0.0.1:3128"
-
 // stageEnv carries the spec to the second step; it is removed before the
 // command starts.
 const stageEnv = "PAO_CONFINE_STAGE"
-
-// Spec is what a confined command runs under.
-type Spec struct {
-	// Socket is the proxy's socket on the host; the bridge connects to it.
-	Socket string `json:"socket"`
-	// Mask lists host paths the command does not see: a directory shows
-	// empty, a file shows as empty, and a path that does not exist stays
-	// unseen even if the host makes it while the command runs.
-	Mask []string `json:"mask"`
-	// Command is the program and its arguments.
-	Command []string `json:"command"`
-}
 
 type stage struct {
 	Spec
@@ -77,6 +64,15 @@ func Run(self string, s Spec) (int, error) {
 	}
 	if s.Socket == "" {
 		return 0, errors.New("confine: no proxy socket")
+	}
+	for _, f := range s.Forwards {
+		host, _, err := net.SplitHostPort(f.Addr)
+		if err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() {
+			return 0, fmt.Errorf("confine: forward %q is not a loopback address", f.Addr)
+		}
+		if f.Addr == BridgeAddr || f.Socket == "" {
+			return 0, fmt.Errorf("confine: forward %q", f.Addr)
+		}
 	}
 	return start(self, stage{Spec: s, UID: os.Getuid(), GID: os.Getgid()})
 }
@@ -171,11 +167,13 @@ func Inner() int {
 	if err := setup(st.Spec); err != nil {
 		return fail("setup", err)
 	}
-	ln, err := net.Listen("tcp", BridgeAddr)
-	if err != nil {
-		return fail("bridge", err)
+	for _, f := range append([]Forward{{Addr: BridgeAddr, Socket: st.Socket}}, st.Forwards...) {
+		ln, err := net.Listen("tcp", f.Addr)
+		if err != nil {
+			return fail("bridge", err)
+		}
+		go bridge(ln, f.Socket)
 	}
-	go bridge(ln, st.Socket)
 	env := os.Environ()
 	if st.Leaf {
 		// The probe's command must not start a probe of its own.
@@ -199,6 +197,34 @@ func setup(s Spec) error {
 	if err := syscall.Mount("proc", "/proc", "proc", syscall.MS_NOSUID|syscall.MS_NODEV|syscall.MS_NOEXEC, ""); err != nil {
 		return fmt.Errorf("mount /proc: %w", err)
 	}
+	// A kept path is held open before the masks hide it, and mounted back
+	// over its own place afterwards.
+	type held struct {
+		path string
+		fd   int
+		dir  bool
+	}
+	var keeps []held
+	defer func() {
+		for _, k := range keeps {
+			_ = unix.Close(k.fd)
+		}
+	}()
+	for _, p := range s.Keep {
+		fd, err := unix.Open(p, unix.O_PATH|unix.O_CLOEXEC, 0)
+		if errors.Is(err, unix.ENOENT) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("keep %s: %w", p, err)
+		}
+		var st unix.Stat_t
+		if err := unix.Fstat(fd, &st); err != nil {
+			_ = unix.Close(fd)
+			return fmt.Errorf("keep %s: %w", p, err)
+		}
+		keeps = append(keeps, held{path: p, fd: fd, dir: st.Mode&unix.S_IFMT == unix.S_IFDIR})
+	}
 	// A masked path that does not exist yet must not show if it is made
 	// while the command runs, so its directory is shadowed first; the masks
 	// of paths that exist go on top.
@@ -208,6 +234,11 @@ func setup(s Spec) error {
 	for _, p := range s.Mask {
 		if err := mask(p); err != nil {
 			return fmt.Errorf("mask %s: %w", p, err)
+		}
+	}
+	for _, k := range keeps {
+		if err := keepAt(k.path, k.fd, k.dir); err != nil {
+			return fmt.Errorf("keep %s: %w", k.path, err)
 		}
 	}
 	return loopbackUp()

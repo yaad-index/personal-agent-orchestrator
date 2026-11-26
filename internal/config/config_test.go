@@ -225,6 +225,19 @@ func TestValidateProfileAndDecodeFileAreTheSameRulesAsLoad(t *testing.T) {
 	assert.Error(t, DecodeFile(path, &p), "unknown keys are an error")
 }
 
+func TestAProfileNamesItsPassHosts(t *testing.T) {
+	var p core.Profile
+	path := filepath.Join(t.TempDir(), "p.yaml")
+	write(t, path, "name: a\nbackend: claude-code\negress:\n  pass: [api.model.example]\n"+startup)
+	require.NoError(t, DecodeFile(path, &p))
+	assert.Equal(t, []string{"api.model.example"}, p.Egress.Pass)
+	require.NoError(t, ValidateProfile(p))
+	for _, bad := range []string{"*.model.example", "api.model.example:443", "API.model.example", "localhost"} {
+		p.Egress.Pass = []string{bad}
+		assert.Error(t, ValidateProfile(p), bad)
+	}
+}
+
 func TestTempThresholdsDefaultAndValidate(t *testing.T) {
 	path := setup(t, map[string]string{"a.yaml": "name: a\nbackend: claude-code\n" + startup})
 	cfg, err := Load(path)
@@ -681,6 +694,34 @@ func TestSecretsRejects(t *testing.T) {
 		"value in place": {"secrets:\n  - name: a\n    value: hunter2\n", "value"},
 	} {
 		_, err := accountsConfig(t, c.body, "")
+		require.Error(t, err, name)
+		assert.Contains(t, err.Error(), c.want, name)
+	}
+}
+
+func TestASecretCarriesTheHostsItMayBeInjectedFor(t *testing.T) {
+	cfg, err := accountsConfig(t, "secrets:\n  - name: forge-token\n    env: PAO_ACME\n    inject:\n      hosts: [api.acme.example, acme.example]\n      env: ACME_TOKEN\n", "")
+	require.NoError(t, err)
+	s, ok := cfg.Orchestrator.Secret("forge-token")
+	require.True(t, ok)
+	require.NotNil(t, s.Inject)
+	assert.Equal(t, []string{"api.acme.example", "acme.example"}, s.Inject.Hosts)
+	assert.Equal(t, "ACME_TOKEN", s.Inject.Env)
+}
+
+func TestASecretsInjectRejects(t *testing.T) {
+	head := "secrets:\n  - name: forge-token\n    env: PAO_ACME\n    inject:\n"
+	for name, c := range map[string]struct{ body, want string }{
+		"no host":          {"      env: ACME_TOKEN\n", "inject.hosts names no host"},
+		"wildcard host":    {"      hosts: [\"*.acme.example\"]\n      env: ACME_TOKEN\n", "inject.hosts"},
+		"host with port":   {"      hosts: [\"acme.example:443\"]\n      env: ACME_TOKEN\n", "inject.hosts"},
+		"upper-case host":  {"      hosts: [Acme.example]\n      env: ACME_TOKEN\n", "inject.hosts"},
+		"no variable":      {"      hosts: [acme.example]\n", "inject.env"},
+		"a proxy variable": {"      hosts: [acme.example]\n      env: HTTPS_PROXY\n", "inject.env"},
+		"a trust variable": {"      hosts: [acme.example]\n      env: SSL_CERT_FILE\n", "inject.env"},
+		"an unknown field": {"      hosts: [acme.example]\n      env: ACME_TOKEN\n      value: x\n", "value"},
+	} {
+		_, err := accountsConfig(t, head+c.body, "")
 		require.Error(t, err, name)
 		assert.Contains(t, err.Error(), c.want, name)
 	}
