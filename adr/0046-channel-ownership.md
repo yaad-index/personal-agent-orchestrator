@@ -1,6 +1,6 @@
 # ADR 0046: Channel ownership, who may command a channel
 
-**Status:** Proposed (2026-11-26)
+**Status:** Accepted (2026-11-26)
 
 Supersedes ADR-0026 (operator commands from chat): keeps every one of its decisions and changes one, who may issue a channel's steering commands. They are no longer the operator's alone; **channel ownership**, a per-channel grant on the access matrix, lets a non-operator steer a channel beside the operator, while agent lifecycle and the gate's approval answer stay the operator's. Extends ADR-0004 (the gate), ADR-0005 (access and management surface), ADR-0009 (channels), ADR-0010 (message model), ADR-0012 (the access matrix), ADR-0019 (sender attribution), ADR-0022 (operator subjects) and ADR-0038 (a group's topics are conversations of that group, which superseded ADR-0023's agent I/O and channel bindings), and builds on ADR-0045 (channel membership), whose deferred ownership half this ADR draws.
 

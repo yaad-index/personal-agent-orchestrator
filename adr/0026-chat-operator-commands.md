@@ -2,6 +2,8 @@
 
 **Status:** Accepted (2026-11-18)
 
+**Superseded-by:** ADR-0046 (channel ownership, who may command a channel)
+
 Extends ADR-0005 (access and management surface), ADR-0009 (channels), ADR-0010 (message model), ADR-0022 (operator subjects), ADR-0023 (agent I/O and channel bindings).
 
 ## Context
