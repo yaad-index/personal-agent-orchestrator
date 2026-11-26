@@ -2,6 +2,8 @@
 
 **Status:** Accepted (2026-11-21)
 
+**Superseded-by:** ADR-0048 (budgeting is pao-native, and the governor is removed)
+
 Supersedes ADR-0032 (the governor's questions and notices go to its requester). Keeps its points 1 to 3 and 5 to 8, which ADR-0032 carried over from ADR-0031. Keeps point 4's rule for the governor's stderr, its deferred list, and its consequences except where noted below. Changes point 4's rule for the governor's output. This is the second change to point 4. The chain is ADR-0030, then 0031, then 0032, then this, each superseding the one before in full. Extends ADR-0029 (output routing).
 
 ## Context
