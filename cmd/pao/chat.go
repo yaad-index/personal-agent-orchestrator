@@ -34,7 +34,12 @@ func (c RunCmd) Run() error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	return daemon.Run(ctx, cfg, token, daemon.Options{})
+	// A task-agent's pane runs this same binary to confine itself (ADR-0049).
+	self, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	return daemon.Run(ctx, cfg, token, daemon.Options{Self: self})
 }
 
 // ChatCmd is a minimal client for the local channel: each line typed is sent

@@ -61,6 +61,10 @@ type Dispatcher struct {
 	OneOffs OneOffs
 	// Liveness, when set, says whether an assignee has gone quiet.
 	Liveness Liveness
+	// Injected, when set, says whether a secret is put into a one-off's calls
+	// by the egress proxy, with the variable holding its placeholder and the
+	// hosts it is filled in for, so the brief says so instead of a file.
+	Injected func(secret string) (env string, hosts []string, ok bool)
 	// SecretPath, when set, says where a one-off's secret is put, so its brief
 	// can name the file as well as the variable: an agent with no shell cannot
 	// read a variable. The path is not the secret (ADR-0036 point 3).
@@ -345,6 +349,27 @@ func Brief(t Task) string { return BriefWith(t, "") }
 // BriefWith is Brief naming secretPath, the file the task's secret is in for
 // this run, beside the variable that holds it.
 func BriefWith(t Task, secretPath string) string {
+	return brief(t, func(sec string) string {
+		// The name and where to find it: a secret's value never crosses a
+		// channel (ADR-0036 point 3).
+		where := fmt.Sprintf("the file whose path is in $%s", runsecret.EnvName(sec))
+		if secretPath != "" {
+			where = fmt.Sprintf("the file %s (its path is also in $%s)", secretPath, runsecret.EnvName(sec))
+		}
+		return fmt.Sprintf("Secret: %s. Its value is in %s, for this run only. Read it with a file-reading tool. Never print, log, commit or copy the value anywhere.\n", sec, where)
+	})
+}
+
+// BriefInjected is Brief for a task whose secret is put into the agent's calls
+// by the egress proxy (ADR-0049): the agent is told the variable holding the
+// placeholder and the hosts it is filled in for, and never sees the value.
+func BriefInjected(t Task, env string, hosts []string) string {
+	return brief(t, func(sec string) string {
+		return fmt.Sprintf("Secret: %s. Use $%s as the credential in your requests to %s: it holds a placeholder that pao replaces with the real value on the way out, and only for those hosts. You never see the value, and the placeholder works nowhere else.\n", sec, env, strings.Join(hosts, ", "))
+	})
+}
+
+func brief(t Task, secretLine func(sec string) string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "You are assigned task %s: %s\n\n%s\n\nDone when: %s\n", t.ID, t.Title, t.Description, t.Done)
 	if t.How != "" {
@@ -357,13 +382,7 @@ func BriefWith(t Task, secretPath string) string {
 		fmt.Fprintf(&b, "Scripts: %s\n", strings.Join(t.Attachments.Scripts, ", "))
 	}
 	if sec := t.Attachments.Secret; sec != "" {
-		// The name and where to find it: a secret's value never crosses a
-		// channel (ADR-0036 point 3).
-		where := fmt.Sprintf("the file whose path is in $%s", runsecret.EnvName(sec))
-		if secretPath != "" {
-			where = fmt.Sprintf("the file %s (its path is also in $%s)", secretPath, runsecret.EnvName(sec))
-		}
-		fmt.Fprintf(&b, "Secret: %s. Its value is in %s, for this run only. Read it with a file-reading tool. Never print, log, commit or copy the value anywhere.\n", sec, where)
+		b.WriteString(secretLine(sec))
 	}
 	if t.Parent != "" {
 		fmt.Fprintf(&b, "Created from task: %s\n", t.Parent)

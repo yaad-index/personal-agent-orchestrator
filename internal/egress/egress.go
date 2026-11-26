@@ -37,19 +37,24 @@ import (
 	"time"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/egress/confine"
 )
 
 // BridgeAddr is where, inside the agent's own network, the agent reaches the
-// proxy. The network holds nothing else, so the address is fixed.
-const BridgeAddr = "127.0.0.1:3128"
+// proxy: the confining wrapper's bridge. The network holds nothing else, so
+// the address is fixed.
+const BridgeAddr = confine.BridgeAddr
 
 // The names the trust files and the proxy address are given in. Each runtime
 // reads its own, so all are set.
 var (
-	proxyVars  = []string{"HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"}
-	bundleVars = []string{"SSL_CERT_FILE", "CURL_CA_BUNDLE", "REQUESTS_CA_BUNDLE", "GIT_SSL_CAINFO"}
-	extraVars  = []string{"NODE_EXTRA_CA_CERTS"}
+	proxyVars   = []string{"HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"}
+	bundleVars  = []string{"SSL_CERT_FILE", "CURL_CA_BUNDLE", "REQUESTS_CA_BUNDLE", "GIT_SSL_CAINFO"}
+	extraVars   = []string{"NODE_EXTRA_CA_CERTS"}
+	noProxyVars = []string{"NO_PROXY", "no_proxy"}
 )
+
+const noProxy = "localhost,127.0.0.1,::1"
 
 // systemBundles are where a Linux system keeps its trusted roots, in the order
 // Go's own crypto/x509 looks.
@@ -186,6 +191,11 @@ func (d *Driver) open(agent string, p core.EgressPolicy) (r *run, env []string, 
 	}
 	for _, v := range proxyVars {
 		env = append(env, v+"=http://"+BridgeAddr)
+	}
+	// Loopback inside the agent's network holds only pao's own forwards, which
+	// are reached directly, never through the proxy.
+	for _, v := range noProxyVars {
+		env = append(env, v+"="+noProxy)
 	}
 	if len(injectHosts) > 0 {
 		if r.ca, err = newAuthority(agent, injectHosts); err != nil {
@@ -401,11 +411,34 @@ func newPlaceholder() (string, error) {
 	return "pao-placeholder-" + hex.EncodeToString(b), nil
 }
 
+// CheckHost reports whether h can be named in a policy: an exact, lower-case
+// DNS name, with no port and no wildcard.
+func CheckHost(h string) error {
+	if !hostPattern.MatchString(h) {
+		return fmt.Errorf("host %q is not a lower-case DNS name", h)
+	}
+	return nil
+}
+
+// CheckEnv reports whether name can carry a placeholder: a variable name that
+// is not one this package sets itself.
+func CheckEnv(name string) error {
+	if !envPattern.MatchString(name) {
+		return fmt.Errorf("%q is not a variable name", name)
+	}
+	for _, v := range append(append(append(append([]string{}, proxyVars...), bundleVars...), extraVars...), noProxyVars...) {
+		if v == name {
+			return fmt.Errorf("%q is a variable the egress proxy sets", name)
+		}
+	}
+	return nil
+}
+
 func validate(p core.EgressPolicy) error {
 	seen := map[string]string{}
 	host := func(h, as string) error {
-		if !hostPattern.MatchString(h) {
-			return fmt.Errorf("host %q is not a lower-case DNS name", h)
+		if err := CheckHost(h); err != nil {
+			return err
 		}
 		if prev, ok := seen[h]; ok {
 			return fmt.Errorf("host %q is both %s and %s", h, prev, as)
@@ -418,16 +451,12 @@ func validate(p core.EgressPolicy) error {
 			return err
 		}
 	}
-	reserved := map[string]bool{}
-	for _, v := range append(append(append([]string{}, proxyVars...), bundleVars...), extraVars...) {
-		reserved[v] = true
-	}
 	envs := map[string]bool{}
 	for _, ir := range p.Inject {
 		if !namePattern.MatchString(ir.Secret) {
 			return fmt.Errorf("secret name %q", ir.Secret)
 		}
-		if !envPattern.MatchString(ir.Env) || reserved[ir.Env] || envs[ir.Env] {
+		if err := CheckEnv(ir.Env); err != nil || envs[ir.Env] {
 			return fmt.Errorf("variable %q for secret %q is not a free variable name", ir.Env, ir.Secret)
 		}
 		envs[ir.Env] = true

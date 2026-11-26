@@ -188,6 +188,12 @@ func Run(t *testing.T, newDriver func(t *testing.T, f Fixture) core.Connectivity
 		assert.Empty(t, env2["NODE_EXTRA_CA_CERTS"])
 		assert.NotEmpty(t, env2["HTTPS_PROXY"])
 	})
+	t.Run("loopback is reached directly, not through the proxy", func(t *testing.T) {
+		for _, v := range []string{"NO_PROXY", "no_proxy"} {
+			assert.Contains(t, strings.Split(env[v], ","), "127.0.0.1", v)
+			assert.Contains(t, strings.Split(env[v], ","), "localhost", v)
+		}
+	})
 	t.Run("a policy that does not hold together is refused", func(t *testing.T) {
 		for name, p := range map[string]core.EgressPolicy{
 			"a host on both lists":   {Pass: []string{"a.test"}, Inject: []core.InjectRule{{Secret: "a", Hosts: []string{"a.test"}, Env: "T"}}},

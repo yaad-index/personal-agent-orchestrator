@@ -23,6 +23,7 @@ import (
 	"github.com/yaad-index/personal-agent-orchestrator/internal/backend/builtin"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/command"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/egress"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/gate"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/mesh"
 )
@@ -105,6 +106,19 @@ type Secret struct {
 	// File is the path of a file that holds it. A relative path is resolved
 	// against the config file's directory.
 	File string `yaml:"file"`
+	// Inject, when set, puts the secret into an agent's calls through the
+	// egress proxy instead of giving the agent its value (ADR-0049). The hosts
+	// it may go to are set here, by the operator, never by the task that names
+	// the secret: a task can be written by an agent.
+	Inject *SecretInject `yaml:"inject"`
+}
+
+// SecretInject is where an injected secret may go and how the agent names it.
+type SecretInject struct {
+	// Hosts are the exact hosts the value is filled in for.
+	Hosts []string `yaml:"hosts"`
+	// Env is the variable the agent is given the placeholder in.
+	Env string `yaml:"env"`
 }
 
 // Secret returns the secret named name.
@@ -572,6 +586,19 @@ func checkSecrets(path string, ss []Secret) error {
 		case s.Env != "" && !envNamePattern.MatchString(s.Env):
 			return fmt.Errorf("%s: env must name an environment variable", at)
 		}
+		if in := s.Inject; in != nil {
+			if len(in.Hosts) == 0 {
+				return fmt.Errorf("%s: inject.hosts names no host", at)
+			}
+			for _, h := range in.Hosts {
+				if err := egress.CheckHost(h); err != nil {
+					return fmt.Errorf("%s: inject.hosts: %w", at, err)
+				}
+			}
+			if err := egress.CheckEnv(in.Env); err != nil {
+				return fmt.Errorf("%s: inject.env: %w", at, err)
+			}
+		}
 	}
 	return nil
 }
@@ -979,6 +1006,11 @@ func validate(p core.Profile) error {
 	}
 	if err := p.Budget.Validate(); err != nil {
 		return fmt.Errorf("budget: %w", err)
+	}
+	for _, h := range p.Egress.Pass {
+		if err := egress.CheckHost(h); err != nil {
+			return fmt.Errorf("egress.pass: %w", err)
+		}
 	}
 	return builtin.Table().Check(p)
 }

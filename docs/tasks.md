@@ -38,3 +38,27 @@ secrets:
 - **Wiped.** The file is removed when the agent's session ends, and any left over is removed when the node starts.
 - **The recipe must grant a file-reading tool.** The agent reads the value from the file, so the one-off's recipe has to let it use one: the harness's Read tool, or a shell. A recipe that denies them all leaves the agent unable to use its secret, and it will report the task blocked.
 - **No proxied tool alongside.** A task with a secret can't also attach one of pao's proxied tools, because a new agent reaches none of them. Such a task is refused when it's created.
+
+### An injected secret
+
+A secret can instead be put into the agent's calls, so the agent never holds its value (ADR-0049). The operator names the hosts it may go to and the variable the agent gets a placeholder in:
+
+```yaml
+secrets:
+  - name: acme-token
+    env: PAO_SECRET_ACME
+    inject:
+      hosts: [api.acme.example, acme.example]
+      env: ACME_TOKEN
+```
+
+- **A placeholder, not the value.** The agent's `ACME_TOKEN` holds a placeholder. pao's proxy replaces it with the real value in a request header on its way to one of the listed hosts, and puts it back if a response echoes it. The placeholder works nowhere else. The brief names the variable and the hosts, never a file.
+- **The hosts are the operator's.** A task names only the secret. Where the value may go is set here, because a task can be written by another agent.
+- **Only where the node can confine.** Every one-off runs behind the egress plane when the node allows unprivileged user namespaces: its only way out is its own proxy, and pao's state is hidden from it. Where the node cannot confine, a task with an injected secret is refused, and any other one-off runs unconfined, and the operators are told so.
+- **What a one-off may reach.** Behind the plane a one-off reaches HTTPS on port 443, and only to its backend's own API, the hosts its recipe's profile names, and its secret's hosts. Anything else is refused, including git over ssh. Add a host the recipe's tasks need, a package registry say, under the profile:
+
+```yaml
+profile:
+  egress:
+    pass: [registry.acme.example]
+```

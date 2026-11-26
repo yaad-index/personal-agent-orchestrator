@@ -15,6 +15,13 @@ type SecretResolverFunc func(name string) ([]byte, error)
 // Resolve calls f.
 func (f SecretResolverFunc) Resolve(name string) ([]byte, error) { return f(name) }
 
+// EgressProfile is a profile's part of an egress policy (ADR-0049 point 4).
+type EgressProfile struct {
+	// Pass lists the hosts the agent reaches untouched, such as its backend's
+	// own API.
+	Pass []string `yaml:"pass"`
+}
+
 // EgressPolicy is everything an agent's outbound traffic may reach. A host on
 // neither list is refused.
 type EgressPolicy struct {
