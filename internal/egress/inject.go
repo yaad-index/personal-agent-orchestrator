@@ -106,18 +106,9 @@ func basic(v string) (string, bool) {
 // scrub puts every secret value echoed in a response back to its placeholder,
 // in the headers and in the body as it streams.
 func scrub(resp *http.Response, pairs []pair) error {
-	for _, vs := range resp.Header {
-		for i, v := range vs {
-			for _, p := range pairs {
-				// Compared as bytes, so checking a header makes no copy of the value.
-				if b := []byte(v); bytes.Contains(b, p.value) {
-					v = string(bytes.ReplaceAll(b, p.value, p.placeholder))
-				}
-			}
-			vs[i] = v
-		}
-	}
+	scrubHeader(resp.Header, pairs)
 	if resp.Body == nil || resp.Body == http.NoBody {
+		scrubHeader(resp.Trailer, pairs)
 		return nil
 	}
 	switch enc := strings.ToLower(strings.TrimSpace(resp.Header.Get("Content-Encoding"))); enc {
@@ -133,10 +124,29 @@ func scrub(resp *http.Response, pairs []pair) error {
 		// Fail closed: an echo in a body that cannot be read cannot be scrubbed.
 		return fmt.Errorf("a %q response cannot be checked for an echoed secret", enc)
 	}
-	resp.Body = newScrubber(resp.Body, pairs)
+	sc := newScrubber(resp.Body, pairs)
+	// Trailers arrive after the body and are passed on after it is read, so
+	// they are scrubbed at its end.
+	sc.atEOF = func() { scrubHeader(resp.Trailer, pairs) }
+	resp.Body = sc
 	resp.ContentLength = -1
 	resp.Header.Del("Content-Length")
 	return nil
+}
+
+// scrubHeader puts every value in h back to its placeholder. Compared as
+// bytes, so checking a header makes no copy of the value.
+func scrubHeader(h http.Header, pairs []pair) {
+	for _, vs := range h {
+		for i, v := range vs {
+			for _, p := range pairs {
+				if b := []byte(v); bytes.Contains(b, p.value) {
+					v = string(bytes.ReplaceAll(b, p.value, p.placeholder))
+				}
+			}
+			vs[i] = v
+		}
+	}
 }
 
 type gzipBody struct {

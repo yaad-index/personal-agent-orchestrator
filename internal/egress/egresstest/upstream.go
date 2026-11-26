@@ -35,11 +35,12 @@ type upstream struct {
 }
 
 type result struct {
-	status int
-	seen   string
-	body   string
-	header string
-	tls    *tls.ConnectionState
+	status  int
+	seen    string
+	body    string
+	header  string
+	trailer string
+	tls     *tls.ConnectionState
 }
 
 func startUpstream(t *testing.T) *upstream {
@@ -111,6 +112,10 @@ func (u *upstream) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		time.Sleep(50 * time.Millisecond)
 		_, _ = io.WriteString(w, cred[half:]+"\n")
+	case "/trailer":
+		w.Header().Set("Trailer", "X-Echo-Trailer")
+		_, _ = io.WriteString(w, "body\n")
+		w.Header().Set("X-Echo-Trailer", cred)
 	case "/brotli":
 		w.Header().Set("Content-Encoding", "br")
 		_, _ = io.WriteString(w, "unreadable-body "+cred)
@@ -136,5 +141,5 @@ func (u *upstream) get(t *testing.T, c *http.Client, url, header, value string) 
 	require.NoError(t, err)
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	return result{status: resp.StatusCode, seen: u.seen, body: string(body), header: resp.Header.Get("X-Echo"), tls: resp.TLS}
+	return result{status: resp.StatusCode, seen: u.seen, body: string(body), header: resp.Header.Get("X-Echo"), trailer: resp.Trailer.Get("X-Echo-Trailer"), tls: resp.TLS}
 }

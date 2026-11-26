@@ -131,6 +131,11 @@ func Run(t *testing.T, newDriver func(t *testing.T, f Fixture) core.Connectivity
 		assert.NotContains(t, got.body, ValueA)
 		assert.Contains(t, got.body, phA)
 	})
+	t.Run("an echo in a trailer is scrubbed", func(t *testing.T) {
+		got := up.get(t, client, "https://a.test/trailer", "Authorization", "Bearer "+phA)
+		assert.Equal(t, "Bearer "+ValueA, got.seen)
+		assert.Equal(t, "Bearer "+phA, got.trailer, "the trailer reaches the agent, scrubbed")
+	})
 	t.Run("a body that cannot be read for an echo is not passed on", func(t *testing.T) {
 		got := up.get(t, client, "https://a.test/brotli", "Authorization", "Bearer "+phA)
 		assert.Equal(t, http.StatusBadGateway, got.status)

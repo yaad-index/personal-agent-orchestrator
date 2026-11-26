@@ -14,6 +14,9 @@ type scrubber struct {
 	in    []byte
 	out   []byte
 	eof   bool
+	// atEOF runs once the body is read to its end, before the end is
+	// returned: the moment a response's trailers are known.
+	atEOF func()
 }
 
 type pair struct{ value, placeholder []byte }
@@ -26,6 +29,10 @@ func (s *scrubber) Read(p []byte) (int, error) {
 	for len(s.out) == 0 {
 		if s.eof {
 			if len(s.in) == 0 {
+				if s.atEOF != nil {
+					s.atEOF()
+					s.atEOF = nil
+				}
 				return 0, io.EOF
 			}
 			s.out, s.in = s.in, nil
