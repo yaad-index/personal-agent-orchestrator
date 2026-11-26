@@ -87,3 +87,21 @@ func TestAProfileThatSetsAnOptionItsAdapterOwnsIsRefused(t *testing.T) {
 	_, err = tb.Command(p, Launch{})
 	assert.Error(t, err)
 }
+
+type egresser struct {
+	partial
+	hosts []string
+}
+
+func (e egresser) PassHosts(core.Profile) []string { return e.hosts }
+
+func TestABackendsOwnHostsArePassedBeforeAProfilesEachOnce(t *testing.T) {
+	tbl := Table{"own": egresser{hosts: []string{"api.model.example"}}, "plain": partial{}}
+	p := profile("own")
+	p.Egress.Pass = []string{"registry.acme.example", "api.model.example"}
+	assert.Equal(t, []string{"api.model.example", "registry.acme.example"}, tbl.Pass(p))
+	p.Backend = "plain"
+	assert.Equal(t, []string{"registry.acme.example", "api.model.example"}, tbl.Pass(p), "a backend with no hosts of its own adds none")
+	p.Egress.Pass = nil
+	assert.Empty(t, tbl.Pass(p))
+}

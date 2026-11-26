@@ -15,6 +15,7 @@ import (
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/backend"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/egress"
 )
 
 var launch = backend.Launch{MCPServer: "pao", Hook: "'/opt/pao it''s' hook", HookTimeout: 11 * time.Minute, Home: "/home/u"}
@@ -253,4 +254,11 @@ func TestAConfiguredAgentStillLoadsItsOwnDirectorysSettings(t *testing.T) {
 	assert.Equal(t, "project,local", value(t, args, "--setting-sources"))
 	args, _ = launched(t, core.Profile{Name: "a", Backend: Name, Workdir: "/srv/agents/a", Inherit: []string{"settings"}})
 	assert.NotContains(t, args, "--setting-sources", "inheriting settings opens every source, as before")
+}
+
+func TestTheBackendPassesItsModelsHostBehindTheEgressPlane(t *testing.T) {
+	hosts := Adapter{}.PassHosts(core.Profile{})
+	assert.Equal(t, []string{APIHost}, hosts)
+	require.NoError(t, egress.CheckHost(APIHost), "a host the proxy accepts")
+	var _ backend.Egresser = Adapter{}
 }

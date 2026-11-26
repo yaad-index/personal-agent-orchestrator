@@ -90,6 +90,13 @@ var _ backend.Prompter = Adapter{}
 // Prompts implements backend.Prompter: the question whether to trust the working
 // directory. It is safe to answer for a provisioned profile too, since Command
 // shuts out every setting source in a provisioned directory.
+// APIHost is the host Claude Code reaches its model at. Behind the egress
+// plane it is passed for every agent on this backend.
+const APIHost = "api.anthropic.com"
+
+// PassHosts returns the host the backend must reach to run at all.
+func (Adapter) PassHosts(core.Profile) []string { return []string{APIHost} }
+
 func (Adapter) Prompts(core.Profile) []backend.Prompt {
 	return []backend.Prompt{trustDown, trustConfirm}
 }

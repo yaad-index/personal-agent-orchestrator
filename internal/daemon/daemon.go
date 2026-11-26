@@ -240,7 +240,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	// it (ADR-0049); pao's MCP is also served on a socket, so a confined agent
 	// reaches it through its own network's forward.
 	mcpSock := filepath.Join(cfg.Orchestrator.StateDir, "mcp.sock")
-	egressPl := newEgressPlane(cfg.Orchestrator, opts.Self, core.SecretResolverFunc(resolveSecret(cfg.Orchestrator, secretValues)), gateSock, mcpSock)
+	egressPl := newEgressPlane(cfg.Orchestrator, opts.Self, core.SecretResolverFunc(resolveSecret(cfg.Orchestrator, secretValues)), gateSock, mcpSock, backends.Table().Pass)
 	if err := egressPl.sweep(); err != nil {
 		return fmt.Errorf("sweep egress state: %w", err)
 	}

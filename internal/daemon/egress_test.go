@@ -33,6 +33,7 @@ func testPlane(t *testing.T) (*egressPlane, config.Orchestrator) {
 		mcpSock:    filepath.Join(state, "mcp.sock"),
 		runSecrets: filepath.Join(state, "run-secrets"),
 		pending:    map[string]*core.InjectRule{},
+		pass:       func(p core.Profile) []string { return p.Egress.Pass },
 	}
 	e.setListen("127.0.0.1:7433")
 	return e, o
@@ -92,6 +93,27 @@ func TestATaskAgentRunsConfinedBehindItsOwnProxy(t *testing.T) {
 	cmd, _, err = e.wrap(core.Profile{Name: "one-1"}, "claude --x", nil)
 	require.NoError(t, err)
 	assert.Equal(t, "claude --x", cmd, "a stopped agent is no longer registered")
+}
+
+func TestATaskAgentsPassHostsIncludeItsBackendsOwn(t *testing.T) {
+	e, _ := testPlane(t)
+	var asked []string
+	e.pass = func(p core.Profile) []string {
+		asked = append(asked, p.Name)
+		return append([]string{"api.model.example"}, p.Egress.Pass...)
+	}
+	require.NoError(t, e.register("one-1", nil))
+	t.Cleanup(func() { _ = e.stop("one-1") })
+	// A pass host that is also an inject host is refused by the proxy, so the
+	// backend's own host reaching the policy shows as that refusal.
+	require.NoError(t, e.register("one-2", &core.InjectRule{Secret: "token", Hosts: []string{"api.model.example"}, Env: "T"}))
+	t.Cleanup(func() { _ = e.stop("one-2") })
+	_, _, err := e.wrap(core.Profile{Name: "one-1"}, "claude", nil)
+	require.NoError(t, err)
+	_, _, err = e.wrap(core.Profile{Name: "one-2"}, "claude", nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "api.model.example")
+	assert.Equal(t, []string{"one-1", "one-2"}, asked)
 }
 
 func TestATaskAgentWaitsForTheMCPAddress(t *testing.T) {

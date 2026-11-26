@@ -32,6 +32,9 @@ type egressPlane struct {
 	listen, mcpSock string
 	runSecrets      string
 
+	// pass gives a profile's pass hosts: its backend's own and its own.
+	pass func(core.Profile) []string
+
 	mu      sync.Mutex
 	pending map[string]*core.InjectRule
 }
@@ -50,8 +53,9 @@ var errUnconfined = errors.New("this node cannot confine a task-agent")
 
 // newEgressPlane builds the plane. self is the pao binary a confined pane runs;
 // empty means the node does not confine.
-func newEgressPlane(o config.Orchestrator, self string, secrets core.SecretResolver, gateSock, mcpSock string) *egressPlane {
+func newEgressPlane(o config.Orchestrator, self string, secrets core.SecretResolver, gateSock, mcpSock string, pass func(core.Profile) []string) *egressPlane {
 	e := &egressPlane{
+		pass:       pass,
 		drv:        &egress.Driver{Dir: filepath.Join(o.StateDir, "egress"), Secrets: secrets},
 		self:       self,
 		mask:       nodeMasks(o),
@@ -132,7 +136,7 @@ func (e *egressPlane) wrap(p core.Profile, command string, env []string) (string
 	if listen == "" {
 		return "", nil, errors.New("egress: pao's MCP address is not known yet")
 	}
-	pol := core.EgressPolicy{Pass: p.Egress.Pass}
+	pol := core.EgressPolicy{Pass: e.pass(p)}
 	if inject != nil {
 		pol.Inject = []core.InjectRule{*inject}
 	}

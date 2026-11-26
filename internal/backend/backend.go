@@ -121,6 +121,29 @@ func (t Table) Prompts(p core.Profile) []Prompt {
 	return nil
 }
 
+// Egresser is an adapter whose backend must reach hosts of its own to run at
+// all, such as its model's API. Behind the egress plane (ADR-0049) those hosts
+// are passed for every profile on the backend, so an agent is never cut off
+// from its own model; any other host a profile reaches it names itself.
+type Egresser interface {
+	PassHosts(p core.Profile) []string
+}
+
+// Pass returns the hosts p reaches untouched behind the egress plane: its
+// backend's own, then the ones its profile names, each once.
+func (t Table) Pass(p core.Profile) []string {
+	var out []string
+	if a, ok := t[p.Backend].(Egresser); ok {
+		out = append(out, a.PassHosts(p)...)
+	}
+	for _, h := range p.Egress.Pass {
+		if !slices.Contains(out, h) {
+			out = append(out, h)
+		}
+	}
+	return out
+}
+
 // Inherits reports which categories p opens, and refuses a name that is not a
 // category or is named twice.
 func Inherits(p core.Profile) (map[Category]bool, error) {
