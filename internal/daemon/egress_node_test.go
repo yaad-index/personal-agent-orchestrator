@@ -68,9 +68,10 @@ state_dir=$(dirname "$PAO_GATE_SOCKET")
 [ -e "$state_dir/grants.json" ] && state=visible || state=hidden
 case "$ACME_TOKEN" in pao-placeholder-*) ph=yes ;; *) ph=no ;; esac
 curl -s --noproxy '*' -o /dev/null -m 3 https://1.1.1.1 && direct=open || direct=closed
+proxy=$(curl -s -o /dev/null -w '%{http_connect}' -m 3 https://unlisted.acme.example)
 [ -f README.md ] && readme=yes || readme=no
 echo 'READY>'
-printf '{"type":"assistant","uuid":"c","message":{"role":"assistant","content":[{"type":"text","text":"checks mcp=%s gate=%s state=%s ph=%s direct=%s readme=%s uid=%s"}]}}\n' "$mcp" "$gate" "$state" "$ph" "$direct" "$readme" "$(id -u)" >> "$TRANSCRIPT"
+printf '{"type":"assistant","uuid":"c","message":{"role":"assistant","content":[{"type":"text","text":"checks mcp=%s gate=%s state=%s ph=%s direct=%s proxy=%s readme=%s uid=%s"}]}}\n' "$mcp" "$gate" "$state" "$ph" "$direct" "$proxy" "$readme" "$(id -u)" >> "$TRANSCRIPT"
 while IFS= read -r line; do :; done
 `
 
@@ -117,6 +118,7 @@ func TestATaskAgentRunsConfinedBehindTheEgressPlane(t *testing.T) {
 	assert.Equal(t, "hidden", fields["state"], "pao's state is masked")
 	assert.Equal(t, "yes", fields["ph"], "the agent holds a placeholder")
 	assert.Equal(t, "closed", fields["direct"], "nothing leaves but through the proxy")
+	assert.Equal(t, "403", fields["proxy"], "the bridge reaches this run's own proxy, which refuses an unlisted host")
 	assert.Equal(t, "yes", fields["readme"], "its own workdir is kept")
 	assert.Equal(t, strconv.Itoa(os.Getuid()), fields["uid"], "it runs as the node user")
 	assert.NotContains(t, paneEnv(t, n, one), injectedValue, "never the value")

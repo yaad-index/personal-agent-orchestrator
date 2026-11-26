@@ -104,6 +104,12 @@ func inside(act string) int {
 		}
 		b, err = os.ReadFile(os.Getenv("SIBLING_LINK"))
 		return check(err == nil && string(b) == "sib", "a sibling link reads %q, %v", b, err)
+	case "masked-socket":
+		c, err := net.DialTimeout("unix", os.Getenv("MASKED_SOCKET"), time.Second)
+		if c != nil {
+			_ = c.Close()
+		}
+		return check(err != nil, "a masked socket still connects")
 	case "masked":
 		b, err := os.ReadFile(os.Getenv("MASKED_FILE"))
 		if err != nil || len(b) != 0 {
@@ -322,6 +328,16 @@ func TestConfined(t *testing.T) {
 		}
 		assert.Equal(t, 0, late(t, true))
 		assert.NotEqual(t, 0, late(t, false), "unmasked, the late socket shows: the check can fail")
+	})
+	t.Run("a masked socket cannot be reached", func(t *testing.T) {
+		live := proxy(t)
+		c, err := net.Dial("unix", live)
+		require.NoError(t, err, "the socket answers on the host")
+		_ = c.Close()
+		masked := spec
+		masked.Mask = append(append([]string{}, spec.Mask...), live)
+		assert.Equal(t, 0, run(t, self, masked, "masked-socket", "MASKED_SOCKET="+live))
+		assert.NotEqual(t, 0, run(t, self, spec, "masked-socket", "MASKED_SOCKET="+live), "unmasked, it connects: the check can fail")
 	})
 	t.Run("the command runs as the caller, with no capability", func(t *testing.T) {
 		assert.Equal(t, 0, run(t, self, spec, "identity", "WANT_UID="+strconv.Itoa(os.Getuid())))
