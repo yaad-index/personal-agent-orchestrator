@@ -12,6 +12,7 @@ import (
 	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/adapter"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/builtin"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/config"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/egress/confine"
 )
 
 // CLI is the root command tree.
@@ -86,6 +87,11 @@ func buildVersion() string {
 }
 
 func main() {
+	// pao re-runs itself as the setup step of a confined agent's namespaces
+	// (ADR-0049); that step is not a command line to parse.
+	if confine.IsInner() {
+		os.Exit(confine.Inner())
+	}
 	ctx := kong.Parse(&CLI{},
 		kong.Name("pao"),
 		kong.Description("personal-agent-orchestrator: routes input to coding-agent harnesses."),
