@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -110,6 +111,12 @@ func inside(act string) int {
 			_ = c.Close()
 		}
 		return check(err != nil, "a masked socket still connects")
+	case "submount":
+		info, err := os.ReadFile("/proc/self/mountinfo")
+		if err != nil {
+			return check(false, "mountinfo: %v", err)
+		}
+		return check(slices.Contains(mountPoints(string(info)), os.Getenv("SUBMOUNT")), "%s is no longer a mount inside", os.Getenv("SUBMOUNT"))
 	case "masked":
 		b, err := os.ReadFile(os.Getenv("MASKED_FILE"))
 		if err != nil || len(b) != 0 {
@@ -339,6 +346,24 @@ func TestConfined(t *testing.T) {
 		assert.Equal(t, 0, run(t, self, masked, "masked-socket", "MASKED_SOCKET="+live))
 		assert.NotEqual(t, 0, run(t, self, spec, "masked-socket", "MASKED_SOCKET="+live), "unmasked, it connects: the check can fail")
 	})
+	t.Run("a shadowed directory keeps the mounts below it", func(t *testing.T) {
+		info, err := os.ReadFile("/proc/self/mountinfo")
+		require.NoError(t, err)
+		var sub string
+		for _, m := range mountPoints(string(info)) {
+			if strings.HasPrefix(m, "/run/") {
+				sub = m
+				break
+			}
+		}
+		if sub == "" {
+			t.Skip("no mount below /run on this host to check")
+		}
+		// A missing path in /run shadows /run itself, inside only.
+		shadowed := spec
+		shadowed.Mask = append(append([]string{}, spec.Mask...), "/run/pao-confine-test-missing")
+		assert.Equal(t, 0, run(t, self, shadowed, "submount", "SUBMOUNT="+sub))
+	})
 	t.Run("the command runs as the caller, with no capability", func(t *testing.T) {
 		assert.Equal(t, 0, run(t, self, spec, "identity", "WANT_UID="+strconv.Itoa(os.Getuid())))
 	})
@@ -362,4 +387,15 @@ func TestRunNeedsACommandAndASocket(t *testing.T) {
 		_, err = Run("/bin/true", Spec{Socket: "/x", Command: []string{"true"}, Forwards: []Forward{f}})
 		assert.Error(t, err, "%+v", f)
 	}
+}
+
+// mountPoints lists the mount points in a mountinfo text.
+func mountPoints(info string) []string {
+	var out []string
+	for _, l := range strings.Split(info, "\n") {
+		if f := strings.Fields(l); len(f) > 4 {
+			out = append(out, f[4])
+		}
+	}
+	return out
 }

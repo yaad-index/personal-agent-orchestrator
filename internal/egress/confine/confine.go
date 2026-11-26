@@ -237,7 +237,7 @@ func setup(s Spec) error {
 		}
 	}
 	for _, k := range keeps {
-		if err := keepAt(k.path, k.fd, k.dir); err != nil {
+		if err := putBack(k.path, k.fd, k.dir, unix.MS_BIND); err != nil {
 			return fmt.Errorf("keep %s: %w", k.path, err)
 		}
 	}
@@ -347,16 +347,17 @@ func shadow(dir string, hide map[string]bool) error {
 			}
 			continue
 		}
-		if err := keepAt(h.path, h.fd, h.dir); err != nil {
+		// Recursive, so a mount below the entry comes back with it.
+		if err := putBack(h.path, h.fd, h.dir, unix.MS_BIND|unix.MS_REC); err != nil {
 			return fmt.Errorf("put back %s: %w", h.path, err)
 		}
 	}
 	return nil
 }
 
-// keepAt mounts the open path fd back at path, making a place for it first
-// where a mask left none.
-func keepAt(path string, fd int, dir bool) error {
+// putBack mounts the open path fd back at path with flags, making a place for
+// it first where a mask or a shadow left none.
+func putBack(path string, fd int, dir bool, flags uintptr) error {
 	if dir {
 		if err := os.MkdirAll(path, 0o755); err != nil {
 			return err
@@ -373,7 +374,7 @@ func keepAt(path string, fd int, dir bool) error {
 			_ = f.Close()
 		}
 	}
-	return unix.Mount(fmt.Sprintf("/proc/self/fd/%d", fd), path, "", unix.MS_BIND, "")
+	return unix.Mount(fmt.Sprintf("/proc/self/fd/%d", fd), path, "", flags, "")
 }
 
 func mask(p string) error {
