@@ -48,10 +48,13 @@ const BridgeAddr = confine.BridgeAddr
 // The names the trust files and the proxy address are given in. Each runtime
 // reads its own, so all are set.
 var (
-	proxyVars  = []string{"HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"}
-	bundleVars = []string{"SSL_CERT_FILE", "CURL_CA_BUNDLE", "REQUESTS_CA_BUNDLE", "GIT_SSL_CAINFO"}
-	extraVars  = []string{"NODE_EXTRA_CA_CERTS"}
+	proxyVars   = []string{"HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"}
+	bundleVars  = []string{"SSL_CERT_FILE", "CURL_CA_BUNDLE", "REQUESTS_CA_BUNDLE", "GIT_SSL_CAINFO"}
+	extraVars   = []string{"NODE_EXTRA_CA_CERTS"}
+	noProxyVars = []string{"NO_PROXY", "no_proxy"}
 )
+
+const noProxy = "localhost,127.0.0.1,::1"
 
 // systemBundles are where a Linux system keeps its trusted roots, in the order
 // Go's own crypto/x509 looks.
@@ -188,6 +191,11 @@ func (d *Driver) open(agent string, p core.EgressPolicy) (r *run, env []string, 
 	}
 	for _, v := range proxyVars {
 		env = append(env, v+"=http://"+BridgeAddr)
+	}
+	// Loopback inside the agent's network holds only pao's own forwards, which
+	// are reached directly, never through the proxy.
+	for _, v := range noProxyVars {
+		env = append(env, v+"="+noProxy)
 	}
 	if len(injectHosts) > 0 {
 		if r.ca, err = newAuthority(agent, injectHosts); err != nil {
@@ -418,7 +426,7 @@ func CheckEnv(name string) error {
 	if !envPattern.MatchString(name) {
 		return fmt.Errorf("%q is not a variable name", name)
 	}
-	for _, v := range append(append(append([]string{}, proxyVars...), bundleVars...), extraVars...) {
+	for _, v := range append(append(append(append([]string{}, proxyVars...), bundleVars...), extraVars...), noProxyVars...) {
 		if v == name {
 			return fmt.Errorf("%q is a variable the egress proxy sets", name)
 		}

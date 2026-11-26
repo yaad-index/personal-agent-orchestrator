@@ -141,16 +141,29 @@ func (d *Dispatcher) spawnFor(ctx context.Context, id, recipe, secret string, ow
 		d.kill(ctx, owner, name)
 		return
 	}
-	path := ""
-	if secret != "" && d.SecretPath != nil {
-		if p, err := d.SecretPath(name, secret); err == nil {
-			path = p
+	text := ""
+	if env, hosts, ok := d.injected(secret); ok {
+		text = BriefInjected(t, env, hosts)
+	} else {
+		path := ""
+		if secret != "" && d.SecretPath != nil {
+			if p, err := d.SecretPath(name, secret); err == nil {
+				path = p
+			}
 		}
+		text = BriefWith(t, path)
 	}
-	if err := d.Fleet.Deliver(ctx, name, BriefWith(t, path)); err != nil {
+	if err := d.Fleet.Deliver(ctx, name, text); err != nil {
 		d.unassign(id, name, err)
 		d.kill(ctx, owner, name)
 	}
+}
+
+func (d *Dispatcher) injected(secret string) (string, []string, bool) {
+	if secret == "" || d.Injected == nil {
+		return "", nil, false
+	}
+	return d.Injected(secret)
 }
 
 // kill tears down a one-off that never took its task, logging a failure.

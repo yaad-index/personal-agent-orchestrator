@@ -84,6 +84,10 @@ type Options struct {
 	// Adapters is the table of channel adapters to build configured channels from.
 	// Nil means the adapters compiled into this build.
 	Adapters adapter.Table
+	// Self is the pao binary a task-agent's pane runs to confine it behind the
+	// egress plane (ADR-0049). Empty means the node does not confine: a task
+	// with a secret to inject is refused and other task-agents run unconfined.
+	Self string
 }
 
 // Run serves the node until ctx is done. token is the local channel's bearer
@@ -232,6 +236,17 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	if err := secrets.Sweep(); err != nil {
 		return fmt.Errorf("sweep run secrets: %w", err)
 	}
+	// Every task-agent runs behind the egress plane where the node can confine
+	// it (ADR-0049); pao's MCP is also served on a socket, so a confined agent
+	// reaches it through its own network's forward.
+	mcpSock := filepath.Join(cfg.Orchestrator.StateDir, "mcp.sock")
+	egressPl := newEgressPlane(cfg.Orchestrator, opts.Self, core.SecretResolverFunc(resolveSecret(cfg.Orchestrator, secretValues)), gateSock, mcpSock)
+	if err := egressPl.sweep(); err != nil {
+		return fmt.Errorf("sweep egress state: %w", err)
+	}
+	if egressPl.why != nil {
+		slog.Warn("task-agents will not be confined behind the egress plane", "reason", egressPl.why)
+	}
 	ctlOpts = append(ctlOpts,
 		control.WithEnv(func(agent string) []string {
 			env := []string{"PAO_AGENT=" + agent, "PAO_GATE_SOCKET=" + gateSock, backend.EnvAgentToken + "=" + tokens.Mint(agent)}
@@ -242,7 +257,10 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		}),
 		control.WithCommand(func(p core.Profile) (string, []string, error) {
 			s, err := backends.Table().Command(p, launch)
-			return s.Command, s.Env, err
+			if err != nil {
+				return "", nil, err
+			}
+			return egressPl.wrap(p, s.Command, s.Env)
 		}),
 		// A backend's start-up question, such as Claude Code's whether to trust
 		// the working directory, is answered for an agent the operator configured,
@@ -264,6 +282,9 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 			forgetMCP(agent)
 			if err := secrets.Wipe(agent); err != nil {
 				slog.Warn("could not wipe an agent's run secrets", "agent", agent, "error", err)
+			}
+			if err := egressPl.stop(agent); err != nil {
+				slog.Warn("could not close an agent's egress", "agent", agent, "error", err)
 			}
 		}))
 	plane := control.New(tmux.New(tmux.WithSocket(cfg.Orchestrator.TmuxSocket)), ctlOpts...)
@@ -427,13 +448,21 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	// Set before any surface serves, so no create can race the hook.
 	fleet := taskFleet{reg: reg, router: router, governor: cfg.Orchestrator.Governor.Agent}
 	dispatcher := task.NewDispatcher(tasks, fleet, book)
-	dispatcher.OneOffs = taskOneOffs{mgr: mgr, secrets: secrets}
-	dispatcher.SecretPath = secrets.Path
-	dispatcher.Warn = func(text string) {
+	warnOperators := func(text string) {
 		if _, err := layer.NotifyOperators(budgetCtx, core.Message{Sender: "pao", Text: text}); err != nil {
 			slog.Warn("could not warn the operator", "error", err)
 		}
 	}
+	dispatcher.OneOffs = taskOneOffs{mgr: mgr, secrets: secrets, egress: egressPl, orch: cfg.Orchestrator, warn: warnOperators}
+	dispatcher.SecretPath = secrets.Path
+	dispatcher.Injected = func(secret string) (string, []string, bool) {
+		r := injectRule(cfg.Orchestrator, secret)
+		if r == nil {
+			return "", nil, false
+		}
+		return r.Env, r.Hosts, true
+	}
+	dispatcher.Warn = warnOperators
 	taskToolReach := newTaskTools(auth, cfg.Orchestrator.MCPUpstreams)
 	dispatcher.Tools = taskToolReach
 	tasks.Proxied = taskToolReach.Proxied
@@ -480,9 +509,18 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	httpSrv := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	url := "http://" + ln.Addr().String() + "/mcp"
 	mcpURL.Store(&url)
+	egressPl.setListen(ln.Addr().String())
+	mcpLn, err := gate.Listen(mcpSock)
+	if err != nil {
+		return fmt.Errorf("mcp socket: %w", err)
+	}
+	mcpMux := http.NewServeMux()
+	mcpMux.Handle("/mcp", mcpHandler)
+	mcpSrv := &http.Server{Handler: mcpMux, ReadHeaderTimeout: 10 * time.Second}
 
-	serveErr := make(chan error, 3)
+	serveErr := make(chan error, 4)
 	go func() { serveErr <- httpSrv.Serve(ln) }()
+	go func() { serveErr <- mcpSrv.Serve(mcpLn) }()
 	go func() { serveErr <- gateSrv.Serve(gateLn) }()
 	meshCtx, stopMesh := context.WithCancel(ctx)
 	defer stopMesh()
@@ -511,6 +549,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	select {
 	case err := <-serveErr:
 		_ = gateSrv.Close()
+		_ = mcpSrv.Close()
 		_ = httpSrv.Close()
 		stopMesh()
 		<-meshDone
@@ -524,6 +563,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	// Close rather than Shutdown for the gate: its requests wait on the
 	// operator, and a question nobody will answer now must not hold the node up.
 	_ = gateSrv.Close()
+	_ = mcpSrv.Close()
 	err = httpSrv.Shutdown(shutdown)
 	if errors.Is(err, context.DeadlineExceeded) {
 		// A client still holds a stream open; that is not a failure to stop.

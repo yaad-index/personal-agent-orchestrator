@@ -54,6 +54,26 @@ func TestAOneOffsBriefNamesTheFileItsSecretIsIn(t *testing.T) {
 	assert.Contains(t, fleet.sent("writer-a")[0], "the file /run-secrets/writer-a/report-api")
 }
 
+func TestAOneOffsBriefNamesThePlaceholderOfAnInjectedSecret(t *testing.T) {
+	fleet := &fakeFleet{}
+	o := &fakeOneOffs{recipes: []Recipe{{Name: "writer", Tags: []string{"r"}, Account: "sub"}}}
+	d, s := oneOffDispatcher(t, opGrants("r"), fleet, headroomOf{"sub": true}, o)
+	d.SecretPath = func(agent, secret string) (string, error) { return "/run-secrets/" + agent + "/" + secret, nil }
+	d.Injected = func(secret string) (string, []string, bool) {
+		return "ACME_TOKEN", []string{"api.acme.example", "acme.example"}, secret == "report-api"
+	}
+	n := newTask("r")
+	n.Attachments.Secret = "report-api"
+	tk, err := s.Create(context.Background(), access.Operator, n)
+	require.NoError(t, err)
+	passUntil(t, d, func() bool { return get(t, s, tk.ID).Assignee != "" })
+	require.Eventually(t, func() bool { return len(fleet.sent("writer-a")) == 1 }, 5*time.Second, 10*time.Millisecond)
+	brief := fleet.sent("writer-a")[0]
+	assert.Contains(t, brief, "Use $ACME_TOKEN as the credential in your requests to api.acme.example, acme.example")
+	assert.NotContains(t, brief, "/run-secrets/", "an injected secret has no file to name")
+	assert.NotContains(t, brief, "file-reading tool")
+}
+
 func TestASecretTaskWithNoRecipeWaitsAndSaysWhy(t *testing.T) {
 	fleet := &fakeFleet{candidates: []Candidate{{Name: "bee", Tags: []string{"r"}, Account: "sub"}}}
 	d, s := dispatcher(t, opGrants("r"), fleet, headroomOf{"sub": true})

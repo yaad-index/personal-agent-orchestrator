@@ -104,6 +104,12 @@ func (f taskFleet) Deliver(ctx context.Context, agent, text string) error {
 type taskOneOffs struct {
 	mgr     *temp.Manager
 	secrets *runsecret.Store
+	// egress puts each one-off behind the egress plane; orch says which
+	// secrets are injected; warn tells the operators a one-off runs
+	// unconfined.
+	egress *egressPlane
+	orch   config.Orchestrator
+	warn   func(string)
 	// quiet is how long a removed transcript must stay gone, and poll how
 	// often that is checked; zero is 3s and 100ms.
 	quiet, poll time.Duration
@@ -125,19 +131,38 @@ func (o taskOneOffs) Recipes() []task.Recipe {
 	return out
 }
 
-func (o taskOneOffs) Spawn(ctx context.Context, owner access.Subject, recipe, secret string) (string, string, error) {
+func (o taskOneOffs) Spawn(ctx context.Context, owner access.Subject, recipe, secret string) (agent, transcript string, err error) {
 	req := temp.SpawnRequest{Recipe: recipe, Requester: owner, Channel: "local"}
-	if secret != "" {
-		// The agent's name is chosen first, so its secret is in place before
-		// it starts: its environment is made once, at launch.
-		name, err := oneOffName(recipe)
-		if err != nil {
+	// The agent's name is chosen first, so its egress and its secret are in
+	// place before it starts: its environment is made once, at launch.
+	name, err := oneOffName(recipe)
+	if err != nil {
+		return "", "", err
+	}
+	req.Name = name
+	if o.egress != nil {
+		var inject *core.InjectRule
+		if secret != "" {
+			inject = injectRule(o.orch, secret)
+		}
+		switch err := o.egress.register(name, inject); {
+		case errors.Is(err, errUnconfined):
+			if o.warn != nil {
+				o.warn(fmt.Sprintf("one-off %s runs unconfined, with the node's open network: %v", name, err))
+			}
+		case err != nil:
 			return "", "", err
 		}
-		if _, err := o.secrets.Materialize(name, secret); err != nil {
+		defer func() {
+			if err != nil {
+				_ = o.egress.stop(name)
+			}
+		}()
+	}
+	if secret != "" && injectRule(o.orch, secret) == nil {
+		if _, err = o.secrets.Materialize(name, secret); err != nil {
 			return "", "", err
 		}
-		req.Name = name
 	}
 	// A task's one-off speaks on the local channel, the operator's own, whatever
 	// other channels the node has.
@@ -147,10 +172,8 @@ func (o taskOneOffs) Spawn(ctx context.Context, owner access.Subject, recipe, se
 			// Registered but not ready: it cannot take the task, so it goes.
 			_, _ = o.mgr.Kill(ctx, temp.KillRequest{Name: p.Name, Requester: owner, NoReport: true})
 		}
-		if req.Name != "" {
-			if werr := o.secrets.Wipe(req.Name); werr != nil {
-				slog.Warn("dispatch: could not wipe the secret of a one-off that did not start", "agent", req.Name, "error", werr)
-			}
+		if werr := o.secrets.Wipe(req.Name); werr != nil {
+			slog.Warn("dispatch: could not wipe the secret of a one-off that did not start", "agent", req.Name, "error", werr)
 		}
 		return "", "", err
 	}

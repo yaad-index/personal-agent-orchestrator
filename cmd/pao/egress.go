@@ -13,6 +13,7 @@ import (
 type EgressExecCmd struct {
 	Socket  string   `required:"" help:"The egress proxy's socket."`
 	Mask    []string `sep:"none" help:"A host path the command does not see; repeat for more."`
+	Keep    []string `sep:"none" help:"A path kept visible inside a masked one; repeat for more."`
 	Forward []string `sep:"none" help:"A loopback address inside carried to a host socket, as addr=socket; repeat for more."`
 	Command []string `arg:"" passthrough:"" help:"The command and its arguments."`
 }
@@ -26,7 +27,7 @@ func (c EgressExecCmd) Run() error {
 	if len(command) == 0 {
 		return errors.New("egress-exec: no command")
 	}
-	spec := confine.Spec{Socket: c.Socket, Mask: c.Mask, Command: command}
+	spec := confine.Spec{Socket: c.Socket, Mask: c.Mask, Keep: c.Keep, Command: command}
 	for _, f := range c.Forward {
 		fw, err := confine.ParseForward(f)
 		if err != nil {

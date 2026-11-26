@@ -42,6 +42,9 @@ func PaneCommand(self string, s Spec, inner string) string {
 	for _, m := range s.Mask {
 		b.WriteString(" --mask " + shellQuote(m))
 	}
+	for _, k := range s.Keep {
+		b.WriteString(" --keep " + shellQuote(k))
+	}
 	for _, f := range s.Forwards {
 		b.WriteString(" --forward " + shellQuote(f.Addr+"="+f.Socket))
 	}
