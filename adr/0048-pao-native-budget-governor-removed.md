@@ -1,6 +1,6 @@
 # ADR 0048: Budgeting is pao-native, and the governor is removed
 
-**Status:** Proposed (2026-11-26)
+**Status:** Accepted (2026-11-26)
 
 Supersedes ADR-0034 (the governor replies where it was asked), and with it retires the governor entirely: ADR-0034 is the live head of the chain ADR-0030, ADR-0031, ADR-0032, ADR-0034, each superseding the one before, so superseding it retires the whole governor. In place of the governor this ADR keeps nothing; it removes it. Builds on ADR-0047 (the UI is the primary surface), ADR-0046 (the `/pao` command syntax, directly callable), and ADR-0014 and ADR-0035 (budget).
 
