@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -74,12 +75,53 @@ type Server struct {
 // New returns the server for cfg; token is the bearer credential, empty for
 // none. Nothing connects until it is used.
 func New(cfg config.MCPUpstream, token string) *Server {
+	home := originOf(cfg.URL)
 	return &Server{
-		cfg:     cfg,
-		client:  mcp.NewClient(&mcp.Implementation{Name: "pao", Version: "1"}, nil),
-		httpc:   &http.Client{Transport: &bearer{token: token, next: capped{next: http.DefaultTransport, max: maxResponse}}},
+		cfg:    cfg,
+		client: mcp.NewClient(&mcp.Implementation{Name: "pao", Version: "1"}, nil),
+		httpc: &http.Client{
+			Transport: &bearer{token: token, origin: home, next: capped{next: http.DefaultTransport, max: maxResponse}},
+			// A redirect to another origin is not followed: neither the credential
+			// nor what an agent sends the tool goes anywhere but the configured server.
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				if originOf(req.URL.String()) != home {
+					return errOtherOrigin
+				}
+				if len(via) >= maxRedirects {
+					return fmt.Errorf("stopped after %d redirects", maxRedirects)
+				}
+				return nil
+			},
+		},
 		timeout: DefaultCallTimeout,
 	}
+}
+
+// maxRedirects is how many redirects within the server's own origin are followed.
+const maxRedirects = 10
+
+// errOtherOrigin is a redirect away from the configured server.
+var errOtherOrigin = errors.New("the server redirected to another origin, which pao does not follow")
+
+// originOf is a URL's scheme, host and port, the port filled in where the
+// scheme implies it, so two spellings of one origin compare equal. A URL that
+// does not parse has no origin and matches nothing.
+func originOf(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	scheme := strings.ToLower(u.Scheme)
+	port := u.Port()
+	if port == "" {
+		switch scheme {
+		case "http":
+			port = "80"
+		case "https":
+			port = "443"
+		}
+	}
+	return scheme + "://" + strings.ToLower(u.Hostname()) + ":" + port
 }
 
 // Name is the server's configured name.
@@ -230,11 +272,13 @@ func (s *Server) describe(d string) string {
 // bearer presents the server's credential on every request.
 type bearer struct {
 	token string
-	next  http.RoundTripper
+	// origin is the configured server's: the only one the token is sent to.
+	origin string
+	next   http.RoundTripper
 }
 
 func (b *bearer) RoundTrip(r *http.Request) (*http.Response, error) {
-	if b.token == "" {
+	if b.token == "" || b.origin == "" || originOf(r.URL.String()) != b.origin {
 		return b.next.RoundTrip(r)
 	}
 	r = r.Clone(r.Context())
