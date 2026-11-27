@@ -35,7 +35,7 @@ func jsonFields(t reflect.Type) map[string]bool {
 // tsFields are the fields a TypeScript interface in src declares.
 func tsFields(t *testing.T, src, name string) []string {
 	t.Helper()
-	m := regexp.MustCompile(`(?s)export interface ` + name + ` \{(.*?)\n\}`).FindStringSubmatch(src)
+	m := regexp.MustCompile(`(?s)export interface ` + name + `(?: extends \w+)? \{(.*?)\n\}`).FindStringSubmatch(src)
 	require.NotNil(t, m, "interface %s in api.ts", name)
 	var out []string
 	for _, line := range strings.Split(m[1], "\n") {
@@ -62,6 +62,9 @@ func TestTheUIReadsOnlyFieldsTheNodeSends(t *testing.T) {
 		"Budget":       reflect.TypeFor[local.BudgetJSON](),
 		"NodeInfo":     reflect.TypeFor[local.NodeJSON](),
 		"Agent":        reflect.TypeFor[local.NodeAgentJSON](),
+		"Profile":      reflect.TypeFor[local.ProfileJSON](),
+		"ProfileFile":  reflect.TypeFor[local.ProfileFileJSON](),
+		"ProfileDraft": reflect.TypeFor[local.ProfileDraftJSON](),
 	} {
 		sent := jsonFields(goType)
 		for _, f := range tsFields(t, src, ts) {

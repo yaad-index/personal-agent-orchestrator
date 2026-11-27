@@ -49,8 +49,8 @@ type bindingSet struct {
 // none, and gives the layer every binding. A saved binding that no longer checks,
 // such as one whose agent or group the config dropped, is dropped and said so in
 // the log.
-func loadBindingSet(path string, cfg *config.Config, layer *comm.Layer, subject func(string) bool) (*bindingSet, error) {
-	s := &bindingSet{path: path, layer: layer, config: cfg.Orchestrator.Bindings, subject: subject, known: knownFor(cfg)}
+func loadBindingSet(path string, cfg *config.Config, layer *comm.Layer, subject func(string) bool, configured func(string) bool) (*bindingSet, error) {
+	s := &bindingSet{path: path, layer: layer, config: cfg.Orchestrator.Bindings, subject: subject, known: knownFor(cfg, configured)}
 	b, err := os.ReadFile(path)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
@@ -80,13 +80,10 @@ func loadBindingSet(path string, cfg *config.Config, layer *comm.Layer, subject 
 
 // knownFor is what a binding set at runtime is checked against: the configured
 // agents, channels and admitted groups, as the config's own bindings are.
-func knownFor(cfg *config.Config) config.BindingKnown {
-	agents := map[string]bool{}
-	for _, p := range cfg.Profiles {
-		agents[p.Name] = true
-	}
+func knownFor(cfg *config.Config, configured func(string) bool) config.BindingKnown {
 	k := config.BindingKnown{
-		Agent:    func(name string) bool { return agents[name] },
+		// an agent added from the management UI after start is known too
+		Agent:    configured,
 		Groups:   map[string]bool{},
 		Channels: map[string]bool{},
 		Level:    cfg.Orchestrator.Level,

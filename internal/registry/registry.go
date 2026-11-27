@@ -17,6 +17,12 @@ import (
 // ErrDuplicate is returned when a name is already registered.
 var ErrDuplicate = errors.New("agent already registered")
 
+// ErrNotFound is returned when no agent has the name.
+var ErrNotFound = errors.New("agent not registered")
+
+// ErrRunning is returned when a change needs a stopped agent.
+var ErrRunning = errors.New("agent is running")
+
 // ErrNotTemporary is returned when a temporary-agent operation names an agent
 // that is not one. Agents declared in configuration are never removed.
 var ErrNotTemporary = errors.New("agent is not a temporary agent")
@@ -63,6 +69,27 @@ func (r *Registry) Add(p core.Profile) error {
 	}
 	p.Tags = slices.Clone(p.Tags)
 	r.agents[p.Name] = &entry{profile: p}
+	return nil
+}
+
+// Replace swaps a configured agent's profile for p, its new version, keeping
+// its place. Only a stopped agent's profile is replaced: a running agent keeps
+// the profile it started with until it stops. A temporary agent's profile is
+// its recipe's and is never replaced.
+func (r *Registry) Replace(p core.Profile) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	e, ok := r.agents[p.Name]
+	switch {
+	case !ok:
+		return fmt.Errorf("%w: %q", ErrNotFound, p.Name)
+	case e.temp != nil:
+		return fmt.Errorf("%q is a temporary agent; its profile is its recipe's", p.Name)
+	case e.state == core.Running:
+		return fmt.Errorf("%w: %q is running", ErrRunning, p.Name)
+	}
+	p.Tags = slices.Clone(p.Tags)
+	e.profile = p
 	return nil
 }
 

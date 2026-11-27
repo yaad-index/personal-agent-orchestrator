@@ -826,22 +826,18 @@ func load(path string, withMesh bool) (*Config, error) {
 	}
 	sort.Strings(files)
 
+	// The profiles directory as a path the node can use after start, when the
+	// management UI reads and writes profiles there.
+	o.ProfilesDir = dir
 	cfg := &Config{Orchestrator: o, Mesh: meshDoc}
 	seen := make(map[string]string)
 	for _, f := range files {
-		var p core.Profile
-		if err := decodeFile(f, &p); err != nil {
+		b, err := os.ReadFile(f)
+		if err != nil {
 			return nil, err
 		}
-		if err := validate(p); err != nil {
-			return nil, fmt.Errorf("%s: %w", f, err)
-		}
-		// The node's default tools apply at launch: a backend that cannot turn
-		// them off is refused here, not when the agent first starts.
-		if err := builtin.Table().Check(p.WithToolDefaults(o.ProfileDefaults.Tools)); err != nil {
-			return nil, fmt.Errorf("%s: with profile_defaults: %w", f, err)
-		}
-		if err := o.CheckAccount(p.Account); err != nil {
+		p, err := ParseProfile(b, o)
+		if err != nil {
 			return nil, fmt.Errorf("%s: %w", f, err)
 		}
 		if prev, dup := seen[p.Name]; dup {
@@ -1169,4 +1165,29 @@ func checkUpstreamSecrets(path string, us []MCPUpstream, ss []Secret) error {
 // credential, which no task may name (ADR-0053 point 1).
 func (o Orchestrator) BoundToUpstream(name string) bool {
 	return name != "" && slices.ContainsFunc(o.MCPUpstreams, func(u MCPUpstream) bool { return u.Secret == name })
+}
+
+// ParseProfile reads a profile from its YAML text and checks it as loading the
+// configuration does: the profile itself, its backend with the node's default
+// tools applied, and its account. The management UI checks a profile it is
+// about to write with it, so a profile it saves is one the node would load.
+func ParseProfile(b []byte, o Orchestrator) (core.Profile, error) {
+	var p core.Profile
+	dec := yaml.NewDecoder(bytes.NewReader(b))
+	dec.KnownFields(true)
+	if err := dec.Decode(&p); err != nil {
+		return core.Profile{}, errors.New(strings.TrimSpace(err.Error()))
+	}
+	if err := validate(p); err != nil {
+		return core.Profile{}, err
+	}
+	// The node's default tools apply at launch: a backend that cannot turn them
+	// off is refused here, not when the agent first starts.
+	if err := builtin.Table().Check(p.WithToolDefaults(o.ProfileDefaults.Tools)); err != nil {
+		return core.Profile{}, fmt.Errorf("with profile_defaults: %w", err)
+	}
+	if err := o.CheckAccount(p.Account); err != nil {
+		return core.Profile{}, err
+	}
+	return p, nil
 }

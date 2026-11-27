@@ -213,3 +213,26 @@ func TestAllListsEveryAgentByNameWithTempDetail(t *testing.T) {
 	assert.Equal(t, []string{"x"}, r.All()[1].Profile.Tags, "a snapshot does not alias the registry")
 	assert.Empty(t, New().All())
 }
+
+func TestAStoppedConfiguredAgentsProfileIsReplaced(t *testing.T) {
+	r := New()
+	require.NoError(t, r.Add(core.Profile{Name: "a", Tags: []string{"old"}}))
+	tags := []string{"new"}
+	require.NoError(t, r.Replace(core.Profile{Name: "a", Tags: tags}))
+	p, state, ok := r.Lookup("a")
+	require.True(t, ok)
+	assert.Equal(t, []string{"new"}, p.Tags)
+	assert.Equal(t, core.Stopped, state)
+	tags[0] = "changed"
+	p, _, _ = r.Lookup("a")
+	assert.Equal(t, []string{"new"}, p.Tags, "the registry keeps its own copy")
+
+	require.NoError(t, r.SetState("a", core.Running))
+	assert.ErrorIs(t, r.Replace(core.Profile{Name: "a"}), ErrRunning, "a running agent keeps the profile it started with")
+	p, _, _ = r.Lookup("a")
+	assert.Equal(t, []string{"new"}, p.Tags)
+
+	assert.ErrorIs(t, r.Replace(core.Profile{Name: "nobody"}), ErrNotFound)
+	require.NoError(t, r.AddTemp(core.Profile{Name: "t"}, TempInfo{}))
+	assert.Error(t, r.Replace(core.Profile{Name: "t"}), "a temporary agent's profile is its recipe's")
+}

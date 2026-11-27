@@ -145,12 +145,8 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		}
 	}
 
-	// configured are the agents the operator's config defines, by name.
-	configured := map[string]bool{}
-	for _, p := range cfg.Profiles {
-		configured[p.Name] = true
-	}
 	reg := registry.New()
+	configured := configuredIn(reg)
 	for _, p := range cfg.Profiles {
 		if err := reg.Add(p); err != nil {
 			return err
@@ -283,7 +279,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		// workdir's settings its adapter shuts out (ADR-0033). Any other agent's
 		// question is left for a person.
 		control.WithPrompts(func(p core.Profile) []control.Prompt {
-			if !configured[p.Name] && !p.Provisioned {
+			if !configured(p.Name) && !p.Provisioned {
 				return nil
 			}
 			var out []control.Prompt
@@ -325,7 +321,13 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		seen:  make(map[string]context.CancelFunc),
 		views: newViews(),
 	}
-	life := lifecycle{router: router, plane: plane, reg: reg, follow: hook.follow}
+	// The node's profiles, read and written from the management UI (ADR-0047
+	// point 2); a profile saved while its agent runs is applied when it stops.
+	var profiles *profileFiles
+	if cfg.Orchestrator.ProfilesDir != "" {
+		profiles = newProfileFiles(cfg.Orchestrator.ProfilesDir, cfg.Orchestrator, reg, checkProfile)
+	}
+	life := lifecycle{router: router, plane: plane, reg: reg, follow: hook.follow, profiles: profiles}
 	saved, err := loadSavedStreams(filepath.Join(cfg.Orchestrator.StateDir, "streams.json"))
 	if err != nil {
 		return err
@@ -379,7 +381,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	watch := newWatcher(reg, opts.MirrorPoll)
 	watch.auth = auth
 	streamOps := &streamAPI{auth: auth, streams: streams, watcher: watch}
-	standing, err := loadBindingSet(filepath.Join(cfg.Orchestrator.StateDir, "bindings.json"), cfg, layer, subjectExists(ids))
+	standing, err := loadBindingSet(filepath.Join(cfg.Orchestrator.StateDir, "bindings.json"), cfg, layer, subjectExists(ids), configured)
 	if err != nil {
 		return err
 	}
@@ -489,6 +491,9 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	tasks.Changed, tasks.Tell = dispatcher.Kick, fleet.Tell
 	localOpts = append(localOpts, local.WithBudget(budgetJSON(book)))
 	uiSessions := webui.NewSessions()
+	if profiles != nil {
+		localOpts = append(localOpts, local.WithProfiles(profiles))
+	}
 	srv, err := local.New(layer, token, append([]local.Option{local.WithDecider(decider), local.WithTemp(tempOps), local.WithStream(streamOps), local.WithStanding(standingOps), local.WithWatch(streamOps), local.WithLifecycle(lifeOps), local.WithRejected(rejectedAPI{rejects}), local.WithTasks(taskAPI{tasks}), local.WithIdentity(identityAPI{ids}),
 		local.WithDefaults(newDefaultsAPI(defaults, cfg.Orchestrator.Channels, router.Resolve)), local.WithGrants(grantsAPI{store: grantStore, changed: mcpServer.Refresh}),
 		local.WithMount("/mcp", mcpHandler),
