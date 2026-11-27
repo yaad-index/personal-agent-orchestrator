@@ -39,7 +39,17 @@ const Name = "claude-code"
 // It always gives pao's MCP configuration and pao's gate hook. The hook is
 // given through --settings, which Claude Code applies whatever the setting
 // sources, so shutting out the user's settings never removes the gate.
+//
+// Through the same settings it always denies the Interactive tools. Each one
+// opens a dialog in the agent's terminal and waits there for an answer. A human
+// talks to the agent through a channel, which cannot answer it, so the agent
+// would wait for good. A denied tool is taken out of the agent's tool list, and
+// a profile cannot allow it back, since a deny wins over any allow.
 type Adapter struct{}
+
+// Interactive are the tools that wait on an answer in the agent's terminal: a
+// multiple-choice question, and entering and leaving plan mode.
+var Interactive = []string{"AskUserQuestion", "EnterPlanMode", "ExitPlanMode"}
 
 var _ backend.Adapter = Adapter{}
 
@@ -130,7 +140,10 @@ func (Adapter) Command(p core.Profile, l backend.Launch) (backend.Start, error) 
 	if l.MCPServer == "" {
 		return backend.Start{}, errors.New("no name for pao's MCP server")
 	}
-	settings := map[string]any{"hooks": hooks(l.Hook, int(l.HookTimeout.Seconds()))}
+	settings := map[string]any{
+		"hooks":       hooks(l.Hook, int(l.HookTimeout.Seconds())),
+		"permissions": map[string]any{"deny": Interactive},
+	}
 	if !inherits[backend.Instructions] {
 		if l.Home == "" {
 			return backend.Start{}, errors.New("no home directory to shut out the user's instructions from")

@@ -52,8 +52,11 @@ type settings struct {
 			} `json:"hooks"`
 		} `json:"PreToolUse"`
 	} `json:"hooks"`
-	Excludes   []string `json:"claudeMdExcludes"`
-	AutoMemory *bool    `json:"autoMemoryEnabled"`
+	Excludes    []string `json:"claudeMdExcludes"`
+	AutoMemory  *bool    `json:"autoMemoryEnabled"`
+	Permissions struct {
+		Deny []string `json:"deny"`
+	} `json:"permissions"`
 }
 
 func settingsOf(t *testing.T, args []string) settings {
@@ -254,6 +257,35 @@ func TestAConfiguredAgentStillLoadsItsOwnDirectorysSettings(t *testing.T) {
 	assert.Equal(t, "project,local", value(t, args, "--setting-sources"))
 	args, _ = launched(t, core.Profile{Name: "a", Backend: Name, Workdir: "/srv/agents/a", Inherit: []string{"settings"}})
 	assert.NotContains(t, args, "--setting-sources", "inheriting settings opens every source, as before")
+}
+
+func TestEveryAgentIsDeniedTheToolsThatWaitOnItsTerminal(t *testing.T) {
+	assert.ElementsMatch(t, []string{"AskUserQuestion", "EnterPlanMode", "ExitPlanMode"}, Interactive)
+
+	all := make([]string, 0, len(backend.Categories))
+	for _, c := range backend.Categories {
+		all = append(all, string(c))
+	}
+	base := core.Profile{Name: "a", Backend: Name, Workdir: "/srv/agents/a"}
+	cases := map[string]core.Profile{"by default": base}
+	for _, c := range backend.Categories {
+		p := base
+		p.Inherit = []string{string(c)}
+		cases["inheriting "+string(c)] = p
+	}
+	everything := base
+	everything.Inherit = all
+	cases["inheriting everything"] = everything
+	provisioned := base
+	provisioned.Provisioned = true
+	cases["provisioned"] = provisioned
+	provisioned.Inherit = []string{"settings"}
+	cases["provisioned, inheriting settings"] = provisioned
+
+	for name, p := range cases {
+		args, _ := launched(t, p)
+		assert.ElementsMatch(t, Interactive, settingsOf(t, args).Permissions.Deny, name)
+	}
 }
 
 func TestTheBackendPassesItsModelsHostBehindTheEgressPlane(t *testing.T) {
