@@ -131,7 +131,8 @@ export interface KillResult {
 export const recipes = () => call<Recipe[]>("GET", "/v1/recipes");
 export const agentAction = (name: string, action: "start" | "stop" | "restart") =>
   call<void>("POST", `/v1/agents/${encodeURIComponent(name)}/${action}`);
-export const spawn = (recipe: string, name: string) => call<Spawned>("POST", "/v1/temp", { recipe, name, channel: "" });
+// An empty channel leaves it to pao, which picks the node's only channel.
+export const spawn = (recipe: string, name: string, channel = "") => call<Spawned>("POST", "/v1/temp", { recipe, name, channel });
 export const kill = (name: string) => call<KillResult>("DELETE", `/v1/temp/${encodeURIComponent(name)}`);
 
 export type TaskStatus = "open" | "assigned" | "running" | "blocked" | "done" | "failed" | "canceled";
