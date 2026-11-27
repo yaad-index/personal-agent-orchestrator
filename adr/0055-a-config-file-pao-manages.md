@@ -1,6 +1,6 @@
 # ADR 0055: A configuration file pao writes, beside the one the operator writes
 
-**Status:** Proposed
+**Status:** Accepted
 
 Extends ADR-0054 point 4 (the two configs: the orchestrator config and a per-agent profile). Builds on ADR-0047 (the UI as the primary setup surface, and its channel step), ADR-0005 (the management surface) and ADR-0046 point 5 (configuration stays off chat).
 
