@@ -88,3 +88,4 @@ ol.log .badge { margin-left: 6px; }
   .facts { grid-template-columns: 1fr; gap: 2px; }
   .facts dd { margin-bottom: 8px; }
 }
+table.defaults select { width: 100%; max-width: 260px; }

@@ -73,6 +73,7 @@ type Server struct {
 	node       func() NodeJSON
 	restart    func()
 	recipes    func() ([]RecipeJSON, error)
+	channels   []ChannelJSON
 	token      []byte
 	heartbeat  time.Duration
 

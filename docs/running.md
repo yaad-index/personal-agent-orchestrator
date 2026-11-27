@@ -63,6 +63,8 @@ The **Agents** page starts, stops and restarts configured agents, spawns a tempo
 
 The **Tasks** page lists the tasks still open (and the ended ones when asked), shows a task with its log, creates one, and cancels one with a reason. These are `pao tasks list`, `show`, `create` and `cancel`, under the same checks: a task is created only for tags the operator holds a grant on, and a secret it names must be configured.
 
+The **Bindings** page shows where each agent's output goes, binds an agent's replies or errors to the local channel, a group or topic, or a private conversation, and removes a binding set while pao runs; one set in the configuration file is shown and changed there. It also sets and clears the default agent of each chat channel and group. These are the same operations as `pao bindings` and `pao channel default`, under the same checks.
+
 The UI acts as the operator, so keep it on localhost. To reach it from another machine, forward the port over SSH (`ssh -L 7744:127.0.0.1:7744 <host>`) rather than binding `listen` to a public address.
 
 ### Profiles

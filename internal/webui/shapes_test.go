@@ -73,6 +73,12 @@ func TestTheUIReadsOnlyFieldsTheNodeSends(t *testing.T) {
 		"TaskLogEntry":    reflect.TypeFor[task.LogEntry](),
 		"TaskAttachments": reflect.TypeFor[task.Attachments](),
 		"NewTask":         reflect.TypeFor[local.NewTaskJSON](),
+		"Channel":         reflect.TypeFor[local.ChannelJSON](),
+		"Binding":         reflect.TypeFor[local.StandingJSON](),
+		"BindingList":     reflect.TypeFor[local.StandingListJSON](),
+		"ChannelDefault":  reflect.TypeFor[local.DefaultJSON](),
+		"ChannelDefaults": reflect.TypeFor[local.DefaultsJSON](),
+		"DefaultChange":   reflect.TypeFor[local.DefaultChangeJSON](),
 	} {
 		sent := jsonFields(goType)
 		for _, f := range tsFields(t, src, ts) {
