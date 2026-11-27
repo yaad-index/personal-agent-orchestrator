@@ -65,6 +65,10 @@ func TestTheUIReadsOnlyFieldsTheNodeSends(t *testing.T) {
 		"Profile":      reflect.TypeFor[local.ProfileJSON](),
 		"ProfileFile":  reflect.TypeFor[local.ProfileFileJSON](),
 		"ProfileDraft": reflect.TypeFor[local.ProfileDraftJSON](),
+		"Question":     reflect.TypeFor[local.QuestionJSON](),
+		"Recipe":       reflect.TypeFor[local.RecipeJSON](),
+		"Spawned":      reflect.TypeFor[local.SpawnJSON](),
+		"KillResult":   reflect.TypeFor[local.KillJSON](),
 	} {
 		sent := jsonFields(goType)
 		for _, f := range tsFields(t, src, ts) {

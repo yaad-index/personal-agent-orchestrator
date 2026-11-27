@@ -112,3 +112,35 @@ export const saveProfile = (file: string, text: string) => call<Profile>("PUT", 
 export const draftProfile = (d: ProfileDraft) => call<{ text: string }>("POST", "/v1/profiles/draft", d);
 export const restartNode = () => call<void>("POST", "/v1/node/restart");
 export const restartAgent = (name: string) => call<void>("POST", `/v1/agents/${encodeURIComponent(name)}/restart`);
+
+export interface Question {
+  id: string;
+  agent: string;
+  tool: string;
+  text: string;
+  asked: string;
+}
+
+export interface Recipe {
+  name: string;
+  description: string;
+  tags: string[];
+}
+
+export interface Spawned {
+  name: string;
+}
+
+export interface KillResult {
+  harvest: { id: string; complete: boolean };
+  workdir_kept: boolean;
+}
+
+export const questions = () => call<Question[]>("GET", "/v1/questions");
+export const decide = (id: string, decision: "allow" | "always" | "deny", reason = "") =>
+  call<void>("POST", "/v1/decisions", { id, decision, reason });
+export const recipes = () => call<Recipe[]>("GET", "/v1/recipes");
+export const agentAction = (name: string, action: "start" | "stop" | "restart") =>
+  call<void>("POST", `/v1/agents/${encodeURIComponent(name)}/${action}`);
+export const spawn = (recipe: string, name: string) => call<Spawned>("POST", "/v1/temp", { recipe, name, channel: "" });
+export const kill = (name: string) => call<KillResult>("DELETE", `/v1/temp/${encodeURIComponent(name)}`);
