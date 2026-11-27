@@ -9,7 +9,6 @@ import (
 
 	"github.com/alecthomas/kong"
 
-	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/adapter"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/builtin"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/config"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/egress/confine"
@@ -61,14 +60,22 @@ func (c ConfigCheckCmd) Run() error {
 	if err != nil {
 		return err
 	}
-	specs := make([]adapter.Spec, 0, len(cfg.Orchestrator.Channels))
-	for _, ch := range cfg.Orchestrator.Channels {
-		specs = append(specs, adapter.Spec{ID: ch.ID, Name: ch.Name, Kind: ch.Kind, Options: ch.Options})
+	if err := builtin.CheckChannels(c.Path, cfg.Orchestrator); err != nil {
+		return err
 	}
-	if err := builtin.Table().Check(specs); err != nil {
-		return fmt.Errorf("%s: %w", c.Path, err)
+	if _, err := fmt.Fprintf(os.Stdout, "ok: node %q, %d agent profile(s)\n", cfg.Orchestrator.Node, len(cfg.Profiles)); err != nil {
+		return err
 	}
-	_, err = fmt.Fprintf(os.Stdout, "ok: node %q, %d agent profile(s)\n", cfg.Orchestrator.Node, len(cfg.Profiles))
+	if m := cfg.Orchestrator.ManagedPath(); m != "" {
+		n := 0
+		for _, ch := range cfg.Orchestrator.Channels {
+			if cfg.Orchestrator.ManagedChannel(ch.Name) {
+				n++
+			}
+		}
+		// The file pao writes is named, so it is never a surprise (ADR-0055).
+		_, err = fmt.Fprintf(os.Stdout, "managed by pao: %s, %d channel(s)\n", m, n)
+	}
 	return err
 }
 

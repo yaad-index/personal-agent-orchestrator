@@ -34,6 +34,13 @@ import (
 type Orchestrator struct {
 	// Node names this node.
 	Node string `yaml:"node"`
+	// Managed names the file pao manages beside this one (ADR-0055): the
+	// settings the management UI sets, in the same form. A relative path is
+	// resolved against the directory of the orchestrator config. Empty, pao
+	// writes no configuration at all.
+	Managed string `yaml:"managed"`
+	// managedChannels are the names of the channels the managed file defines.
+	managedChannels map[string]bool
 	// ProfilesDir holds one YAML profile per agent. A relative path is
 	// resolved against the directory of the orchestrator config.
 	ProfilesDir string `yaml:"profiles_dir"`
@@ -388,11 +395,11 @@ type Channel struct {
 	// credential. The credential itself never lives in a config file.
 	CredentialEnv string `yaml:"credential_env"`
 	// Options are the adapter's own settings; only the adapter interprets them.
-	Options map[string]any `yaml:"options"`
+	Options map[string]any `yaml:"options,omitempty"`
 	// Groups are the group conversations the channel serves (ADR-0028 point 1).
 	// A group not listed here is refused. If the platform moves a conversation to
 	// a new id, the new id is not listed and the group is refused until it is.
-	Groups []Group `yaml:"groups"`
+	Groups []Group `yaml:"groups,omitempty"`
 }
 
 // MembersOperators is the member policy that admits only subjects routed as the
@@ -413,7 +420,7 @@ type Group struct {
 	// Topics names some of the group's topics, on a platform that splits a group
 	// into topics (ADR-0038 point 10). Every topic of an admitted group is served
 	// whether it is named or not; a named one is also a destination, group:<name>.
-	Topics []Topic `yaml:"topics"`
+	Topics []Topic `yaml:"topics,omitempty"`
 }
 
 // Topic names one topic of an admitted group (ADR-0038 point 10). It has no
@@ -446,10 +453,28 @@ var (
 // reservedChannelNames are names the node itself uses for a channel.
 var reservedChannelNames = map[string]bool{"local": true}
 
-func checkChannels(path string, chs []Channel) error {
-	ids, names, groupNames := map[int]string{}, map[string]bool{}, map[string]string{}
-	for i, c := range chs {
-		at := fmt.Sprintf("%s: channels[%d]", path, i)
+// channelSource is the channels one configuration file defines.
+type channelSource struct {
+	path     string
+	channels []Channel
+}
+
+// checkChannels validates the channels of every file that defines some, as one
+// list: a name, id, group or topic used twice is an error whether the two are in
+// one file or in two (ADR-0055 point 3), and the error names where each is.
+func checkChannels(sources ...channelSource) error {
+	ids, names, groupNames := map[int]string{}, map[string]string{}, map[string]string{}
+	for _, src := range sources {
+		if err := checkChannelsOf(src, ids, names, groupNames); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func checkChannelsOf(src channelSource, ids map[int]string, names, groupNames map[string]string) error {
+	for i, c := range src.channels {
+		at := fmt.Sprintf("%s: channels[%d]", src.path, i)
 		switch {
 		case c.ID < 1:
 			return fmt.Errorf("%s: id must be a positive integer", at)
@@ -463,12 +488,12 @@ func checkChannels(path string, chs []Channel) error {
 			return fmt.Errorf("%s: credential_env must name an environment variable", at)
 		}
 		if prev, dup := ids[c.ID]; dup {
-			return fmt.Errorf("%s: id %d is already channel %q", at, c.ID, prev)
+			return fmt.Errorf("%s: id %d is already channel %s", at, c.ID, prev)
 		}
-		if names[c.Name] {
-			return fmt.Errorf("%s: name %q is already used", at, c.Name)
+		if prev, dup := names[c.Name]; dup {
+			return fmt.Errorf("%s: name %q is already used at %s", at, c.Name, prev)
 		}
-		ids[c.ID], names[c.Name] = c.Name, true
+		ids[c.ID], names[c.Name] = fmt.Sprintf("%q at %s", c.Name, at), at
 		if err := checkGroups(at, c.Groups, groupNames); err != nil {
 			return err
 		}
@@ -668,14 +693,16 @@ var namePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
 
 // Load reads the orchestrator config at path and every profile in its
 // profiles directory.
-func Load(path string) (*Config, error) { return load(path, true) }
+func Load(path string) (*Config, error) { return load(path, true, nil) }
 
 // LoadWithoutMesh is Load without reading or checking the mesh document. It is
 // for the command that creates this node's key, which has to run before the node
 // can be listed in a mesh document that names its key.
-func LoadWithoutMesh(path string) (*Config, error) { return load(path, false) }
+func LoadWithoutMesh(path string) (*Config, error) { return load(path, false, nil) }
 
-func load(path string, withMesh bool) (*Config, error) {
+// load reads the configuration. A non-nil override stands in for the managed
+// file's content, to check a change before it is written.
+func load(path string, withMesh bool, override *Managed) (*Config, error) {
 	var o Orchestrator
 	if err := decodeFile(path, &o); err != nil {
 		return nil, err
@@ -752,9 +779,18 @@ func load(path string, withMesh bool) (*Config, error) {
 	} else if !filepath.IsAbs(o.MeshKey) {
 		o.MeshKey = filepath.Join(filepath.Dir(path), o.MeshKey)
 	}
-	if err := checkChannels(path, o.Channels); err != nil {
+	managed, err := readManaged(path, &o, override)
+	if err != nil {
 		return nil, err
 	}
+	if err := checkChannels(channelSource{path, o.Channels}, channelSource{o.Managed, managed.Channels}); err != nil {
+		return nil, err
+	}
+	o.managedChannels = map[string]bool{}
+	for _, c := range managed.Channels {
+		o.managedChannels[c.Name] = true
+	}
+	o.Channels = append(o.Channels, managed.Channels...)
 	if err := checkUpstreams(path, o.MCPUpstreams); err != nil {
 		return nil, err
 	}
