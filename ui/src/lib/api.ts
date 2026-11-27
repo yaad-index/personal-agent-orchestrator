@@ -187,3 +187,54 @@ export const getTask = (id: string) => call<Task>("GET", `/v1/tasks/${encodeURIC
 export const createTask = (t: NewTask) => call<Task>("POST", "/v1/tasks", t);
 export const cancelTask = (id: string, reason: string) =>
   call<Task>("POST", `/v1/tasks/${encodeURIComponent(id)}/cancel`, { reason });
+
+export interface Channel {
+  name: string;
+  kind: string;
+  groups: string[];
+}
+
+export interface Binding {
+  agent: string;
+  stream?: string;
+  to: string;
+  level?: string;
+  prefix?: string;
+  // "config" or "runtime"; a config binding is changed in the configuration
+  from?: string;
+}
+
+export interface BindingList {
+  bindings: Binding[];
+}
+
+export interface ChannelDefault {
+  channel?: string;
+  agent: string;
+}
+
+export interface ChannelDefaults {
+  version: number;
+  defaults: ChannelDefault[];
+}
+
+export interface DefaultChange {
+  channel: string;
+  agent?: string;
+  previous?: string;
+  left?: string;
+}
+
+export const channels = () => call<Channel[]>("GET", "/v1/channels");
+export const bindings = () => call<BindingList>("GET", "/v1/bindings");
+export const bind = (b: Binding) => call<Binding>("POST", "/v1/bindings", b);
+export const unbind = (b: Binding) => {
+  const q = new URLSearchParams({ agent: b.agent, to: b.to });
+  if (b.stream) q.set("stream", b.stream);
+  return call<Binding>("DELETE", `/v1/bindings?${q}`);
+};
+export const channelDefaults = () => call<ChannelDefaults>("GET", "/v1/channels/defaults");
+export const setDefault = (channel: string, agent: string) =>
+  call<DefaultChange>("PUT", `/v1/channels/${encodeURIComponent(channel)}/default`, { agent });
+export const clearDefault = (channel: string) =>
+  call<DefaultChange>("DELETE", `/v1/channels/${encodeURIComponent(channel)}/default`);

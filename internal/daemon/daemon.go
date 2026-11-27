@@ -495,7 +495,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	tasks.Changed, tasks.Tell = dispatcher.Kick, fleet.Tell
 	localOpts = append(localOpts, local.WithBudget(budgetJSON(book)))
 	uiSessions := webui.NewSessions()
-	localOpts = append(localOpts, local.WithRecipes(recipesOf(mgr)))
+	localOpts = append(localOpts, local.WithRecipes(recipesOf(mgr)), local.WithChannels(channelsOf(cfg.Orchestrator.Channels)))
 	restartCh := make(chan struct{}, 1)
 	localOpts = append(localOpts, local.WithRestart(func() {
 		select {

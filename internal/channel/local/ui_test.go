@@ -139,3 +139,12 @@ func TestTheRecipesAreReadByTheOperator(t *testing.T) {
 	_, plain := newServer(t, &fakeLayer{})
 	assert.Equal(t, http.StatusNotFound, do(t, plain, "GET", "/v1/recipes", "", bearer()).StatusCode)
 }
+
+func TestTheChannelsAreReadByTheOperator(t *testing.T) {
+	cs := []ChannelJSON{{Name: "local", Kind: "local", Groups: []string{}}, {Name: "tg", Kind: "telegram", Groups: []string{"family"}}}
+	_, ts := newServer(t, &fakeLayer{}, WithChannels(cs))
+	got, err := (&Client{URL: ts.URL, Token: token}).Channels(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, cs, got)
+	assert.Equal(t, http.StatusUnauthorized, send(t, "GET", ts.URL+"/v1/channels", "", nil, nil))
+}
