@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -201,6 +202,12 @@ func TestAHarvestedFileIsServedAsOpaqueBytes(t *testing.T) {
 	_ = resp.Body.Close()
 	assert.Equal(t, "application/octet-stream", resp.Header.Get("Content-Type"), "agent-written content is never served as a page")
 	assert.Equal(t, "nosniff", resp.Header.Get("X-Content-Type-Options"))
+	assert.Equal(t, `attachment; filename=x.html`, resp.Header.Get("Content-Disposition"), "it is saved, not opened")
+	assert.Contains(t, resp.Header.Get("Content-Security-Policy"), "sandbox", "and were it opened, it would run in no origin")
+
+	resp = do(t, ts, "GET", "/v1/harvests/a/file?path="+url.QueryEscape(`dir/a "b".txt`), "", "Bearer "+token)
+	_ = resp.Body.Close()
+	assert.Equal(t, `attachment; filename="a \"b\".txt"`, resp.Header.Get("Content-Disposition"), "a name is quoted, never breaking the header")
 }
 
 func TestAMountedHandlerIsServedAndAuthenticatesItself(t *testing.T) {

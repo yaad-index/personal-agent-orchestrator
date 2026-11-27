@@ -65,6 +65,8 @@ The **Tasks** page lists the tasks still open (and the ended ones when asked), s
 
 The **Bindings** page shows where each agent's output goes, binds an agent's replies or errors to the local channel, a group or topic, or a private conversation, and removes a binding set while pao runs; one set in the configuration file is shown and changed there. It also sets and clears the default agent of each chat channel and group. These are the same operations as `pao bindings` and `pao channel default`, under the same checks.
 
+The **Harvests** page lists what killed temporary agents left behind, shows a harvest's files and what was not copied, downloads a file, and deletes a harvest. A harvested file is the agent's own content, so the node serves it only as a download, never as a page. The **Rejected** page is the record of inbound messages pao did not act on, most recent first. It is read-only, and a payload is a stranger's text, shown as text.
+
 The UI acts as the operator, so keep it on localhost. To reach it from another machine, forward the port over SSH (`ssh -L 7744:127.0.0.1:7744 <host>`) rather than binding `listen` to a public address.
 
 ### Profiles

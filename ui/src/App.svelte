@@ -11,6 +11,9 @@
   import TaskView from "./pages/TaskView.svelte";
   import NewTask from "./pages/NewTask.svelte";
   import Bindings from "./pages/Bindings.svelte";
+  import Harvests from "./pages/Harvests.svelte";
+  import HarvestView from "./pages/HarvestView.svelte";
+  import Rejected from "./pages/Rejected.svelte";
 
   // checking: asking whether the cookie is still good; out: the login form;
   // in: the pages.
@@ -57,6 +60,8 @@
       <a href="#/agents" class:active={page === "agents"}>Agents</a>
       <a href="#/tasks" class:active={page.startsWith("tasks")}>Tasks</a>
       <a href="#/bindings" class:active={page === "bindings"}>Bindings</a>
+      <a href="#/harvests" class:active={page.startsWith("harvests")}>Harvests</a>
+      <a href="#/rejected" class:active={page === "rejected"}>Rejected</a>
       <a href="#/profiles" class:active={page.startsWith("profiles")}>Profiles</a>
     </nav>
     <button class="link" onclick={signOut}>Sign out</button>
@@ -66,6 +71,12 @@
       <Node onLost={lost} />
     {:else if page === "agents"}
       <Agents onLost={lost} />
+    {:else if page === "harvests"}
+      <Harvests onLost={lost} />
+    {:else if page.startsWith("harvests/")}
+      {#key page}<HarvestView id={decodeURIComponent(page.slice("harvests/".length))} onLost={lost} />{/key}
+    {:else if page === "rejected"}
+      <Rejected onLost={lost} />
     {:else if page === "bindings"}
       <Bindings onLost={lost} />
     {:else if page === "tasks"}
