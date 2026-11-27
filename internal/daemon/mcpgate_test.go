@@ -34,7 +34,7 @@ func TestAnAgentsCallIntoPaoIsJudgedOnceAsPaosActionOnPaosSide(t *testing.T) {
 	d := decisionWithin(t, askGate(t, n, "mcp__pao__send_message", `{"name":"tmp-b","text":"hi"}`))
 	assert.True(t, d.Allow, "%+v", d)
 
-	a := mcpSession(t, n, sessionEnv(t, n, "tmp-a", "PAO_AGENT_TOKEN"))
+	a := mcpSession(t, n, agentToken(t, n, "tmp-a"))
 
 	// Reading needs no question.
 	assert.Equal(t, []string{"tmp-b"}, agentNames(mcpCall[listed](t, a, "list_agents", nil)))

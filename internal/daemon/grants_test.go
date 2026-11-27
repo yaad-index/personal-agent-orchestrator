@@ -32,7 +32,7 @@ func TestAGrantMadeAtRuntimeBoundsWhatAnAgentReachesAndARevocationTakesItBack(t 
 	n := startTempNode(t, map[string]string{"fake": goodRecipe("fake")}, config.Temp{})
 	spawnTwo(t, n)
 	ctx := context.Background()
-	a := mcpSession(t, n, sessionEnv(t, n, "tmp-a", "PAO_AGENT_TOKEN"))
+	a := mcpSession(t, n, agentToken(t, n, "tmp-a"))
 
 	assert.Empty(t, agentNames(mcpCall[listed](t, a, "list_agents", nil)), "no grant, nothing reached")
 

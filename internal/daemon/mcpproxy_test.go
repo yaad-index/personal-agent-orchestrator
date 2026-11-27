@@ -77,7 +77,7 @@ func TestAnAgentReachesAnUpstreamToolOnlyThroughAGrantAndPaoCallsItWithItsOwnCre
 	_, err := n.client.Post(ctx, "human", "wake up", "name", "boss")
 	require.NoError(t, err)
 	_ = n.next(t)
-	boss := mcpSession(t, n, sessionEnv(t, n, "boss", "PAO_AGENT_TOKEN"))
+	boss := mcpSession(t, n, agentToken(t, n, "boss"))
 
 	assert.NotContains(t, toolNames(t, boss), "search__query", "not granted: not listed")
 	_, err = boss.CallTool(ctx, &mcp.CallToolParams{Name: "search__query", Arguments: map[string]any{"q": "x"}})
@@ -119,7 +119,7 @@ func TestAnAgentWhoseSessionIsOpenIsToldOfAGrantAddedToIt(t *testing.T) {
 	boss, err := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "0"}, &mcp.ClientOptions{
 		ToolListChangedHandler: func(context.Context, *mcp.ToolListChangedRequest) { changed <- struct{}{} },
 	}).Connect(ctx, &mcp.StreamableClientTransport{
-		Endpoint: n.url + "/mcp", HTTPClient: &http.Client{Transport: bearerRT{sessionEnv(t, n, "boss", "PAO_AGENT_TOKEN")}}, MaxRetries: -1,
+		Endpoint: n.url + "/mcp", HTTPClient: &http.Client{Transport: bearerRT{agentToken(t, n, "boss")}}, MaxRetries: -1,
 	}, &mcp.ClientSessionOptions{ProtocolVersion: "2025-06-18"})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = boss.Close() })

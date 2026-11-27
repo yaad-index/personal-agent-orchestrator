@@ -42,6 +42,7 @@ const oldSession = "old-session"
 // transcript file, the way a real backend would.
 const fakeAgent = `printf '%s\n' "$@" > "$TRANSCRIPT.args"
 env | grep '^CLAUDE_CODE_SYNC_' | sort > "$TRANSCRIPT.env"
+printf '%s' "$PAO_AGENT_TOKEN" > "$TRANSCRIPT.token"
 echo 'READY>'
 [ -n "$REPORT_ENV" ] && printf '{"type":"assistant","uuid":"env","message":{"role":"assistant","content":[{"type":"text","text":"agent=%s gate=%s"}]}}\n' "$PAO_AGENT" "$PAO_GATE_SOCKET" >> "$TRANSCRIPT"
 [ -n "$REPORT_TOKEN" ] && printf '{"type":"assistant","uuid":"tok","message":{"role":"assistant","content":[{"type":"text","text":"token=[%s]"}]}}\n' "$PAO_TEST_NODE_TOKEN" >> "$TRANSCRIPT"
@@ -496,4 +497,51 @@ func TestAgentsDoNotInheritTheOperatorsToken(t *testing.T) {
 	got := n.next(t)
 	assert.Equal(t, "token=[]", got.Text, "the variable the node's token came from is not in the agent's environment")
 	assert.NotContains(t, got.Text, "operator-secret")
+}
+
+func TestAnAgentGetsItsTokenWithoutItOnAnyCommandLine(t *testing.T) {
+	n := startNode(t, map[string]string{"a": ""})
+	_, err := n.client.Post(context.Background(), "human", "hi", "name", "a")
+	require.NoError(t, err)
+	n.next(t)
+
+	file := filepath.Join(n.stateDir, "agent-tokens", "a")
+	info, err := os.Stat(file)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "readable by the node user alone")
+	dirInfo, err := os.Stat(filepath.Dir(file))
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o700), dirInfo.Mode().Perm())
+
+	want, err := os.ReadFile(file)
+	require.NoError(t, err)
+	require.Regexp(t, `^[0-9a-f]{64}$`, string(want))
+	got, err := os.ReadFile(filepath.Join(n.dir, "transcripts", "a.jsonl.token"))
+	require.NoError(t, err)
+	assert.Equal(t, string(want), string(got), "the agent starts with its token in its environment")
+
+	procs, err := filepath.Glob("/proc/[0-9]*/cmdline")
+	require.NoError(t, err)
+	require.NotEmpty(t, procs)
+	for _, p := range procs {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			continue // gone, or another user's
+		}
+		assert.NotContains(t, string(b), string(want), "%s carries the token on its command line", p)
+	}
+	out, err := exec.Command("tmux", "-L", n.sock, "show-environment", "-t", "=pao-a").CombinedOutput()
+	require.NoError(t, err, string(out))
+	assert.NotContains(t, string(out), string(want), "nor the session's environment, which the multiplexer was given on its command line")
+}
+
+func TestAStoppedAgentsTokenIsGone(t *testing.T) {
+	n := startNode(t, map[string]string{"a": ""})
+	_, err := n.client.Post(context.Background(), "human", "hi", "name", "a")
+	require.NoError(t, err)
+	n.next(t)
+	file := filepath.Join(n.stateDir, "agent-tokens", "a")
+	require.FileExists(t, file)
+	require.NoError(t, n.client.AgentAction(context.Background(), "a", "stop"))
+	assert.NoFileExists(t, file)
 }
