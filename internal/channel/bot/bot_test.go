@@ -82,18 +82,20 @@ type server struct {
 	t  *testing.T
 	ts *httptest.Server
 
-	mu       sync.Mutex
-	batches  [][]update
-	polls    []map[string]string
-	sent     []map[string]string
-	edits    []map[string]string
-	refused  []map[string]string
-	attempts int // sends tried, answered or not
-	answers  []map[string]string
-	failEdit bool
-	nextID   int64
-	failNow  int              // polls to fail before serving
-	failSend map[float64]bool // chat ids whose sends fail
+	mu      sync.Mutex
+	batches [][]update
+	polls   []map[string]string
+	sent    []map[string]string
+	edits   []map[string]string
+	refused []map[string]string
+	// documents are the files sent, with "filename" and "data" read from the upload.
+	documents []map[string]string
+	attempts  int // sends tried, answered or not
+	answers   []map[string]string
+	failEdit  bool
+	nextID    int64
+	failNow   int              // polls to fail before serving
+	failSend  map[float64]bool // chat ids whose sends fail
 	// mode shapes the answer to a poll: "" is fine, "okfalse" is a 200 with ok false, "status" a 500 with ok true.
 	mode string
 	// describe, when set, is put in a failure's description.
@@ -179,6 +181,26 @@ func (s *server) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.sent = append(s.sent, body)
+		s.nextID++
+		_, _ = fmt.Fprintf(w, `{"ok":true,"result":{"message_id":%d}}`, s.nextID)
+	case "sendDocument":
+		chat, _ := strconv.ParseFloat(body["chat_id"], 64)
+		if s.failSend[chat] {
+			w.WriteHeader(403)
+			_, _ = io.WriteString(w, `{"ok":false,"error_code":403,"description":"Forbidden: bot can't initiate conversation with a user"}`)
+			return
+		}
+		if r.MultipartForm != nil {
+			for _, fh := range r.MultipartForm.File["document"] {
+				f, err := fh.Open()
+				if err == nil {
+					data, _ := io.ReadAll(f)
+					_ = f.Close()
+					body["filename"], body["data"] = fh.Filename, string(data)
+				}
+			}
+		}
+		s.documents = append(s.documents, body)
 		s.nextID++
 		_, _ = fmt.Fprintf(w, `{"ok":true,"result":{"message_id":%d}}`, s.nextID)
 	case "editMessageText":

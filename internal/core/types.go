@@ -17,7 +17,7 @@ var ReservedNames = []string{"pao", "operator"}
 // must not carry one as its name: "/pao <name> <message>" addresses an agent, so an
 // agent named like a command could never be reached that way. The command table
 // is checked against this list.
-var CommandWords = []string{"agent", "agents", "allow", "always", "bind", "bindings", "deny", "help", "kill", "spawn", "stream", "tag", "unbind", "view"}
+var CommandWords = []string{"agent", "agents", "allow", "always", "bind", "bindings", "deny", "file", "help", "kill", "spawn", "stream", "tag", "unbind", "view"}
 
 // Profile is the agent-intrinsic configuration of one agent (ADR-0001 point 4).
 // Only the fields the built milestones consume are present; later milestones

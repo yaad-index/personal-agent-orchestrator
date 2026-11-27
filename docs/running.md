@@ -22,6 +22,7 @@ To end every agent as well, stop the agents first (`pao agent stop <name>`, or `
 ## What a restart keeps and what it doesn't
 
 - **Configured agents** are taken back as they are. Their token for calling pao is kept in the state directory, readable by the node user alone.
+- What an agent writes while pao is down is in its own context, but is not shown to anyone: pao follows its transcript from where it stands when pao starts again. A reply finished during a restart doesn't reach the chat. Ask again, or read the agent's terminal.
 - **Temporary agents**, task one-offs included, keep running but pao no longer knows them. pao tells the operator which sessions it found and leaves them running. End one with `tmux -L <tmux_socket> kill-session -t pao-<name>`. Its working directory stays where it was.
 - A pending approval question is gone. The agent's tool call was refused when pao stopped, and the agent may ask again.
 - A restart of the tmux server, or of the host, still ends every agent.

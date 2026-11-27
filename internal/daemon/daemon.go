@@ -458,7 +458,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		// request's delivery starts it again.
 		layer.SetGovernorReset(func(ctx context.Context) error { return life.Stop(ctx, g) })
 	}
-	layer.SetCommands(chatCommands{streams: streamOps, standing: standingOps, temps: tempOps, decider: decider, agents: ops, auth: auth})
+	layer.SetCommands(chatCommands{streams: streamOps, standing: standingOps, temps: tempOps, decider: decider, agents: ops, auth: auth, profiles: reg.Lookup})
 
 	budgetCtx, stopBudget := context.WithCancel(ctx)
 	defer stopBudget()
@@ -715,7 +715,7 @@ func (f *followers) start(p core.Profile) {
 		err := m.Follow(ctx, path, mirror.FromEnd, func(e core.Entry) {
 			// Any line the agent writes is activity, shown to the human or not.
 			f.reg.Touch(p.Name, time.Now(), false)
-			at := func(level int) (core.Message, bool) { return entryMessage(p.Name, e, levels, level) }
+			at := func(level int) (core.Message, bool) { return entryMessage(p, e, levels, level) }
 			hold := func(m core.Message) bool { return f.views.hold(p.Name, m) }
 			if err := f.layer.SendEntry(ctx, p.Name, f.views.level(p.Name, f.level), at, hold); err != nil {
 				slog.Warn("could not send agent output", "agent", p.Name, "error", err)

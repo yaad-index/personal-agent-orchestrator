@@ -55,7 +55,7 @@ func TestRenderHonoursAProfileLevelOverride(t *testing.T) {
 func TestOnlyTheAgentsOwnWordsAreShownAsMarkdown(t *testing.T) {
 	levels := core.DefaultLevels()
 	words := core.Entry{Kind: core.KindMessage, Role: "assistant", Text: "**done**"}
-	m, ok := entryMessage("a", words, levels, 4)
+	m, ok := entryMessage(core.Profile{Name: "a"}, words, levels, 4)
 	assert.True(t, ok)
 	assert.Equal(t, core.Message{Sender: "a", Kind: core.MessageContent, Text: "**done**", Format: core.FormatMarkdown}, m)
 
@@ -65,11 +65,11 @@ func TestOnlyTheAgentsOwnWordsAreShownAsMarkdown(t *testing.T) {
 		{Kind: core.KindReasoning, Text: "*hm*"},
 		{Kind: core.KindOther, Type: "system/notice", Text: "_x_"},
 	} {
-		m, ok := entryMessage("a", e, levels, 4)
+		m, ok := entryMessage(core.Profile{Name: "a"}, e, levels, 4)
 		assert.True(t, ok, e.Kind)
 		assert.Equal(t, core.FormatPlain, m.Format, "%s is pao's rendering, never parsed", e.Kind)
 	}
 
-	_, ok = entryMessage("a", words, levels, 0)
+	_, ok = entryMessage(core.Profile{Name: "a"}, words, levels, 0)
 	assert.False(t, ok, "not shown below its level")
 }

@@ -51,6 +51,9 @@ func (c *cmdOps) Kill(_ context.Context, name string) (command.Killed, error) {
 	c.calls = append(c.calls, "kill "+name)
 	return command.Killed{Harvest: "h1"}, nil
 }
+func (c *cmdOps) File(_ context.Context, agent, path string) (command.File, error) {
+	return command.File{Name: path, Data: []byte(agent)}, nil
+}
 
 func (c *cmdOps) Decide(_ context.Context, id, decision, _ string) error {
 	c.calls = append(c.calls, decision+" "+id)
@@ -216,4 +219,17 @@ func TestAPressIsTheTypedCommandFromThePresser(t *testing.T) {
 	assert.Equal(t, []string{"allow q1"}, ops.calls, "only the operator's own press decided")
 	assert.Empty(t, r.routed)
 	assert.Len(t, rc.got, 3, "the refused presses are recorded")
+}
+
+// A command that sends a file hands it to the adapter for the sender alone
+// (ADR-0052 point 1).
+func TestAFileCommandsFileReachesTheAdapter(t *testing.T) {
+	l, r, _, _ := chanSetup(t)
+	l.SetCommands(&cmdOps{})
+	res, err := l.ReceiveFromChannel(context.Background(), ChannelInbound{Channel: "chat", Sender: "op", Text: "/pao file a notes/x.md"})
+	require.NoError(t, err)
+	require.NotNil(t, res.File)
+	assert.Equal(t, "notes/x.md", res.File.Name)
+	assert.Equal(t, "a", string(res.File.Data))
+	assert.Empty(t, r.routed)
 }
