@@ -1,6 +1,6 @@
 # ADR 0050: Agent Markdown, rendered natively by each channel
 
-**Status:** Proposed
+**Status:** Accepted
 
 Extends ADR-0010 (the message model) and ADR-0019 (channel adapters). Builds on ADR-0008 (the mirror and its levels), ADR-0009 (the communication layer), ADR-0027 (action buttons) and ADR-0038 (topics as conversations).
 
