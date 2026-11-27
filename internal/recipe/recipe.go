@@ -20,6 +20,7 @@ import (
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/config"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/shell"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/workdir"
 )
 
@@ -104,7 +105,7 @@ func (r Recipe) Instantiate(name, workdir string, locate Locator) (core.Profile,
 	p.Name = name
 	p.Workdir = workdir
 
-	cmdVars := map[string]string{"name": shellQuote(name), "workdir": shellQuote(workdir), "tools": shellQuote(strings.Join(r.Tools, ","))}
+	cmdVars := map[string]string{"name": shell.Quote(name), "workdir": shell.Quote(workdir), "tools": shell.Quote(strings.Join(r.Tools, ","))}
 	rawVars := map[string]string{"name": name, "workdir": workdir, "tools": strings.Join(r.Tools, ",")}
 	p.Startup.Command = substitute(p.Startup.Command, cmdVars)
 	p.Transcript.Path = substitute(p.Transcript.Path, rawVars)
@@ -171,11 +172,6 @@ func substitute(s string, vars map[string]string) string {
 	}
 	b.WriteString(s[last:])
 	return b.String()
-}
-
-// shellQuote quotes s as one word for a POSIX shell.
-func shellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // Parse reads and checks the recipe file at path.

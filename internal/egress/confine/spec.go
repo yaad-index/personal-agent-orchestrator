@@ -3,6 +3,8 @@ package confine
 import (
 	"fmt"
 	"strings"
+
+	"github.com/yaad-index/personal-agent-orchestrator/internal/shell"
 )
 
 // BridgeAddr is where, inside, the command reaches the proxy.
@@ -38,17 +40,17 @@ type Forward struct {
 // inner is run by sh.
 func PaneCommand(self string, s Spec, inner string) string {
 	var b strings.Builder
-	b.WriteString("exec " + shellQuote(self) + " egress-exec --socket " + shellQuote(s.Socket))
+	b.WriteString("exec " + shell.Quote(self) + " egress-exec --socket " + shell.Quote(s.Socket))
 	for _, m := range s.Mask {
-		b.WriteString(" --mask " + shellQuote(m))
+		b.WriteString(" --mask " + shell.Quote(m))
 	}
 	for _, k := range s.Keep {
-		b.WriteString(" --keep " + shellQuote(k))
+		b.WriteString(" --keep " + shell.Quote(k))
 	}
 	for _, f := range s.Forwards {
-		b.WriteString(" --forward " + shellQuote(f.Addr+"="+f.Socket))
+		b.WriteString(" --forward " + shell.Quote(f.Addr+"="+f.Socket))
 	}
-	b.WriteString(" -- sh -c " + shellQuote(inner))
+	b.WriteString(" -- sh -c " + shell.Quote(inner))
 	return b.String()
 }
 
@@ -59,9 +61,4 @@ func ParseForward(v string) (Forward, error) {
 		return Forward{}, fmt.Errorf("forward %q is not addr=socket", v)
 	}
 	return Forward{Addr: addr, Socket: sock}, nil
-}
-
-// shellQuote quotes s as one word for a POSIX shell.
-func shellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

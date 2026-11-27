@@ -9,6 +9,7 @@ import (
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/backend"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/shell"
 )
 
 // Name is the backend name a profile gives to run Claude Code.
@@ -174,7 +175,7 @@ func (Adapter) Command(p core.Profile, l backend.Launch) (backend.Start, error) 
 	b.WriteString(strings.TrimRight(p.Startup.Command, " \t"))
 	for _, a := range args {
 		b.WriteByte(' ')
-		b.WriteString(shellQuote(a))
+		b.WriteString(shell.Quote(a))
 	}
 	return backend.Start{Command: b.String(), Env: env}, nil
 }
@@ -255,9 +256,4 @@ func globEscape(s string) string {
 		b.WriteRune(r)
 	}
 	return b.String()
-}
-
-// shellQuote quotes s as one word for a POSIX shell.
-func shellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
