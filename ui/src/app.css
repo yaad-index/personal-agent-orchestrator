@@ -76,3 +76,15 @@ button.secondary.danger { border-color: var(--bad); }
   .wide-only { display: none; }
   table.agents .row-actions button + button { margin-left: 8px; }
 }
+.facts { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 16px 0; }
+.facts dt { color: var(--muted); }
+.facts dd { margin: 0; word-break: break-word; }
+.pre { white-space: pre-wrap; }
+.check { display: flex; gap: 6px; align-items: center; margin: 8px 0 12px; }
+ol.log { list-style: none; padding: 0; }
+ol.log li { padding: 8px 0; border-bottom: 1px solid var(--line); }
+ol.log .badge { margin-left: 6px; }
+@media (max-width: 560px) {
+  .facts { grid-template-columns: 1fr; gap: 2px; }
+  .facts dd { margin-bottom: 8px; }
+}
