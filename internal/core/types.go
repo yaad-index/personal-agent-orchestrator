@@ -54,6 +54,8 @@ type Profile struct {
 	// Inherit names the categories of the node user's own environment the agent
 	// loads (ADR-0025 point 3). With none, it loads only its profile's and pao's.
 	Inherit []string `yaml:"inherit"`
+	// Tools is what the profile turns off of its backend's own tools.
+	Tools Tools `yaml:"tools"`
 	// Account names the account the agent draws on (ADR-0015 point 3), one of
 	// the node's configured accounts. The account's credential stays in the
 	// orchestrator config, never here (ADR-0015 point 4).
@@ -285,3 +287,30 @@ var (
 	// ErrNoMatch is returned when a target matches no registered agent.
 	ErrNoMatch = errors.New("target matches no agent")
 )
+
+// Tools names the backend's own tools an agent is not given (#179). The tools
+// pao offers through its MCP surface are granted separately (ADR-0016).
+type Tools struct {
+	// Disable names the tools turned off, as the backend names them. Left out,
+	// the node's profile defaults apply; given, even as an empty list, it
+	// replaces them.
+	Disable *[]string `yaml:"disable"`
+}
+
+// WithToolDefaults is p with the node's default tools applied: the profile's
+// own list where it gives one, the default otherwise.
+func (p Profile) WithToolDefaults(d Tools) Profile {
+	if p.Tools.Disable == nil && d.Disable != nil {
+		list := slices.Clone(*d.Disable)
+		p.Tools.Disable = &list
+	}
+	return p
+}
+
+// DisabledTools is the list of tools p turns off, empty when it turns off none.
+func (p Profile) DisabledTools() []string {
+	if p.Tools.Disable == nil {
+		return nil
+	}
+	return *p.Tools.Disable
+}

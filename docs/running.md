@@ -26,3 +26,29 @@ To end every agent as well, stop the agents first (`pao agent stop <name>`, or `
 - **Temporary agents**, task one-offs included, keep running but pao no longer knows them. pao tells the operator which sessions it found and leaves them running. End one with `tmux -L <tmux_socket> kill-session -t pao-<name>`. Its working directory stays where it was.
 - A pending approval question is gone. The agent's tool call was refused when pao stopped, and the agent may ask again.
 - A restart of the tmux server, or of the host, still ends every agent.
+
+## Turning an agent's own tools off
+
+A backend ships tools of its own. Some don't fit an agent that people talk to through a chat. Claude Code's multiple-choice question (`AskUserQuestion`) and plan mode (`EnterPlanMode`, `ExitPlanMode`) open a dialog in the agent's terminal and wait there for an answer. A chat can't give that answer, so the agent waits for good.
+
+Turn tools off for every agent in `pao.yaml`:
+
+```yaml
+profile_defaults:
+  tools:
+    disable: [AskUserQuestion, EnterPlanMode, ExitPlanMode]
+```
+
+This is the recommended default for any node whose agents are reached through a chat. pao turns nothing off on its own: without this block every agent has all its backend's tools.
+
+A profile, or a recipe's profile, can give its own list. That list replaces the default; it isn't added to it:
+
+```yaml
+# profiles/notes.yaml
+tools:
+  disable: [AskUserQuestion, EnterPlanMode, ExitPlanMode, Bash]
+```
+
+An empty list (`disable: []`) gives that agent every tool back. Tools are named as the backend names them. With Claude Code, a turned-off tool is removed from the agent's tool list, and nothing the agent's own settings say can give it back.
+
+A backend that can't turn its tools off refuses a profile that asks it to, whether the list comes from the profile or from `profile_defaults`. pao says so when it loads the configuration.

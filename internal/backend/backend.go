@@ -85,6 +85,12 @@ type Adapter interface {
 	Command(p core.Profile, l Launch) (Start, error)
 }
 
+// ToolDisabler is an adapter whose backend can be started without some of its
+// own tools: Command leaves out every tool in the profile's tools.disable.
+type ToolDisabler interface {
+	DisablesTools()
+}
+
 // Table maps a profile's backend name to its adapter.
 type Table map[string]Adapter
 
@@ -171,6 +177,13 @@ func (t Table) Check(p core.Profile) error {
 		return err
 	}
 	a, ok := t[p.Backend]
+	if off := p.DisabledTools(); len(off) > 0 {
+		// A tool the profile turns off that the backend would still give the
+		// agent is a promise pao could not keep (ADR-0025 point 4).
+		if _, can := a.(ToolDisabler); !ok || !can {
+			return fmt.Errorf("tools.disable names %s, but the %q backend cannot turn its tools off: use a backend that can, or give an empty tools.disable", strings.Join(off, ", "), p.Backend)
+		}
+	}
 	var can []Category
 	if ok {
 		can = a.Isolates()

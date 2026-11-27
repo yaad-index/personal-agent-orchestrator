@@ -52,8 +52,11 @@ type settings struct {
 			} `json:"hooks"`
 		} `json:"PreToolUse"`
 	} `json:"hooks"`
-	Excludes   []string `json:"claudeMdExcludes"`
-	AutoMemory *bool    `json:"autoMemoryEnabled"`
+	Excludes    []string `json:"claudeMdExcludes"`
+	AutoMemory  *bool    `json:"autoMemoryEnabled"`
+	Permissions struct {
+		Deny []string `json:"deny"`
+	} `json:"permissions"`
 }
 
 func settingsOf(t *testing.T, args []string) settings {
@@ -261,4 +264,21 @@ func TestTheBackendPassesItsModelsHostBehindTheEgressPlane(t *testing.T) {
 	assert.Equal(t, []string{APIHost}, hosts)
 	require.NoError(t, egress.CheckHost(APIHost), "a host the proxy accepts")
 	var _ backend.Egresser = Adapter{}
+}
+
+func TestAProfilesDisabledToolsAreDeniedAndNothingElse(t *testing.T) {
+	off := []string{"AskUserQuestion", "Bash"}
+	p := core.Profile{Name: "a", Backend: Name, Workdir: "/srv/agents/a", Tools: core.Tools{Disable: &off}}
+	args, _ := launched(t, p)
+	assert.Equal(t, off, settingsOf(t, args).Permissions.Deny)
+
+	empty := []string{}
+	for _, tools := range []core.Tools{{}, {Disable: &empty}} {
+		p.Tools = tools
+		args, _ = launched(t, p)
+		var raw map[string]any
+		require.NoError(t, json.Unmarshal([]byte(value(t, args, "--settings")), &raw))
+		assert.NotContains(t, raw, "permissions", "no tool turned off, nothing denied")
+	}
+	var _ backend.ToolDisabler = Adapter{}
 }

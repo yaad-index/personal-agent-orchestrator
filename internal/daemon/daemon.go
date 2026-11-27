@@ -266,6 +266,9 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 			return append(env, secrets.Env(agent)...)
 		}),
 		control.WithCommand(func(p core.Profile) (string, []string, error) {
+			// The node's profile defaults apply to every agent, a temporary one's
+			// included, where its profile does not give its own (#179).
+			p = p.WithToolDefaults(cfg.Orchestrator.ProfileDefaults.Tools)
 			s, err := backends.Table().Command(p, launch)
 			if err != nil {
 				return "", nil, err
