@@ -20,7 +20,7 @@ ADR-0055 left open whether the UI may take the credential itself, for pao to sto
 
    The operator provisions the value there, by hand, as for any other secret. The reference is a name, and the UI may set and change it like any other field of the channel.
 
-3. **A secret a channel names is that channel's alone.** No task may name it and no other channel or server may present it, as ADR-0053 point 1 rules for a server's secret. Otherwise a task naming the same secret would bring the channel's credential into an agent's run. A configuration in which a channel's secret is also named elsewhere does not load.
+3. **A secret a channel names is that channel's alone.** No task may name it and no other channel or server may present it, as ADR-0053 point 1 rules for a server's secret. Otherwise a task naming the same secret would bring the channel's credential into an agent's run. The rule is on where the value is, not only on its name: no node secret may be held in the environment variable a channel names, or in the file of a secret a channel names, under another name. A configuration that breaks this, by name or by place, does not load.
 
 4. **The UI may say whether the reference resolves, never what it resolves to.** For a channel's credential, the UI shows only whether the named variable or secret has a value pao can read. It shows no part of the value, its length or a hash of it.
 
