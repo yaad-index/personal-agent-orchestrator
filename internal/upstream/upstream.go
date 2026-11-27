@@ -16,6 +16,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"os/exec"
 	"sort"
 	"strings"
 	"sync"
@@ -67,34 +69,105 @@ type Server struct {
 	client  *mcp.Client
 	httpc   *http.Client
 	timeout time.Duration
+	// secret reads the server's credential; nil for a server that needs none.
+	secret func() (string, error)
 
 	mu      sync.Mutex
 	session *mcp.ClientSession
+
+	// value is the credential as last read, kept apart from mu: a request made
+	// while connecting needs it while mu is held.
+	vmu   sync.RWMutex
+	value string
 }
 
-// New returns the server for cfg; token is the bearer credential, empty for
-// none. Nothing connects until it is used.
-func New(cfg config.MCPUpstream, token string) *Server {
+// New returns the server for cfg. secret reads its credential, and is nil for
+// a server that needs none; it is read each time pao connects (ADR-0053 point
+// 2). Nothing connects until the server is used.
+func New(cfg config.MCPUpstream, secret func() (string, error)) *Server {
 	home := originOf(cfg.URL)
-	return &Server{
-		cfg:    cfg,
-		client: mcp.NewClient(&mcp.Implementation{Name: "pao", Version: "1"}, nil),
-		httpc: &http.Client{
-			Transport: &bearer{token: token, origin: home, next: capped{next: http.DefaultTransport, max: maxResponse}},
-			// A redirect to another origin is not followed: neither the credential
-			// nor what an agent sends the tool goes anywhere but the configured server.
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				if originOf(req.URL.String()) != home {
-					return errOtherOrigin
-				}
-				if len(via) >= maxRedirects {
-					return fmt.Errorf("stopped after %d redirects", maxRedirects)
-				}
-				return nil
-			},
-		},
+	s := &Server{
+		cfg:     cfg,
+		client:  mcp.NewClient(&mcp.Implementation{Name: "pao", Version: "1"}, nil),
+		secret:  secret,
 		timeout: DefaultCallTimeout,
 	}
+	header, prefix := "Authorization", "Bearer "
+	if cfg.Header != "" && !strings.EqualFold(cfg.Header, "Authorization") {
+		header, prefix = cfg.Header, ""
+	}
+	s.httpc = &http.Client{
+		Transport: &bearer{token: s.current, header: header, prefix: prefix, origin: home, next: capped{next: http.DefaultTransport, max: maxResponse}},
+		// A redirect to another origin is not followed: neither the credential
+		// nor what an agent sends the tool goes anywhere but the configured server.
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if originOf(req.URL.String()) != home {
+				return errOtherOrigin
+			}
+			if len(via) >= maxRedirects {
+				return fmt.Errorf("stopped after %d redirects", maxRedirects)
+			}
+			return nil
+		},
+	}
+	return s
+}
+
+// current is the credential as last read, empty before the first connection.
+func (s *Server) current() string {
+	s.vmu.RLock()
+	defer s.vmu.RUnlock()
+	return s.value
+}
+
+// read reads the credential afresh, for a new connection.
+func (s *Server) read() error {
+	if s.secret == nil {
+		return nil
+	}
+	v, err := s.secret()
+	if err != nil {
+		// the reader's own words may name where the secret is kept, never its value
+		return fmt.Errorf("upstream %q could not read its credential: %w", s.cfg.Name, err)
+	}
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return fmt.Errorf("upstream %q: its credential is empty", s.cfg.Name)
+	}
+	s.vmu.Lock()
+	s.value = v
+	s.vmu.Unlock()
+	return nil
+}
+
+// secretMarker replaces the credential wherever a server sends it back.
+const secretMarker = "[credential removed]"
+
+// scrub is text with every occurrence of the credential replaced by the
+// marker: as it is, and as it reads inside a JSON string (ADR-0053 point 3).
+// A transformed credential (encoded, split) is not recognised.
+func (s *Server) scrub(text string) string {
+	v := s.current()
+	if v == "" {
+		return text
+	}
+	text = strings.ReplaceAll(text, v, secretMarker)
+	if b, err := json.Marshal(v); err == nil {
+		if quoted := string(b[1 : len(b)-1]); quoted != v {
+			text = strings.ReplaceAll(text, quoted, secretMarker)
+		}
+	}
+	return text
+}
+
+// scrubJSON is v, marshalled, scrubbed and read back into out.
+func (s *Server) scrubJSON(v, out any) ([]byte, error) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	clean := []byte(s.scrub(string(b)))
+	return clean, json.Unmarshal(clean, out)
 }
 
 // maxRedirects is how many redirects within the server's own origin are followed.
@@ -148,9 +221,13 @@ func (s *Server) Tools(ctx context.Context) (tools []Tool, missing []string, err
 			continue
 		}
 		seen[t.Name] = true
+		var schema any
+		if _, err := s.scrubJSON(t.InputSchema, &schema); err != nil {
+			continue
+		}
 		tools = append(tools, Tool{
 			Name: config.ToolName(s.cfg.Name, t.Name), Upstream: s.cfg.Name, Remote: t.Name,
-			Description: s.describe(t.Description), InputSchema: t.InputSchema,
+			Description: s.describe(t.Description), InputSchema: schema,
 			Tags: conf.Tags, Risk: conf.Risk,
 		})
 	}
@@ -181,10 +258,12 @@ func (s *Server) Call(ctx context.Context, remote string, args any) (*mcp.CallTo
 		s.drop(cs)
 		return nil, s.fail("call "+remote, err)
 	}
-	b, err := json.Marshal(res)
+	var clean mcp.CallToolResult
+	b, err := s.scrubJSON(res, &clean)
 	if err != nil {
 		return nil, s.fail("call "+remote, err)
 	}
+	res = &clean
 	if len(b) > MaxResult {
 		return nil, fmt.Errorf("upstream %q, tool %q: %w (%d bytes, at most %d)", s.cfg.Name, remote, ErrTooLarge, len(b), MaxResult)
 	}
@@ -209,12 +288,36 @@ func (s *Server) connect(ctx context.Context) (*mcp.ClientSession, error) {
 	if s.session != nil {
 		return s.session, nil
 	}
-	cs, err := s.client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: s.cfg.URL, HTTPClient: s.httpc, MaxRetries: -1}, nil)
+	if err := s.read(); err != nil {
+		return nil, err
+	}
+	var t mcp.Transport = &mcp.StreamableClientTransport{Endpoint: s.cfg.URL, HTTPClient: s.httpc, MaxRetries: -1}
+	if len(s.cfg.Command) > 0 {
+		t = &mcp.CommandTransport{Command: s.command()}
+	}
+	cs, err := s.client.Connect(ctx, t, nil)
 	if err != nil {
 		return nil, s.fail("connect", err)
 	}
 	s.session = cs
 	return cs, nil
+}
+
+// command is the local server's process: its configured program, given only
+// PATH, HOME and LANG from pao's environment and the credential in SecretEnv,
+// so nothing else pao holds reaches it.
+func (s *Server) command() *exec.Cmd {
+	cmd := exec.Command(s.cfg.Command[0], s.cfg.Command[1:]...)
+	cmd.Env = []string{}
+	for _, name := range []string{"PATH", "HOME", "LANG"} {
+		if v, ok := os.LookupEnv(name); ok {
+			cmd.Env = append(cmd.Env, name+"="+v)
+		}
+	}
+	if s.cfg.SecretEnv != "" {
+		cmd.Env = append(cmd.Env, s.cfg.SecretEnv+"="+s.current())
+	}
+	return cmd
 }
 
 // drop forgets a session that failed, so the next use connects afresh.
@@ -228,7 +331,7 @@ func (s *Server) drop(cs *mcp.ClientSession) {
 }
 
 func (s *Server) fail(what string, err error) error {
-	msg := err.Error()
+	msg := s.scrub(err.Error())
 	if len(msg) > 300 {
 		msg = msg[:300] + "…"
 	}
@@ -263,6 +366,8 @@ func Offered(cfg []config.MCPUpstream) []Tool {
 }
 
 func (s *Server) describe(d string) string {
+	// scrubbed before it is cut, so a cut never leaves part of the credential
+	d = s.scrub(d)
 	if len(d) > MaxDescription {
 		d = strings.ToValidUTF8(d[:MaxDescription], "") + "…"
 	}
@@ -271,18 +376,23 @@ func (s *Server) describe(d string) string {
 
 // bearer presents the server's credential on every request.
 type bearer struct {
-	token string
+	// token is the credential to send; empty sends none.
+	token func() string
+	// header and prefix are how it is sent: Authorization with "Bearer ", or a
+	// header of the server's own naming with the value as it is.
+	header, prefix string
 	// origin is the configured server's: the only one the token is sent to.
 	origin string
 	next   http.RoundTripper
 }
 
 func (b *bearer) RoundTrip(r *http.Request) (*http.Response, error) {
-	if b.token == "" || b.origin == "" || originOf(r.URL.String()) != b.origin {
+	tok := b.token()
+	if tok == "" || b.origin == "" || originOf(r.URL.String()) != b.origin {
 		return b.next.RoundTrip(r)
 	}
 	r = r.Clone(r.Context())
-	r.Header.Set("Authorization", "Bearer "+b.token)
+	r.Header.Set(b.header, b.prefix+tok)
 	return b.next.RoundTrip(r)
 }
 

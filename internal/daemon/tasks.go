@@ -303,6 +303,19 @@ func (f taskFleet) Tell(ctx context.Context, agent, text string) error {
 // environment, or a file's as it is now. Its errors name the secret and where
 // it was looked for, never a value.
 func resolveSecret(o config.Orchestrator, fromEnv map[string]string) func(name string) ([]byte, error) {
+	read := readSecret(o, fromEnv)
+	return func(name string) ([]byte, error) {
+		// A server's secret is never resolved into a run (ADR-0053 point 1).
+		if o.BoundToUpstream(name) {
+			return nil, fmt.Errorf("no secret named %q is configured", name)
+		}
+		return read(name)
+	}
+}
+
+// readSecret reads a configured secret's value, from the daemon's environment
+// as it was at start or from its file.
+func readSecret(o config.Orchestrator, fromEnv map[string]string) func(name string) ([]byte, error) {
 	return func(name string) ([]byte, error) {
 		s, ok := o.Secret(name)
 		switch {
@@ -344,4 +357,32 @@ func (t taskTools) Proxied(tool string) bool { _, ok := t.tools[tool]; return ok
 func (t taskTools) Reaches(agent, tool string) bool {
 	tags, ok := t.tools[tool]
 	return ok && access.Allowed(t.auth, access.Agent(agent), access.CallTool, access.ToolResource(tool, tags))
+}
+
+// upstreamCredential is how pao reads an upstream server's credential: its
+// bound secret, read afresh each time it is asked, or the token its
+// credential_env held at start; nil for a server that needs none.
+func upstreamCredential(u config.MCPUpstream, o config.Orchestrator, fromEnv map[string]string) func() (string, error) {
+	switch {
+	case u.Secret != "":
+		read := readSecret(o, fromEnv)
+		return func() (string, error) {
+			b, err := read(u.Secret)
+			return string(b), err
+		}
+	case u.CredentialEnv != "":
+		token := os.Getenv(u.CredentialEnv)
+		return func() (string, error) { return token, nil }
+	}
+	return nil
+}
+
+// taskHasSecret says whether a task may name a secret: one that is configured
+// and is not a server's credential, which to a task is not configured
+// (ADR-0053 point 1).
+func taskHasSecret(o config.Orchestrator) func(name string) bool {
+	return func(name string) bool {
+		_, ok := o.Secret(name)
+		return ok && !o.BoundToUpstream(name)
+	}
 }

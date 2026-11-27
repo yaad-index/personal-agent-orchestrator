@@ -110,24 +110,9 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	for _, c := range cfg.Orchestrator.Channels {
 		_ = os.Unsetenv(c.CredentialEnv)
 	}
-	// An upstream MCP server's credential likewise: pao presents it, no agent
-	// ever holds it (ADR-0024 point 2).
-	var upstreams []*upstream.Server
-	for _, u := range cfg.Orchestrator.MCPUpstreams {
-		var cred string
-		if u.CredentialEnv != "" {
-			cred = os.Getenv(u.CredentialEnv)
-		}
-		upstreams = append(upstreams, upstream.New(u, cred))
-	}
-	for _, u := range cfg.Orchestrator.MCPUpstreams {
-		if u.CredentialEnv != "" {
-			_ = os.Unsetenv(u.CredentialEnv)
-		}
-	}
-	// A task's secret held in a variable likewise: read once and taken out of
-	// the environment, so no agent inherits it; only the run that names it is
-	// given it, as a file (ADR-0036 point 3).
+	// A secret held in a variable likewise: read once and taken out of the
+	// environment, so no agent inherits it; only the run that names it is given
+	// it, as a file (ADR-0036 point 3), or the server it is bound to.
 	secretValues := map[string]string{}
 	for _, sec := range cfg.Orchestrator.Secrets {
 		if sec.Env != "" {
@@ -137,6 +122,18 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	for _, sec := range cfg.Orchestrator.Secrets {
 		if sec.Env != "" {
 			_ = os.Unsetenv(sec.Env)
+		}
+	}
+	// An upstream MCP server's credential likewise: pao presents it, no agent
+	// ever holds it (ADR-0024 point 2). A server's secret is read each time pao
+	// connects to it (ADR-0053 point 2).
+	var upstreams []*upstream.Server
+	for _, u := range cfg.Orchestrator.MCPUpstreams {
+		upstreams = append(upstreams, upstream.New(u, upstreamCredential(u, cfg.Orchestrator, secretValues)))
+	}
+	for _, u := range cfg.Orchestrator.MCPUpstreams {
+		if u.CredentialEnv != "" {
+			_ = os.Unsetenv(u.CredentialEnv)
 		}
 	}
 	proxy := upstream.NewCatalog(upstreams...)
@@ -397,7 +394,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		}},
 	}
 	tasks := &task.Service{Store: &task.Store{Root: filepath.Join(cfg.Orchestrator.StateDir, "tasks")}, Auth: auth, Gate: gt,
-		HasSecret: func(name string) bool { _, ok := cfg.Orchestrator.Secret(name); return ok }}
+		HasSecret: taskHasSecret(cfg.Orchestrator)}
 	mcpServer := mcpsrv.New(ops, resolver, mcpsrv.WithAuthorizer(auth), mcpsrv.WithGate(gt), mcpsrv.WithProxy(proxy), mcpsrv.WithGovernor(cfg.Orchestrator.Governor.Agent),
 		mcpsrv.WithChannels(governorChannels(cfg.Orchestrator.Channels, governorServing)), mcpsrv.WithTasks(tasks))
 	mcpServers.Store(mcpServer)

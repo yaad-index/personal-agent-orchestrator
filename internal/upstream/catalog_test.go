@@ -67,7 +67,7 @@ func names(ts []Tool) []string {
 
 func TestACatalogListsEachServerOnceAndKeepsIt(t *testing.T) {
 	a, b := newListedUpstream(t), newListedUpstream(t)
-	c := NewCatalog(New(queryConf("alpha", a.url), ""), New(queryConf("beta", b.url), ""))
+	c := NewCatalog(New(queryConf("alpha", a.url), nil), New(queryConf("beta", b.url), nil))
 	t.Cleanup(func() { _ = c.Close() })
 	ctx := context.Background()
 
@@ -80,7 +80,7 @@ func TestACatalogListsEachServerOnceAndKeepsIt(t *testing.T) {
 func TestAServerThatCannotBeListedOffersNothingAndIsTriedAgainAfterTheRetryInterval(t *testing.T) {
 	a, b := newListedUpstream(t), newListedUpstream(t)
 	b.down.Store(true)
-	c := NewCatalog(New(queryConf("alpha", a.url), ""), New(queryConf("beta", b.url), ""))
+	c := NewCatalog(New(queryConf("alpha", a.url), nil), New(queryConf("beta", b.url), nil))
 	t.Cleanup(func() { _ = c.Close() })
 	now := time.Unix(1000, 0)
 	c.now = func() time.Time { return now }
@@ -97,7 +97,7 @@ func TestAServerThatCannotBeListedOffersNothingAndIsTriedAgainAfterTheRetryInter
 
 func TestOneCallerGivingUpDoesNotSpoilTheListingForTheRest(t *testing.T) {
 	a := newListedUpstream(t)
-	c := NewCatalog(New(queryConf("alpha", a.url), ""))
+	c := NewCatalog(New(queryConf("alpha", a.url), nil))
 	t.Cleanup(func() { _ = c.Close() })
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -106,7 +106,7 @@ func TestOneCallerGivingUpDoesNotSpoilTheListingForTheRest(t *testing.T) {
 
 func TestACatalogCallReachesTheToolOfThatPaoSideName(t *testing.T) {
 	a := newListedUpstream(t)
-	c := NewCatalog(New(queryConf("alpha", a.url), ""))
+	c := NewCatalog(New(queryConf("alpha", a.url), nil))
 	t.Cleanup(func() { _ = c.Close() })
 	res, err := c.Call(context.Background(), "alpha__query", json.RawMessage(`{"q":"x"}`))
 	require.NoError(t, err)
@@ -120,7 +120,7 @@ func TestACatalogCallReachesTheToolOfThatPaoSideName(t *testing.T) {
 
 func TestACatalogUsedAtOnceListsEachServerOnce(t *testing.T) {
 	a := newListedUpstream(t)
-	c := NewCatalog(New(queryConf("alpha", a.url), ""))
+	c := NewCatalog(New(queryConf("alpha", a.url), nil))
 	t.Cleanup(func() { _ = c.Close() })
 	var wg sync.WaitGroup
 	for range 20 {
@@ -178,7 +178,7 @@ func TestAToolWhoseInputIsNotAnObjectIsNotOffered(t *testing.T) {
 		{"name":"array","inputSchema":{"type":"array"}},
 		{"name":"untyped","inputSchema":{}}
 	]`)
-	s := New(config.MCPUpstream{Name: "raw", URL: url, Tools: map[string]config.UpstreamTool{"good": {}, "array": {}, "untyped": {}}}, "")
+	s := New(config.MCPUpstream{Name: "raw", URL: url, Tools: map[string]config.UpstreamTool{"good": {}, "array": {}, "untyped": {}}}, nil)
 	t.Cleanup(func() { _ = s.Close() })
 	tools, missing, err := s.Tools(context.Background())
 	require.NoError(t, err)

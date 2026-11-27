@@ -330,12 +330,28 @@ type MCPUpstream struct {
 	// Name is the server's name: it begins every pao-side name of its tools, as
 	// "<name>__<tool>", so it holds no underscore.
 	Name string `yaml:"name"`
-	// URL is the server's streamable HTTP endpoint.
+	// URL is the server's streamable HTTP endpoint. A server has a URL or a
+	// Command, not both.
 	URL string `yaml:"url"`
+	// Command starts a local server that pao talks to over its standard input
+	// and output: the program and its arguments. The process is pao's, never an
+	// agent's, and it is given only PATH, HOME and LANG from pao's environment,
+	// with the secret where SecretEnv says.
+	Command []string `yaml:"command"`
 	// CredentialEnv names the environment variable holding the bearer token pao
-	// presents to the server, if it needs one. The token never lives in a file and
-	// is never given to an agent.
+	// presents to an HTTP server, if it needs one. The token never lives in a
+	// file and is never given to an agent. Secret is the other way to give one.
 	CredentialEnv string `yaml:"credential_env"`
+	// Secret names one of the node's secrets as the server's credential
+	// (ADR-0053 point 1). A secret named here is this server's alone: no task
+	// may name it, and no other server gets it.
+	Secret string `yaml:"secret"`
+	// Header is the request header an HTTP server takes the secret in. Empty is
+	// Authorization, given as "Bearer <secret>"; any other header is given the
+	// secret as it is.
+	Header string `yaml:"header"`
+	// SecretEnv is the environment variable a local server takes the secret in.
+	SecretEnv string `yaml:"secret_env"`
 	// Tools are the server's tools pao offers, by the server's own tool name. A
 	// tool the server has and this does not name is not offered.
 	Tools map[string]UpstreamTool `yaml:"tools"`
@@ -522,11 +538,8 @@ func checkUpstreams(path string, us []MCPUpstream) error {
 			return fmt.Errorf("%s: name %q is already used", at, u.Name)
 		}
 		names[u.Name] = true
-		if pu, err := url.Parse(u.URL); err != nil || (pu.Scheme != "https" && pu.Scheme != "http") || pu.Host == "" {
-			return fmt.Errorf("%s: url must be an http or https URL", at)
-		}
-		if u.CredentialEnv != "" && !envNamePattern.MatchString(u.CredentialEnv) {
-			return fmt.Errorf("%s: credential_env must name an environment variable", at)
+		if err := checkUpstreamWay(u); err != nil {
+			return fmt.Errorf("%s: %w", at, err)
 		}
 		if len(u.Tools) == 0 {
 			return fmt.Errorf("%s: tools must name at least one of the server's tools", at)
@@ -754,6 +767,9 @@ func load(path string, withMesh bool) (*Config, error) {
 		}
 	}
 	if err := checkSecrets(path, o.Secrets); err != nil {
+		return nil, err
+	}
+	if err := checkUpstreamSecrets(path, o.MCPUpstreams, o.Secrets); err != nil {
 		return nil, err
 	}
 	for i := range o.Secrets {
@@ -1072,4 +1088,85 @@ func checkTools(t core.Tools) error {
 		seen[name] = true
 	}
 	return nil
+}
+
+// headerNamePattern is an HTTP header name (RFC 9110 token).
+var headerNamePattern = regexp.MustCompile("^[A-Za-z0-9!#$%&'*+.^_`|~-]+$")
+
+// checkUpstreamWay checks how pao reaches a server and how it gives it its
+// credential.
+func checkUpstreamWay(u MCPUpstream) error {
+	switch {
+	case u.URL != "" && len(u.Command) > 0:
+		return errors.New("give url or command, not both")
+	case u.URL == "" && len(u.Command) == 0:
+		return errors.New("give url or command")
+	case u.CredentialEnv != "" && u.Secret != "":
+		return errors.New("give credential_env or secret, not both")
+	}
+	if u.Secret != "" && !namePattern.MatchString(u.Secret) {
+		return fmt.Errorf("secret %q is not a secret's name", u.Secret)
+	}
+	if u.URL != "" {
+		if pu, err := url.Parse(u.URL); err != nil || (pu.Scheme != "https" && pu.Scheme != "http") || pu.Host == "" {
+			return errors.New("url must be an http or https URL")
+		}
+		if u.CredentialEnv != "" && !envNamePattern.MatchString(u.CredentialEnv) {
+			return errors.New("credential_env must name an environment variable")
+		}
+		if u.SecretEnv != "" {
+			return errors.New("secret_env is for a local server; an HTTP server takes its secret in a header")
+		}
+		if u.Header != "" && (u.Secret == "" || !headerNamePattern.MatchString(u.Header)) {
+			return errors.New("header must be a header name, and is given only with secret")
+		}
+		return nil
+	}
+	if u.Command[0] == "" {
+		return errors.New("command must name a program")
+	}
+	switch {
+	case u.CredentialEnv != "":
+		return errors.New("credential_env is for an HTTP server; give a local server secret and secret_env")
+	case u.Header != "":
+		return errors.New("header is for an HTTP server; a local server takes its secret in secret_env")
+	case (u.Secret == "") != (u.SecretEnv == ""):
+		return errors.New("a local server's secret needs secret_env, and secret_env needs secret")
+	case u.SecretEnv != "" && !envNamePattern.MatchString(u.SecretEnv):
+		return errors.New("secret_env must name an environment variable")
+	case slices.Contains([]string{"PATH", "HOME", "LANG"}, u.SecretEnv):
+		return fmt.Errorf("secret_env %s is a variable pao sets itself", u.SecretEnv)
+	}
+	return nil
+}
+
+// checkUpstreamSecrets checks each server's secret against the node's
+// secrets: it exists, it is not put into calls through the egress proxy, and
+// no two servers share it (ADR-0053 point 1).
+func checkUpstreamSecrets(path string, us []MCPUpstream, ss []Secret) error {
+	bound := map[string]string{}
+	for i, u := range us {
+		if u.Secret == "" {
+			continue
+		}
+		at := fmt.Sprintf("%s: mcp_upstreams[%d]", path, i)
+		i := slices.IndexFunc(ss, func(s Secret) bool { return s.Name == u.Secret })
+		if i < 0 {
+			return fmt.Errorf("%s: no secret named %q is configured", at, u.Secret)
+		}
+		if ss[i].Inject != nil {
+			return fmt.Errorf("%s: secret %q is injected through the egress proxy; a server's secret is its own", at, u.Secret)
+		}
+		if other, ok := bound[u.Secret]; ok {
+			return fmt.Errorf("%s: secret %q is already the credential of server %q", at, u.Secret, other)
+		}
+		bound[u.Secret] = u.Name
+	}
+	return nil
+}
+
+// BoundToUpstream reports whether the secret named name is a server's
+// credential, which no task may name (ADR-0053 point 1).
+func (o Orchestrator) BoundToUpstream(name string) bool {
+	return name != "" && slices.ContainsFunc(o.MCPUpstreams, func(u MCPUpstream) bool { return u.Secret == name })
 }

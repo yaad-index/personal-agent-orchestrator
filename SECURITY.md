@@ -20,11 +20,19 @@ described later: reads are not asked.
   environment by accident. It is not a barrier: another process of the same
   user can still read the node's own environment or any file that holds it,
   and by default an agent's read-only tools are not stopped from doing so.
-- **Upstream server credentials.** pao reads the credential of each upstream
-  MCP server it proxies once at start, unsets its variable the same way, and
-  presents it itself: an agent reaches an upstream tool only through pao and
-  never holds the credential. The same limit applies: it keeps the credential
-  out of what agents inherit, not out of reach of another process of the user.
+- **Upstream server credentials.** pao presents each upstream MCP server's
+  credential itself: an agent reaches an upstream tool only through pao and
+  never holds the credential. A credential named by `credential_env` is read
+  once at start and its variable unset the same way. One bound as a server's
+  `secret` is read from the node's secrets each time pao connects to the
+  server, and no task can name it. The credential goes only to the server's
+  own origin, and a redirect to another origin is not followed. A local server
+  pao starts gets only `PATH`, `HOME`, `LANG` and its secret from pao's
+  environment. What a server sends back (results, errors, tool descriptions
+  and schemas) has the credential replaced before an agent sees it. A
+  credential the server sends back encoded or split up is not recognised.
+  The same limit as above applies: this keeps the credential out of what
+  agents inherit, not out of reach of another process of the user.
 - **Agent tokens.** Each agent session gets a token it uses to call pao as
   itself (the MCP surface). It ties the identity to a live session and ends
   with it, so a token from a finished session is useless and a name alone is
