@@ -215,6 +215,13 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	// and revoked when the session ends; the MCP address is filled in once the
 	// node is listening.
 	tokens := agenttoken.New()
+	// The token reaches the session through a file only the node user can read,
+	// never a command line, which any local user can read. At start no session
+	// holds a token yet.
+	tokenFiles := agentTokenFiles{dir: filepath.Join(cfg.Orchestrator.StateDir, "agent-tokens")}
+	if err := tokenFiles.reset(); err != nil {
+		return fmt.Errorf("agent tokens: %w", err)
+	}
 	var mcpURL atomic.Pointer[string]
 	launch, err := backendLaunch(cfg.Orchestrator.Gate.AskTimeout)
 	if err != nil {
@@ -249,7 +256,10 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	}
 	ctlOpts = append(ctlOpts,
 		control.WithEnv(func(agent string) []string {
-			env := []string{"PAO_AGENT=" + agent, "PAO_GATE_SOCKET=" + gateSock, backend.EnvAgentToken + "=" + tokens.Mint(agent)}
+			if err := tokenFiles.write(agent, tokens.Mint(agent)); err != nil {
+				slog.Error("could not hand an agent its token; its calls to pao will be refused", "agent", agent, "error", err)
+			}
+			env := []string{"PAO_AGENT=" + agent, "PAO_GATE_SOCKET=" + gateSock}
 			if u := mcpURL.Load(); u != nil {
 				env = append(env, backend.EnvMCPURL+"="+*u)
 			}
@@ -260,7 +270,11 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 			if err != nil {
 				return "", nil, err
 			}
-			return egressPl.wrap(p, s.Command, s.Env)
+			command, env, err := egressPl.wrap(p, s.Command, s.Env)
+			if err != nil {
+				return "", nil, err
+			}
+			return tokenFiles.load(p.Name, command), env, nil
 		}),
 		// A backend's start-up question, such as Claude Code's whether to trust
 		// the working directory, is answered for an agent the operator configured,
@@ -279,6 +293,9 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		}),
 		control.WithOnStop(func(agent string) {
 			tokens.Revoke(agent)
+			if err := tokenFiles.remove(agent); err != nil {
+				slog.Warn("could not remove an agent's token", "agent", agent, "error", err)
+			}
 			forgetMCP(agent)
 			if err := secrets.Wipe(agent); err != nil {
 				slog.Warn("could not wipe an agent's run secrets", "agent", agent, "error", err)

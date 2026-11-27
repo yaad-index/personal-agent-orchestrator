@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"os"
 	osexec "os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -41,6 +43,15 @@ func sessionEnv(t *testing.T, n *node, agent, name string) string {
 	return v
 }
 
+// agentToken is the token pao handed the agent's session, read from where pao
+// keeps it.
+func agentToken(t *testing.T, n *node, agent string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(n.stateDir, "agent-tokens", agent))
+	require.NoError(t, err)
+	return string(b)
+}
+
 func mcpStatus(t *testing.T, url, token string) int {
 	t.Helper()
 	req, err := http.NewRequest("POST", url+"/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
@@ -66,7 +77,7 @@ func TestEveryAgentIsStartedWithItsOwnTokenAndTheNodesAddressButNotTheOperatorsT
 	n := startTempNode(t, map[string]string{"fake": goodRecipe("fake")}, config.Temp{})
 	spawnTwo(t, n)
 
-	a, b := sessionEnv(t, n, "tmp-a", "PAO_AGENT_TOKEN"), sessionEnv(t, n, "tmp-b", "PAO_AGENT_TOKEN")
+	a, b := agentToken(t, n, "tmp-a"), agentToken(t, n, "tmp-b")
 	assert.Regexp(t, regexp.MustCompile(`^[0-9a-f]{64}$`), a)
 	assert.NotEqual(t, a, b, "one token per agent")
 	assert.NotEqual(t, token, a)
@@ -77,13 +88,13 @@ func TestEveryAgentIsStartedWithItsOwnTokenAndTheNodesAddressButNotTheOperatorsT
 	_, err := n.client.Post(context.Background(), "human", "wake up", "name", "boss")
 	require.NoError(t, err)
 	_ = n.next(t)
-	assert.Regexp(t, regexp.MustCompile(`^[0-9a-f]{64}$`), sessionEnv(t, n, "boss", "PAO_AGENT_TOKEN"))
+	assert.Regexp(t, regexp.MustCompile(`^[0-9a-f]{64}$`), agentToken(t, n, "boss"))
 }
 
 func TestAnAgentsTokenIsTheAgentNotTheOperator(t *testing.T) {
 	n := startTempNode(t, map[string]string{"fake": goodRecipe("fake")}, config.Temp{})
 	spawnTwo(t, n)
-	agent := mcpSession(t, n, sessionEnv(t, n, "tmp-a", "PAO_AGENT_TOKEN"))
+	agent := mcpSession(t, n, agentToken(t, n, "tmp-a"))
 
 	// With the default seam an agent sees and can do nothing; the operator
 	// would see both agents and boss.
@@ -109,7 +120,7 @@ func TestAnAgentsTokenIsTheAgentNotTheOperator(t *testing.T) {
 func TestAnAgentSpeaksAsItselfOnceTheSeamAllowsIt(t *testing.T) {
 	n := startTempNode(t, map[string]string{"fake": goodRecipe("fake")}, config.Temp{}, withAgentsAllowed)
 	spawnTwo(t, n)
-	a := mcpSession(t, n, sessionEnv(t, n, "tmp-a", "PAO_AGENT_TOKEN"))
+	a := mcpSession(t, n, agentToken(t, n, "tmp-a"))
 
 	out := mcpCall[struct {
 		Agents []struct {
@@ -126,7 +137,7 @@ func TestAnAgentSpeaksAsItselfOnceTheSeamAllowsIt(t *testing.T) {
 
 	// tmp-b cannot speak as tmp-a with its own token, and tmp-a's token does not
 	// become tmp-b's.
-	b := mcpSession(t, n, sessionEnv(t, n, "tmp-b", "PAO_AGENT_TOKEN"))
+	b := mcpSession(t, n, agentToken(t, n, "tmp-b"))
 	_ = mcpCall[struct {
 		Delivered []struct{ Agent string } `json:"delivered"`
 	}](t, b, "send_message", map[string]any{"name": "tmp-a", "text": "back"})
@@ -136,7 +147,7 @@ func TestAnAgentSpeaksAsItselfOnceTheSeamAllowsIt(t *testing.T) {
 func TestAnAgentsKillOfAPeerWaitsForTheOperatorsAnswer(t *testing.T) {
 	n := startTempNode(t, map[string]string{"fake": goodRecipe("fake")}, config.Temp{}, withAgentsAllowed)
 	spawnTwo(t, n)
-	a := mcpSession(t, n, sessionEnv(t, n, "tmp-a", "PAO_AGENT_TOKEN"))
+	a := mcpSession(t, n, agentToken(t, n, "tmp-a"))
 
 	type result struct {
 		res *mcp.CallToolResult
@@ -178,7 +189,7 @@ func TestAnAgentsKillOfAPeerWaitsForTheOperatorsAnswer(t *testing.T) {
 func TestADeniedAgentKillKillsNothing(t *testing.T) {
 	n := startTempNode(t, map[string]string{"fake": goodRecipe("fake")}, config.Temp{}, withAgentsAllowed)
 	spawnTwo(t, n)
-	a := mcpSession(t, n, sessionEnv(t, n, "tmp-a", "PAO_AGENT_TOKEN"))
+	a := mcpSession(t, n, agentToken(t, n, "tmp-a"))
 
 	done := make(chan *mcp.CallToolResult, 1)
 	go func() {
@@ -208,8 +219,8 @@ func TestADeniedAgentKillKillsNothing(t *testing.T) {
 func TestATokenEndsWithItsAgentsSession(t *testing.T) {
 	n := startTempNode(t, map[string]string{"fake": goodRecipe("fake")}, config.Temp{})
 	spawnTwo(t, n)
-	tokA := sessionEnv(t, n, "tmp-a", "PAO_AGENT_TOKEN")
-	tokB := sessionEnv(t, n, "tmp-b", "PAO_AGENT_TOKEN")
+	tokA := agentToken(t, n, "tmp-a")
+	tokB := agentToken(t, n, "tmp-b")
 	assert.Equal(t, http.StatusOK, mcpStatus(t, n.url, tokA))
 
 	_, err := n.client.Kill(context.Background(), "tmp-a")
@@ -221,7 +232,7 @@ func TestATokenEndsWithItsAgentsSession(t *testing.T) {
 	// The name respawned is a new session with a new token; the old one stays dead.
 	_, err = n.client.Spawn(context.Background(), "fake", "tmp-a", "", "")
 	require.NoError(t, err)
-	fresh := sessionEnv(t, n, "tmp-a", "PAO_AGENT_TOKEN")
+	fresh := agentToken(t, n, "tmp-a")
 	assert.NotEqual(t, tokA, fresh)
 	assert.Equal(t, http.StatusUnauthorized, mcpStatus(t, n.url, tokA))
 	assert.Equal(t, http.StatusOK, mcpStatus(t, n.url, fresh))
@@ -230,7 +241,7 @@ func TestATokenEndsWithItsAgentsSession(t *testing.T) {
 func TestATokenStopsWorkingWhenItsSessionDiesEvenIfNobodyRevokedIt(t *testing.T) {
 	n := startTempNode(t, map[string]string{"fake": goodRecipe("fake")}, config.Temp{})
 	spawnTwo(t, n)
-	tok := sessionEnv(t, n, "tmp-a", "PAO_AGENT_TOKEN")
+	tok := agentToken(t, n, "tmp-a")
 	require.Equal(t, http.StatusOK, mcpStatus(t, n.url, tok))
 
 	// The session ends on its own, not through a kill.
@@ -243,7 +254,7 @@ func TestTheOperatorsTokenStillWorksAndAnAgentsIsNotTheOperators(t *testing.T) {
 	spawnTwo(t, n)
 	assert.Equal(t, http.StatusOK, mcpStatus(t, n.url, token))
 	assert.Equal(t, http.StatusUnauthorized, mcpStatus(t, n.url, "PAO_AGENT_TOKEN"))
-	assert.Equal(t, http.StatusUnauthorized, mcpStatus(t, n.url, sessionEnv(t, n, "tmp-a", "PAO_AGENT_TOKEN")[:60]))
+	assert.Equal(t, http.StatusUnauthorized, mcpStatus(t, n.url, agentToken(t, n, "tmp-a")[:60]))
 }
 
 // mcpOpen starts an MCP session with token and returns its id.
@@ -287,9 +298,9 @@ func TestAnAgentsMCPSessionsEndWithItsSession(t *testing.T) {
 
 	// Restarted through pao: the agent's earlier session is not there for its
 	// next run, which has the same name.
-	old := mcpOpen(t, n.url, sessionEnv(t, n, "a", "PAO_AGENT_TOKEN"))
+	old := mcpOpen(t, n.url, agentToken(t, n, "a"))
 	require.NoError(t, n.client.AgentAction(ctx, "a", "restart"))
-	fresh := sessionEnv(t, n, "a", "PAO_AGENT_TOKEN")
+	fresh := agentToken(t, n, "a")
 	assert.Equal(t, http.StatusOK, mcpInSession(t, n.url, fresh, mcpOpen(t, n.url, fresh)), "its new run opens its own")
 	assert.Equal(t, http.StatusNotFound, mcpInSession(t, n.url, fresh, old), "the earlier run's session is gone")
 
@@ -297,11 +308,11 @@ func TestAnAgentsMCPSessionsEndWithItsSession(t *testing.T) {
 	old = mcpOpen(t, n.url, fresh)
 	require.NoError(t, osexec.Command("tmux", "-L", n.sock, "kill-session", "-t", "=pao-a").Run())
 	require.NoError(t, n.client.AgentAction(ctx, "a", "restart"))
-	fresh = sessionEnv(t, n, "a", "PAO_AGENT_TOKEN")
+	fresh = agentToken(t, n, "a")
 	assert.Equal(t, http.StatusNotFound, mcpInSession(t, n.url, fresh, old), "a session nobody killed is let go when the agent is restarted")
 
 	// Another agent's session is untouched.
-	tokB := sessionEnv(t, n, "b", "PAO_AGENT_TOKEN")
+	tokB := agentToken(t, n, "b")
 	other := mcpOpen(t, n.url, tokB)
 	require.NoError(t, n.client.AgentAction(ctx, "a", "restart"))
 	assert.Equal(t, http.StatusOK, mcpInSession(t, n.url, tokB, other))

@@ -22,7 +22,7 @@ func TestTheNodesNarrowerSetBoundsWhatItsGovernorProposes(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "echo: [alice]: list my agents", n.next(t).Text, "the request reached the governor, which answers alice")
 
-	cs := mcpSession(t, n, sessionEnv(t, n, "gov", "PAO_AGENT_TOKEN"))
+	cs := mcpSession(t, n, agentToken(t, n, "gov"))
 	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "propose_command", Arguments: map[string]any{"command": "/pao view gov pause"}})
 	require.NoError(t, err)
 	require.True(t, res.IsError, "view is outside the node's set")
@@ -107,14 +107,14 @@ func TestTheGovernorReadsWhatItsOwnGrantsReach(t *testing.T) {
 	}
 
 	require.NoError(t, n.client.AgentAction(ctx, "gov", "start"))
-	cs := mcpSession(t, n, sessionEnv(t, n, "gov", "PAO_AGENT_TOKEN"))
+	cs := mcpSession(t, n, agentToken(t, n, "gov"))
 	assert.Empty(t, names(cs), "serving no request, the governor reads nothing")
 	assert.Empty(t, channels(cs), "not even the channels")
 
 	_, err = n.client.Post(ctx, "alice", "/gpao list my agents", "name", "gov")
 	require.NoError(t, err)
 	assert.Equal(t, "echo: [alice]: list my agents", n.next(t).Text)
-	cs = mcpSession(t, n, sessionEnv(t, n, "gov", "PAO_AGENT_TOKEN"))
+	cs = mcpSession(t, n, agentToken(t, n, "gov"))
 	assert.ElementsMatch(t, []string{"gov", "bee", "wasp"}, names(cs), "what its own grants reach: wasp too, though the requester does not reach it")
 	assert.Equal(t, []string{"local"}, channels(cs))
 
