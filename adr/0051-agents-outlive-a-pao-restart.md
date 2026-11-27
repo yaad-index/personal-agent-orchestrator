@@ -16,7 +16,7 @@ Keeping the session alive is not enough on its own. An agent calls pao's MCP sur
 
 1. **An agent's session outlives pao.** The multiplexer server that holds the agents' sessions is not stopped when pao stops. Stopping pao, restarting it or replacing its binary leaves every agent running. Only an explicit stop, restart or kill of an agent ends its session (ADR-0007 point 5, ADR-0006 point 3).
 
-2. **On start, pao adopts the agents it finds running.** For each live session of an agent it knows (a configured agent, a temporary agent or a task one-off from its own records), pao takes the agent back as it is: it registers it, follows its transcript again from where it stands and delivers to it, and does not start it again. A session of an agent pao no longer knows is reported to the operator and left running, never killed.
+2. **On start, pao adopts the agents it has a lasting record of.** Those are a configured agent, whose profile is in the node's configuration, and a task one-off, whose run is in the task store (ADR-0037). For each such agent with a live session, pao takes the agent back as it is: it registers it, follows its transcript again from where it stands and delivers to it, and does not start it again. A temporary agent spawned from a recipe (ADR-0006) is known only to the pao process that spawned it, so after a restart its live session is treated as unknown. Any session pao has no record for is reported to the operator and left running, never killed.
 
 3. **An agent keeps its identity across a restart.** The token an agent calls pao with lasts for its session, not for one run of pao. pao keeps it in its state, readable by the node user alone, and an adopted agent's calls are accepted as before. A token is handed to a session without appearing in any process's command line.
 
@@ -28,13 +28,14 @@ Keeping the session alive is not enough on its own. An agent calls pao's MCP sur
 ## What this ADR deliberately does NOT decide
 
 - How the multiplexer server is kept apart from pao on a given host (a service manager setting, a separate unit, a launcher). That is deployment, and the docs say how.
+- Keeping a lasting record of a running temporary agent so that it, too, can be adopted. Until that is decided, a temporary agent outlives a restart only as a reported session the operator can inspect and kill.
 - Adoption across nodes. Each node adopts its own agents (ADR-0013 point 4).
 - Whether a one-off's injected credential may be resolved again after a restart. ADR-0049 keeps the value in one process's memory, and this ADR does not reopen that.
 - A restart of the multiplexer server itself, or of the host, which still ends every session. Resuming a harness's own saved conversation in a new session is a backend matter, not this ADR's.
 
 ## Consequences
 
-Deploying pao, or changing a profile that needs a restart, no longer costs any agent its conversation. A profile change that alters an agent's own start command still takes effect only when that agent is restarted, now an explicit act, so the operator chooses when an agent gives up its context.
+Deploying pao, or changing a profile that needs a restart, no longer costs a configured agent or a task one-off its conversation. A temporary agent from a recipe still loses its place in pao, though its session is kept for the operator to look at. A profile change that alters an agent's own start command still takes effect only when that agent is restarted, now an explicit act, so the operator chooses when an agent gives up its context.
 
 pao's state now holds each running agent's token, readable by the node user alone. A token handed through a session's environment no longer passes through a command line, where any local user could read it.
 
