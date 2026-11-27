@@ -1,6 +1,7 @@
 # ADR 0001: pao is a per-machine node mesh that routes input to agents
 
 **Status:** Accepted (2026-11-12)
+**Superseded-by:** ADR-0054 (pao driven from chat, set up, launched and bound from its UI; keeps points 0-4, replaces point 5)
 
 ## Context
 
