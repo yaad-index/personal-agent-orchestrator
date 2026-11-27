@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -169,4 +171,85 @@ func TestAServerThatForgetsTheSessionFailsOneCallAndTheNextReconnects(t *testing
 	_, err = s.Call(context.Background(), "query", map[string]any{"q": "3"})
 	require.NoError(t, err, "the next use connects afresh")
 	assert.Equal(t, int32(2), calls.Load())
+}
+
+// recorder is a server on another origin that records whether anything, or any
+// credential, reached it.
+type recorder struct {
+	url  string
+	hits atomic.Int32
+	auth atomic.Value
+}
+
+func newRecorder(t *testing.T) *recorder {
+	t.Helper()
+	r := &recorder{}
+	r.auth.Store("")
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		r.hits.Add(1)
+		if a := req.Header.Get("Authorization"); a != "" {
+			r.auth.Store(a)
+		}
+		http.Error(w, "nothing here", http.StatusNotFound)
+	}))
+	t.Cleanup(ts.Close)
+	r.url = ts.URL
+	return r
+}
+
+func TestARedirectToAnotherOriginIsNotFollowedAndGetsNoCredential(t *testing.T) {
+	away := newRecorder(t)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, away.url+r.URL.Path, http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(ts.Close)
+	s := New(conf(ts.URL), "tok")
+	t.Cleanup(func() { _ = s.Close() })
+
+	_, err := s.Call(context.Background(), "query", map[string]any{"q": "pao"})
+	require.Error(t, err)
+	assert.Equal(t, int32(0), away.hits.Load(), "the other origin is never asked, so neither the token nor the call reaches it")
+	assert.Equal(t, "", away.auth.Load())
+	assert.NotContains(t, err.Error(), "tok")
+}
+
+func TestARedirectWithinTheServersOwnOriginIsFollowed(t *testing.T) {
+	f := newFakeUpstream(t, "tok")
+	mux := http.NewServeMux()
+	target, err := url.Parse(f.url)
+	require.NoError(t, err)
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	mux.HandleFunc("/old", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/new", http.StatusTemporaryRedirect)
+	})
+	mux.Handle("/new", proxy)
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+	s := New(conf(ts.URL+"/old"), "tok")
+	t.Cleanup(func() { _ = s.Close() })
+	res, err := s.Call(context.Background(), "query", map[string]any{"q": "pao"})
+	require.NoError(t, err, "the server moving an endpoint within its own origin still works, credential and all")
+	assert.Equal(t, "found pao", res.Content[0].(*mcp.TextContent).Text)
+}
+
+func TestTheTokenIsOnlyEverSentToTheConfiguredOrigin(t *testing.T) {
+	away := newRecorder(t)
+	b := &bearer{token: "tok", origin: originOf("https://mcp.example:443/x"), next: http.DefaultTransport}
+	req, err := http.NewRequest(http.MethodGet, away.url, nil)
+	require.NoError(t, err)
+	resp, err := b.RoundTrip(req)
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	assert.Equal(t, int32(1), away.hits.Load())
+	assert.Equal(t, "", away.auth.Load(), "a request to another origin carries no credential, however it was made")
+
+	for raw, want := range map[string]string{
+		"https://MCP.example/a":      "https://mcp.example:443",
+		"https://mcp.example:443/b":  "https://mcp.example:443",
+		"http://mcp.example/c":       "http://mcp.example:80",
+		"https://mcp.example:8443/d": "https://mcp.example:8443",
+		"not a url":                  "",
+	} {
+		assert.Equal(t, want, originOf(raw), raw)
+	}
 }
