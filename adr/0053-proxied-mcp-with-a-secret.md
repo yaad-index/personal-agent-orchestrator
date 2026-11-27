@@ -1,6 +1,6 @@
 # ADR 0053: A proxied MCP server whose credential is a secret pao holds
 
-**Status:** Proposed
+**Status:** Accepted
 
 Extends ADR-0024 (pao as the MCP proxy). Builds on ADR-0037 (secrets and where they live), ADR-0049 (credential injection at the boundary, and the scrub on the way back), ADR-0044 (the tag as the grant), ADR-0012 (default-deny, and no existence leak), ADR-0004 (the gate), ADR-0042 point 5 and ADR-0043 point 4 (the rules for a run that resolved a secret), and ADR-0025 point 4 (a guarantee pao cannot keep is never reported as kept).
 
