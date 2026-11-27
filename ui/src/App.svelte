@@ -15,6 +15,7 @@
   import HarvestView from "./pages/HarvestView.svelte";
   import Rejected from "./pages/Rejected.svelte";
   import Approvals from "./pages/Approvals.svelte";
+  import Watch from "./pages/Watch.svelte";
 
   // checking: asking whether the cookie is still good; out: the login form;
   // in: the pages.
@@ -60,6 +61,7 @@
       <a href="#/node" class:active={page === "node"}>Node</a>
       <a href="#/agents" class:active={page === "agents"}>Agents</a>
       <a href="#/approvals" class:active={page === "approvals"}>Approvals</a>
+      <a href="#/watch" class:active={page.startsWith("watch")}>Watch</a>
       <a href="#/tasks" class:active={page.startsWith("tasks")}>Tasks</a>
       <a href="#/bindings" class:active={page === "bindings"}>Bindings</a>
       <a href="#/harvests" class:active={page.startsWith("harvests")}>Harvests</a>
@@ -75,6 +77,10 @@
       <Agents onLost={lost} />
     {:else if page === "approvals"}
       <Approvals onLost={lost} />
+    {:else if page === "watch"}
+      <Watch onLost={lost} />
+    {:else if page.startsWith("watch/")}
+      {#key page}<Watch agent={decodeURIComponent(page.slice("watch/".length))} onLost={lost} />{/key}
     {:else if page === "harvests"}
       <Harvests onLost={lost} />
     {:else if page.startsWith("harvests/")}

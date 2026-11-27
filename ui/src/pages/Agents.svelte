@@ -90,6 +90,7 @@
             <td><span class="state" class:running={a.state === "running"}>{a.state}</span></td>
             <td class="wide-only">{a.temporary ? "temporary" : "configured"}</td>
             <td class="row-actions">
+              <a class="link" href={"#/watch/" + encodeURIComponent(a.name)}>Watch</a>
               {#if a.temporary}
                 <button class="link danger" disabled={!!busy} onclick={() => remove(a)}>Kill</button>
               {:else if a.state === "running"}
