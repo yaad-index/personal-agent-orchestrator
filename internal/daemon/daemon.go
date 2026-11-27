@@ -675,13 +675,7 @@ func (f *followers) start(p core.Profile) {
 		err := m.Follow(ctx, path, mirror.FromEnd, func(e core.Entry) {
 			// Any line the agent writes is activity, shown to the human or not.
 			f.reg.Touch(p.Name, time.Now(), false)
-			at := func(level int) (core.Message, bool) {
-				text, ok := render(e, levels, level)
-				if !ok {
-					return core.Message{}, false
-				}
-				return core.Message{Sender: p.Name, Kind: core.MessageContent, Text: text, Time: e.Time}, true
-			}
+			at := func(level int) (core.Message, bool) { return entryMessage(p.Name, e, levels, level) }
 			hold := func(m core.Message) bool { return f.views.hold(p.Name, m) }
 			if err := f.layer.SendEntry(ctx, p.Name, f.views.level(p.Name, f.level), at, hold); err != nil {
 				slog.Warn("could not send agent output", "agent", p.Name, "error", err)

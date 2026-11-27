@@ -83,6 +83,7 @@ type shown struct {
 	chat int64
 	id   int
 	text string
+	ents []models.MessageEntity
 }
 
 // New builds the adapter from its spec. The options are: endpoint (required), a URL
@@ -502,16 +503,24 @@ func fitsPressAnswer(s string) bool {
 }
 
 func (b *Bot) reply(ctx context.Context, at addr, text string) {
-	if _, err := b.send(ctx, at, text, nil); err != nil {
+	if _, err := b.send(ctx, at, piece{text: text}, nil); err != nil {
 		slog.Warn("channel could not reply", "channel", b.name, "error", err)
 	}
 }
 
 // send posts one message to a chat, or to a topic of it, with buttons when keys is
 // set, and returns the service's id for it. A chat itself is sent to with no topic
-// named, as before topics (ADR-0038 point 11).
-func (b *Bot) send(ctx context.Context, at addr, text string, keys models.ReplyMarkup) (int, error) {
-	m, err := b.api.SendMessage(ctx, &api.SendMessageParams{ChatID: at.chat, MessageThreadID: at.topic, Text: text, ReplyMarkup: keys})
+// named, as before topics (ADR-0038 point 11). If the service refuses a formatted
+// message as a bad request, the same text is sent again as plain text, so a
+// message is never lost to its formatting (ADR-0050 point 5).
+func (b *Bot) send(ctx context.Context, at addr, p piece, keys models.ReplyMarkup) (int, error) {
+	params := &api.SendMessageParams{ChatID: at.chat, MessageThreadID: at.topic, Text: p.text, Entities: p.ents, ReplyMarkup: keys}
+	m, err := b.api.SendMessage(ctx, params)
+	if err != nil && len(p.ents) > 0 && errors.Is(err, api.ErrorBadRequest) {
+		slog.Warn("channel's formatting was refused, sending the message as plain text", "channel", b.name, "error", b.describe(err))
+		params.Entities = nil
+		m, err = b.api.SendMessage(ctx, params)
+	}
 	if err != nil {
 		return 0, b.describe(err)
 	}
@@ -537,7 +546,7 @@ func (b *Bot) SendNative(ctx context.Context, m core.Message) ([]string, error) 
 			errs = append(errs, err)
 			continue
 		}
-		pieces := split(b.line(m, to), b.limit)
+		pieces := pieces(b.compose(m, to), b.limit)
 		for i, p := range pieces {
 			var markup models.ReplyMarkup
 			if keys != nil && i == len(pieces)-1 {
@@ -552,7 +561,7 @@ func (b *Bot) SendNative(ctx context.Context, m core.Message) ([]string, error) 
 				natives = append(natives, native(at.chat, id))
 			}
 			if markup != nil {
-				b.remember(m.ID, shown{chat: at.chat, id: id, text: p})
+				b.remember(m.ID, shown{chat: at.chat, id: id, text: p.text, ents: p.ents})
 			}
 		}
 	}
@@ -574,22 +583,41 @@ func (b *Bot) line(m core.Message, conversation string) string {
 func split(text string, limit int) []string {
 	r := []rune(text)
 	var out []string
-	for len(r) > limit {
-		cut := limit
-		for i := limit; i > limit/2; i-- {
+	for _, c := range cuts(r, limit) {
+		out = append(out, string(r[c[0]:c[1]]))
+	}
+	return out
+}
+
+// cuts are where split cuts r: the start and end of each piece, with the spaces
+// and line breaks at a cut left out of both pieces.
+func cuts(r []rune, limit int) [][2]int {
+	blank := func(c rune) bool { return c == ' ' || c == '\n' }
+	var out [][2]int
+	s := 0
+	for len(r)-s > limit {
+		cut := s + limit
+		for i := s + limit; i > s+limit/2; i-- {
 			if r[i] == '\n' {
 				cut = i
 				break
 			}
-			if r[i] == ' ' && cut == limit {
+			if r[i] == ' ' && cut == s+limit {
 				cut = i
 			}
 		}
-		out = append(out, strings.TrimRight(string(r[:cut]), " \n"))
-		r = []rune(strings.TrimLeft(string(r[cut:]), " \n"))
+		end := cut
+		for end > s && blank(r[end-1]) {
+			end--
+		}
+		out = append(out, [2]int{s, end})
+		s = cut
+		for s < len(r) && blank(r[s]) {
+			s++
+		}
 	}
-	if len(r) > 0 || len(out) == 0 {
-		out = append(out, string(r))
+	if s < len(r) || len(out) == 0 {
+		out = append(out, [2]int{s, len(r)})
 	}
 	return out
 }
@@ -645,8 +673,9 @@ func (b *Bot) CloseActions(ctx context.Context, id, outcome string) error {
 	b.mu.Unlock()
 	var errs []error
 	for _, c := range copies {
+		text, kept := closed(c.text, outcome, b.limit)
 		_, err := b.api.EditMessageText(ctx, &api.EditMessageTextParams{
-			ChatID: c.chat, MessageID: c.id, Text: closed(c.text, outcome, b.limit),
+			ChatID: c.chat, MessageID: c.id, Text: text, Entities: within(c.ents, units(kept)),
 			ReplyMarkup: &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{}},
 		})
 		if err != nil {
@@ -656,13 +685,16 @@ func (b *Bot) CloseActions(ctx context.Context, id, outcome string) error {
 	return errors.Join(errs...)
 }
 
-// closed is a copy's text with its outcome under it, kept within limit.
-func closed(text, outcome string, limit int) string {
+// closed is a copy's text with its outcome under it, kept within limit, and the
+// part of the copy's own text that was kept, which its formatting may cover.
+func closed(text, outcome string, limit int) (string, string) {
 	tail := "\n\n— " + outcome
+	kept := text
 	if r := []rune(text); len(r)+len([]rune(tail)) > limit {
-		text = string(r[:max(0, limit-len([]rune(tail))-1)]) + "…"
+		kept = string(r[:max(0, limit-len([]rune(tail))-1)])
+		text = kept + "…"
 	}
-	return text + tail
+	return text + tail, kept
 }
 
 // press hands a button press to the layer as the command the button carries,
@@ -678,7 +710,7 @@ func (b *Bot) press(ctx context.Context, q *models.CallbackQuery) {
 	answer := ""
 	defer func() {
 		if !fitsPressAnswer(answer) {
-			if _, err := b.send(ctx, addr{chat: q.From.ID}, answer, nil); err != nil {
+			if _, err := b.send(ctx, addr{chat: q.From.ID}, piece{text: answer}, nil); err != nil {
 				slog.Warn("channel could not send a press's answer to the presser's private chat", "channel", b.name, "error", err)
 			} else {
 				answer = pressAnsweredPrivately

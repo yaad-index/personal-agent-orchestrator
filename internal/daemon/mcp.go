@@ -169,6 +169,15 @@ func senderName(who access.Subject) (string, bool) {
 	}
 }
 
+// sentFormat is how a message sent through the MCP surface is written: an
+// agent's words are Markdown, the operator's are plain (ADR-0050 point 2).
+func sentFormat(who access.Subject) core.Format {
+	if who.Kind == access.KindAgent {
+		return core.FormatMarkdown
+	}
+	return core.FormatPlain
+}
+
 func (o mcpOps) Send(ctx context.Context, who access.Subject, byTag bool, target, text string, approve func() error) ([]mcpsrv.Delivered, error) {
 	sender, ok := senderName(who)
 	if !ok {
@@ -196,7 +205,7 @@ func (o mcpOps) Send(ctx context.Context, who access.Subject, byTag bool, target
 		return nil, err
 	}
 	d, err := o.layer.Receive(ctx, comm.Inbound{
-		Source: "mcp", Sender: sender, Text: text, Kind: core.MessageContent,
+		Source: "mcp", Sender: sender, Text: text, Kind: core.MessageContent, Format: sentFormat(who),
 		Target: core.Target{Kind: kind, Value: target},
 		// Routing is bounded by what the caller may address: an agent it may
 		// not is left out, and when none is left the target matches nothing.

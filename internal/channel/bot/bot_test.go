@@ -87,6 +87,8 @@ type server struct {
 	polls    []map[string]string
 	sent     []map[string]string
 	edits    []map[string]string
+	refused  []map[string]string
+	attempts int // sends tried, answered or not
 	answers  []map[string]string
 	failEdit bool
 	nextID   int64
@@ -98,6 +100,9 @@ type server struct {
 	describe string
 	// huge makes a send answer with more than the adapter reads.
 	huge bool
+	// refuseEntities answers a send that carries formatting with a bad request,
+	// as the service does when it cannot use the formatting.
+	refuseEntities bool
 }
 
 func newServer(t *testing.T) *server {
@@ -147,6 +152,7 @@ func (s *server) serve(w http.ResponseWriter, r *http.Request) {
 		raw, _ := json.Marshal(batch)
 		_, _ = fmt.Fprintf(w, `{"ok":true,"result":%s}`, raw)
 	case "sendMessage":
+		s.attempts++
 		chat, _ := strconv.ParseFloat(body["chat_id"], 64)
 		if s.failSend[chat] {
 			w.WriteHeader(403)
@@ -160,6 +166,12 @@ func (s *server) serve(w http.ResponseWriter, r *http.Request) {
 		case "unknown":
 			w.WriteHeader(502)
 			_, _ = io.WriteString(w, `{"ok":false,"error_code":502,"description":"gateway"}`)
+			return
+		}
+		if s.refuseEntities && body["entities"] != "" {
+			s.refused = append(s.refused, body)
+			w.WriteHeader(400)
+			_, _ = io.WriteString(w, `{"ok":false,"error_code":400,"description":"Bad Request: can't parse entities"}`)
 			return
 		}
 		if s.huge {
@@ -666,7 +678,7 @@ func TestTheTokenIsNeverInAnError(t *testing.T) {
 	b, err := newBot(spec(s, nil), &handler{})
 	require.NoError(t, err)
 	s.ts.Close()
-	_, err = b.send(context.Background(), addr{chat: 900}, "x", nil)
+	_, err = b.send(context.Background(), addr{chat: 900}, piece{text: "x"}, nil)
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), tok, "a transport error names the URL, the URL holds the token")
 	assert.NotContains(t, err.Error(), "http://", "and the URL itself is not in the log either")
@@ -677,7 +689,7 @@ func TestTheTokenIsNeverInAnError(t *testing.T) {
 	sp.Credential = "WRONG"
 	b2, err := newBot(sp, &handler{})
 	require.NoError(t, err)
-	_, err = b2.send(context.Background(), addr{chat: 900}, "x", nil)
+	_, err = b2.send(context.Background(), addr{chat: 900}, piece{text: "x"}, nil)
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "WRONG")
 	assert.Equal(t, "the service's answer could not be used", err.Error())
@@ -688,12 +700,12 @@ func TestAnErrorIsInTheAdaptersWordsNotTheLibrarys(t *testing.T) {
 	s.mode = "unknown"
 	b, err := newBot(spec(s, nil), &handler{})
 	require.NoError(t, err)
-	_, err = b.send(context.Background(), addr{chat: 900}, "x", nil)
+	_, err = b.send(context.Background(), addr{chat: 900}, piece{text: "x"}, nil)
 	require.Error(t, err)
 	assert.Equal(t, "the service's answer could not be used", err.Error(), "an answer the adapter has no word for is not quoted")
 
 	s.failSend[901] = true
-	_, err = b.send(context.Background(), addr{chat: 901}, "x", nil)
+	_, err = b.send(context.Background(), addr{chat: 901}, piece{text: "x"}, nil)
 	assert.EqualError(t, err, "forbidden: blocked", "a known kind keeps what the service said")
 }
 
@@ -702,7 +714,7 @@ func TestAnAnswerPastTheCapIsRefused(t *testing.T) {
 	s.huge = true
 	b, err := newBot(spec(s, nil), &handler{})
 	require.NoError(t, err)
-	_, err = b.send(context.Background(), addr{chat: 900}, "x", nil)
+	_, err = b.send(context.Background(), addr{chat: 900}, piece{text: "x"}, nil)
 	assert.EqualError(t, err, "the service's answer was too large")
 }
 
@@ -739,7 +751,7 @@ func TestTheTokenIsScrubbedFromWhatTheServiceSays(t *testing.T) {
 	s.mode, s.describe = "okfalse", "your token "+tok+" is bad"
 	b, err := newBot(spec(s, nil), &handler{})
 	require.NoError(t, err)
-	_, err = b.send(context.Background(), addr{chat: 900}, "x", nil)
+	_, err = b.send(context.Background(), addr{chat: 900}, piece{text: "x"}, nil)
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), tok)
 	assert.Equal(t, "bad request: your token *** is bad", err.Error())
@@ -859,10 +871,13 @@ func TestAFailedCloseIsReportedInTheAdaptersWords(t *testing.T) {
 }
 
 func TestAClosedTextStaysWithinTheLimit(t *testing.T) {
-	assert.Equal(t, "short\n\n— denied", closed("short", "denied", 100))
-	got := closed(strings.Repeat("é", 100), "denied", 100)
+	got, kept := closed("short", "denied", 100)
+	assert.Equal(t, "short\n\n— denied", got)
+	assert.Equal(t, "short", kept)
+	got, kept = closed(strings.Repeat("é", 100), "denied", 100)
 	assert.Len(t, []rune(got), 100)
 	assert.True(t, strings.HasSuffix(got, "…\n\n— denied"), got)
+	assert.Equal(t, strings.TrimSuffix(got, "…\n\n— denied"), kept, "the kept part is the copy's own text before the cut")
 }
 
 func TestOnlyTheNewestMessagesButtonsAreKeptForClosing(t *testing.T) {

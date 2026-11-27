@@ -191,3 +191,27 @@ func TestNobodyCannotSendEvenIfTheSeamWouldLetThemAddress(t *testing.T) {
 type everyoneRoutes struct{}
 
 func (everyoneRoutes) Allow(access.Subject, access.Action, access.Resource) bool { return true }
+
+func TestAnAgentSendsMarkdownAndTheOperatorSendsPlainText(t *testing.T) {
+	reg := registry.New()
+	require.NoError(t, reg.Add(core.Profile{Name: "a", Tags: []string{"team"}}))
+	require.NoError(t, reg.Add(core.Profile{Name: "b", Tags: []string{"team"}}))
+	store, err := msgstore.Open(filepath.Join(t.TempDir(), "m.db"), 100)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+	sk := &sink{}
+	router := route.New(reg, sk, sk)
+	ops := mcpOps{layer: comm.New(store, router), auth: routeTo{agent: "a", tag: "team"}, resolve: router.Resolve}
+
+	_, err = ops.Send(context.Background(), access.Agent("a"), false, "b", "from the agent", approved)
+	require.NoError(t, err)
+	_, err = ops.Send(context.Background(), access.Operator, false, "b", "from the operator", approved)
+	require.NoError(t, err)
+
+	m, err := store.Resolve("b", "from the agent")
+	require.NoError(t, err)
+	assert.Equal(t, core.FormatMarkdown, m.Format, "an agent's words are Markdown")
+	m, err = store.Resolve("b", "from the operator")
+	require.NoError(t, err)
+	assert.Equal(t, core.FormatPlain, m.Format, "the operator's are plain")
+}

@@ -28,6 +28,9 @@ type Inbound struct {
 	Sender string
 	Text   string
 	Kind   core.MessageKind
+	// Format is how Text is written: Markdown for an agent's own words, plain
+	// otherwise (ADR-0050).
+	Format core.Format
 	// Reply is the pao id of the message this one answers, when the source can
 	// say so by id (ADR-0010 point 3: id-first from the human).
 	Reply string
@@ -288,6 +291,7 @@ func (l *Layer) Receive(ctx context.Context, in Inbound) (Delivery, error) {
 		Sender:      in.Sender,
 		Kind:        in.Kind,
 		Text:        in.Text,
+		Format:      in.Format,
 		Reply:       reply,
 		Attachments: in.Attachments,
 	}, scopes...)
