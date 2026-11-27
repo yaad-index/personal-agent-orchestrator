@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/webui"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -67,6 +68,8 @@ type Server struct {
 	budget     func() []BudgetJSON
 	tasks      TasksAPI
 	mounts     []mount
+	sessions   *webui.Sessions
+	node       func() NodeJSON
 	token      []byte
 	heartbeat  time.Duration
 
@@ -92,6 +95,17 @@ type mount struct {
 // WithMount serves h at path on this server's listener. The handler is not
 // behind this server's operator-token check: it authenticates its own callers,
 // because they are not only the operator (the MCP endpoint, ADR-0016).
+// WithSessions takes a call that carries a live management UI session as the
+// operator's, as a call with the operator token is (ADR-0047 point 4).
+func WithSessions(s *webui.Sessions) Option {
+	return func(srv *Server) { srv.sessions = s }
+}
+
+// WithNode serves what the node is and the agents it holds at GET /v1/node.
+func WithNode(f func() NodeJSON) Option {
+	return func(s *Server) { s.node = f }
+}
+
 func WithMount(path string, h http.Handler) Option {
 	return func(s *Server) { s.mounts = append(s.mounts, mount{path, h}) }
 }
@@ -156,6 +170,9 @@ func (s *Server) Handler() http.Handler {
 	s.registerMesh(mux)
 	s.registerBudget(mux)
 	s.registerTasks(mux)
+	if s.node != nil {
+		mux.HandleFunc("GET /v1/node", s.auth(func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, http.StatusOK, s.node()) }))
+	}
 	for _, m := range s.mounts {
 		mux.Handle(m.path, m.h)
 	}
@@ -165,12 +182,24 @@ func (s *Server) Handler() http.Handler {
 func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		got, hasScheme := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if !hasScheme || subtle.ConstantTimeCompare([]byte(got), s.token) != 1 {
-			w.Header().Set("WWW-Authenticate", "Bearer")
-			writeError(w, http.StatusUnauthorized, "unauthorized")
+		if hasScheme && subtle.ConstantTimeCompare([]byte(got), s.token) == 1 {
+			next(w, r)
 			return
 		}
-		next(w, r)
+		// The management UI's session is the operator's too (ADR-0047 point 4).
+		// A call that changes something must also come from the UI's own page,
+		// which a page on another site that makes the browser send the cookie
+		// cannot fake.
+		if !hasScheme && s.sessions != nil && s.sessions.Authorized(r) {
+			if r.Method != http.MethodGet && r.Method != http.MethodHead && !webui.FromUI(r) {
+				writeError(w, http.StatusForbidden, "a change from the UI must come from its own page")
+				return
+			}
+			next(w, r)
+			return
+		}
+		w.Header().Set("WWW-Authenticate", "Bearer")
+		writeError(w, http.StatusUnauthorized, "unauthorized")
 	}
 }
 
