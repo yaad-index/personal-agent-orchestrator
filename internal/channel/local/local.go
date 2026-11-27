@@ -72,7 +72,6 @@ type Server struct {
 	profiles   ProfilesAPI
 	node       func() NodeJSON
 	restart    func()
-	questions  func() []QuestionJSON
 	recipes    func() ([]RecipeJSON, error)
 	token      []byte
 	heartbeat  time.Duration

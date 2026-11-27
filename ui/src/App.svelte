@@ -7,7 +7,6 @@
   import ProfileEdit from "./pages/ProfileEdit.svelte";
   import NewProfile from "./pages/NewProfile.svelte";
   import Agents from "./pages/Agents.svelte";
-  import Approvals from "./pages/Approvals.svelte";
 
   // checking: asking whether the cookie is still good; out: the login form;
   // in: the pages.
@@ -52,7 +51,6 @@
     <nav>
       <a href="#/node" class:active={page === "node"}>Node</a>
       <a href="#/agents" class:active={page === "agents"}>Agents</a>
-      <a href="#/approvals" class:active={page === "approvals"}>Approvals</a>
       <a href="#/profiles" class:active={page.startsWith("profiles")}>Profiles</a>
     </nav>
     <button class="link" onclick={signOut}>Sign out</button>
@@ -62,8 +60,6 @@
       <Node onLost={lost} />
     {:else if page === "agents"}
       <Agents onLost={lost} />
-    {:else if page === "approvals"}
-      <Approvals onLost={lost} />
     {:else if page === "profiles"}
       <Profiles onLost={lost} />
     {:else if page === "profiles/new"}

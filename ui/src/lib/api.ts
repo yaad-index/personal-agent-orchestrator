@@ -113,14 +113,6 @@ export const draftProfile = (d: ProfileDraft) => call<{ text: string }>("POST", 
 export const restartNode = () => call<void>("POST", "/v1/node/restart");
 export const restartAgent = (name: string) => call<void>("POST", `/v1/agents/${encodeURIComponent(name)}/restart`);
 
-export interface Question {
-  id: string;
-  agent: string;
-  tool: string;
-  text: string;
-  asked: string;
-}
-
 export interface Recipe {
   name: string;
   description: string;
@@ -136,9 +128,6 @@ export interface KillResult {
   workdir_kept: boolean;
 }
 
-export const questions = () => call<Question[]>("GET", "/v1/questions");
-export const decide = (id: string, decision: "allow" | "always" | "deny", reason = "") =>
-  call<void>("POST", "/v1/decisions", { id, decision, reason });
 export const recipes = () => call<Recipe[]>("GET", "/v1/recipes");
 export const agentAction = (name: string, action: "start" | "stop" | "restart") =>
   call<void>("POST", `/v1/agents/${encodeURIComponent(name)}/${action}`);

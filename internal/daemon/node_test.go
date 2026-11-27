@@ -12,30 +12,6 @@ import (
 	"github.com/yaad-index/personal-agent-orchestrator/internal/config"
 )
 
-func TestAWaitingQuestionIsListedUntilTheOperatorAnswersIt(t *testing.T) {
-	n := startNode(t, map[string]string{"a": ""})
-	ctx := context.Background()
-	qs, err := n.client.Questions(ctx)
-	require.NoError(t, err)
-	assert.Empty(t, qs)
-
-	res := askGate(t, n, "Bash", `{"command":"ls"}`)
-	id := nextQuestion(t, n)
-	qs, err = n.client.Questions(ctx)
-	require.NoError(t, err)
-	require.Len(t, qs, 1)
-	assert.Equal(t, id, qs[0].ID)
-	assert.Equal(t, "a", qs[0].Agent)
-	assert.Equal(t, "Bash", qs[0].Tool)
-	assert.Contains(t, qs[0].Text, `"command":"ls"`)
-
-	require.NoError(t, n.client.Decide(ctx, id, "allow", ""))
-	assert.True(t, decisionWithin(t, res).Allow)
-	qs, err = n.client.Questions(ctx)
-	require.NoError(t, err)
-	assert.Empty(t, qs, "answered, it leaves the list")
-}
-
 func TestTheRecipesAreListedForTheOperator(t *testing.T) {
 	n := startNodeWith(t, map[string]string{"a": ""}, func(dir, script string, cfg *config.Config) {
 		rdir := filepath.Join(dir, "recipes")

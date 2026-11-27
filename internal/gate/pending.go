@@ -4,10 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
 )
@@ -65,24 +63,13 @@ type Pending struct {
 	node    string
 	seq     int
 	waiting map[string]chan Answer
-	// asked are the waiting questions themselves, for a surface that lists
-	// them rather than being told of each as it is asked.
-	asked map[string]Waiting
-	now   func() time.Time
-}
-
-// Waiting is a question waiting for its answer, and when it was asked.
-type Waiting struct {
-	Question
-	Tool  string
-	Asked time.Time
 }
 
 var _ Asker = (*Pending)(nil)
 
 // NewPending returns a Pending that announces questions through notify.
 func NewPending(notify Notifier) *Pending {
-	return &Pending{notify: notify, waiting: make(map[string]chan Answer), asked: make(map[string]Waiting), now: time.Now}
+	return &Pending{notify: notify, waiting: make(map[string]chan Answer)}
 }
 
 // SetNode makes the questions asked from now on carry this node's id, "<node>.q3"
@@ -117,7 +104,6 @@ func (p *Pending) Ask(ctx context.Context, req Request, canonicalInput string) (
 	defer func() {
 		p.mu.Lock()
 		delete(p.waiting, id)
-		delete(p.asked, id)
 		p.mu.Unlock()
 	}()
 
@@ -132,11 +118,6 @@ func (p *Pending) Ask(ctx context.Context, req Request, canonicalInput string) (
 			{Label: "DENY", Command: "/pao deny " + id},
 		},
 	}
-	p.mu.Lock()
-	if _, open := p.waiting[id]; open {
-		p.asked[id] = Waiting{Question: q, Tool: req.Tool, Asked: p.now()}
-	}
-	p.mu.Unlock()
 	handle, err := p.notify.Announce(ctx, q)
 	if err != nil {
 		if handle != "" {
@@ -172,7 +153,6 @@ func (p *Pending) Answer(id string, ans Answer) error {
 	ch, ok := p.waiting[id]
 	if ok {
 		delete(p.waiting, id)
-		delete(p.asked, id)
 	}
 	p.mu.Unlock()
 	if !ok {
@@ -180,23 +160,6 @@ func (p *Pending) Answer(id string, ans Answer) error {
 	}
 	ch <- ans // buffered; the waiter may already have given up, which is harmless
 	return nil
-}
-
-// List returns the questions waiting for an answer, oldest first.
-func (p *Pending) List() []Waiting {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	out := make([]Waiting, 0, len(p.asked))
-	for _, w := range p.asked {
-		out = append(out, w)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if !out[i].Asked.Equal(out[j].Asked) {
-			return out[i].Asked.Before(out[j].Asked)
-		}
-		return out[i].ID < out[j].ID
-	})
-	return out
 }
 
 // Waiting returns how many questions are waiting for an answer.
