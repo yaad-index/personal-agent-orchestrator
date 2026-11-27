@@ -48,6 +48,16 @@ by hand. After changing the `.proto`, run `go generate ./internal/mesh/meshpb`. 
 needs `protoc` and two plugins at the versions `scripts/genproto.sh` pins (the script
 refuses any other); CI regenerates the code and fails if the committed files differ.
 
+## The management UI
+
+The UI's source is in `ui/` (Svelte 5, Vite, TypeScript, versions pinned in
+`ui/package.json` and its lock file). Its build is committed under
+`internal/webui/dist`, embedded in the binary and served at `/ui`, so building pao
+needs no Node. After changing `ui/`, run `npm ci && npm run check && npm run build`
+in `ui/` and commit the new `dist`. CI builds it again and fails if the committed
+files differ. The page's content security policy allows nothing inline: no inline
+scripts, no `style` attributes and no runtime-injected styles.
+
 ## Checks before a PR
 
 ```

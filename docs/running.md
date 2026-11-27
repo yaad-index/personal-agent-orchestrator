@@ -52,3 +52,9 @@ tools:
 An empty list (`disable: []`) gives that agent every tool back. Tools are named as the backend names them. With Claude Code, a turned-off tool is removed from the agent's tool list, and nothing the agent's own settings say can give it back.
 
 A backend that can't turn its tools off refuses a profile that asks it to, whether the list comes from the profile or from `profile_defaults`. pao says so when it loads the configuration.
+
+## The management UI
+
+pao serves its management UI at `/ui` on the same address as its API, `listen` in `pao.yaml`, which is on localhost by default: `http://127.0.0.1:7744/ui/` unless you changed it. Sign in with the node's operator token, the one in the variable `token_env` names. The sign-in lasts 12 hours, or until you sign out or pao restarts.
+
+The UI acts as the operator, so keep it on localhost. To reach it from another machine, forward the port over SSH (`ssh -L 7744:127.0.0.1:7744 <host>`) rather than binding `listen` to a public address.

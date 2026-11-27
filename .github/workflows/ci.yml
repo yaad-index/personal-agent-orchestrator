@@ -55,6 +55,28 @@ jobs:
             exit 1
           fi
 
+      # The management UI is built from ui/ into internal/webui/dist, which is
+      # committed so building pao needs no Node. These steps check it and build
+      # it again, and fail if the committed files are not what the build makes.
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: ui/.nvmrc
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: UI is checked and its build is current
+        working-directory: ui
+        run: |
+          npm ci --no-audit --no-fund
+          npm run check
+          npm run build
+          if [ -n "$(git status --porcelain -- ../internal/webui/dist)" ]; then
+            echo "The committed UI build under internal/webui/dist is not what ui/ builds:"
+            git status --porcelain -- ../internal/webui/dist
+            exit 1
+          fi
+
       - name: Build
         run: go build ./...
 

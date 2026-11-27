@@ -51,6 +51,7 @@ import (
 	"github.com/yaad-index/personal-agent-orchestrator/internal/temp"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/tmux"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/upstream"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/webui"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/workdir"
 )
 
@@ -487,9 +488,14 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	dispatcher.Liveness = taskLiveness{reg: reg, thresholds: mgr.Thresholds}
 	tasks.Changed, tasks.Tell = dispatcher.Kick, fleet.Tell
 	localOpts = append(localOpts, local.WithBudget(budgetJSON(book)))
+	uiSessions := webui.NewSessions()
 	srv, err := local.New(layer, token, append([]local.Option{local.WithDecider(decider), local.WithTemp(tempOps), local.WithStream(streamOps), local.WithStanding(standingOps), local.WithWatch(streamOps), local.WithLifecycle(lifeOps), local.WithRejected(rejectedAPI{rejects}), local.WithTasks(taskAPI{tasks}), local.WithIdentity(identityAPI{ids}),
 		local.WithDefaults(newDefaultsAPI(defaults, cfg.Orchestrator.Channels, router.Resolve)), local.WithGrants(grantsAPI{store: grantStore, changed: mcpServer.Refresh}),
-		local.WithMount("/mcp", mcpHandler)}, localOpts...)...)
+		local.WithMount("/mcp", mcpHandler),
+		// The management UI (ADR-0047), on this same listener: its session is the
+		// operator's, opened with the operator token.
+		local.WithSessions(uiSessions), local.WithMount(webui.Prefix, webui.Handler(uiSessions, token)),
+		local.WithNode(nodeInfo(cfg.Orchestrator.Node, reg))}, localOpts...)...)
 	if err != nil {
 		return err
 	}
