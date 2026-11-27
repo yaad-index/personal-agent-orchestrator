@@ -16,6 +16,7 @@ import (
 	bolt "go.etcd.io/bbolt"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/markdown"
 )
 
 var (
@@ -143,7 +144,9 @@ func (s *Store) GetScoped(agent, id string) (core.Message, error) {
 }
 
 // Resolve finds the one message in agent's scope whose text contains quote,
-// compared with runs of whitespace collapsed. No match is ErrUnresolved and
+// compared with runs of whitespace collapsed. A Markdown message is matched
+// against what a reader saw too, its text with the markup gone, since a human
+// quotes the rendered message (ADR-0050). No match is ErrUnresolved and
 // more than one is ErrAmbiguous: the caller tells the agent, who re-quotes,
 // and nothing is guessed.
 func (s *Store) Resolve(agent, quote string) (core.Message, error) {
@@ -161,7 +164,7 @@ func (s *Store) Resolve(agent, quote string) (core.Message, error) {
 			if !inScope(rec.Scopes, agent) {
 				return nil
 			}
-			if strings.Contains(collapse(rec.Message.Text), q) {
+			if quotes(rec.Message, q) {
 				found = append(found, rec.Message)
 			}
 			return nil
@@ -178,6 +181,15 @@ func (s *Store) Resolve(agent, quote string) (core.Message, error) {
 	default:
 		return core.Message{}, ErrAmbiguous
 	}
+}
+
+// quotes reports whether m's text, or for Markdown its rendered text, contains
+// the collapsed quote q.
+func quotes(m core.Message, q string) bool {
+	if strings.Contains(collapse(m.Text), q) {
+		return true
+	}
+	return m.Format == core.FormatMarkdown && strings.Contains(collapse(markdown.Plain(m.Text)), q)
 }
 
 // React records that by reacted to message id with emoji, whoever owns the

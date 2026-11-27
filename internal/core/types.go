@@ -189,6 +189,18 @@ const (
 	MessageSystemEvent MessageKind = "system_event"
 )
 
+// Format says how a message's text is written (ADR-0050 point 1).
+type Format string
+
+const (
+	// FormatPlain is text shown as it is. A message that names no format is
+	// plain.
+	FormatPlain Format = ""
+	// FormatMarkdown is an agent's own words: Markdown, which a channel shows in
+	// its own native formatting.
+	FormatMarkdown Format = "markdown"
+)
+
 // Attachment is a normalized attachment. The normalization format is left open
 // by ADR-0010; this is the minimal common shape.
 type Attachment struct {
@@ -222,6 +234,9 @@ type Message struct {
 	Sender string
 	Kind   MessageKind
 	Text   string
+	// Format is how Text is written. Only an agent's own words are Markdown;
+	// what pao or a human writes is plain (ADR-0050 point 2).
+	Format Format
 	// Reply is the ID of the message this one answers, if any.
 	Reply string
 	// ReplyQuote is set only on the copy of a message that goes to an agent on

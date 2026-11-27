@@ -271,3 +271,22 @@ func TestHumanReactionIsNotLimitedToAnAgentsScope(t *testing.T) {
 	got, _ := s.Get(m.ID)
 	assert.Equal(t, []core.Reaction{{By: "human", Emoji: "👍"}}, got.Reactions)
 }
+
+func TestResolveMatchesWhatAReaderSawOfMarkdown(t *testing.T) {
+	s := open(t, 10)
+	m, err := s.Add(core.Message{Sender: "a", Text: "Saved **two** notes in `inbox/`", Format: core.FormatMarkdown}, "x")
+	require.NoError(t, err)
+
+	got, err := s.Resolve("x", "Saved two notes in inbox/")
+	require.NoError(t, err, "a human quotes the rendered message")
+	assert.Equal(t, m.ID, got.ID)
+
+	got, err = s.Resolve("x", "**two** notes")
+	require.NoError(t, err, "an agent quotes the text it read")
+	assert.Equal(t, m.ID, got.ID)
+
+	_, err = s.Add(core.Message{Sender: "a", Text: "plain **stars** stay"}, "x")
+	require.NoError(t, err)
+	_, err = s.Resolve("x", "plain stars stay")
+	assert.ErrorIs(t, err, ErrUnresolved, "plain text is never read as Markdown")
+}

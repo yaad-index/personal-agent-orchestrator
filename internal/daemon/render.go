@@ -50,6 +50,26 @@ func render(e core.Entry, levels core.Levels, level int) (string, bool) {
 	return truncate(text, maxRendered), true
 }
 
+// entryMessage is the message an agent's transcript entry is shown as at level,
+// or false where the entry is not shown at that level.
+func entryMessage(agent string, e core.Entry, levels core.Levels, level int) (core.Message, bool) {
+	text, ok := render(e, levels, level)
+	if !ok {
+		return core.Message{}, false
+	}
+	return core.Message{Sender: agent, Kind: core.MessageContent, Text: text, Format: formatOf(e), Time: e.Time}, true
+}
+
+// formatOf is how a rendered entry's text is written: the agent's own words are
+// Markdown, and what pao renders from the rest of the transcript (tool calls,
+// results, reasoning) is plain, never parsed (ADR-0050 point 2).
+func formatOf(e core.Entry) core.Format {
+	if e.Kind == core.KindMessage {
+		return core.FormatMarkdown
+	}
+	return core.FormatPlain
+}
+
 func truncate(s string, n int) string {
 	r := []rune(s)
 	if len(r) <= n {
