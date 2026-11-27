@@ -68,7 +68,7 @@ func conf(url string) config.MCPUpstream {
 
 func TestOnlyTheConfiguredToolsAreOfferedWithTheConfigurationsTagsAndRisk(t *testing.T) {
 	f := newFakeUpstream(t, "tok")
-	s := New(conf(f.url), "tok")
+	s := New(conf(f.url), fixed("tok"))
 	t.Cleanup(func() { _ = s.Close() })
 
 	tools, missing, err := s.Tools(context.Background())
@@ -90,7 +90,7 @@ func TestOnlyTheConfiguredToolsAreOfferedWithTheConfigurationsTagsAndRisk(t *tes
 
 func TestACallReachesTheServerWithTheCredential(t *testing.T) {
 	f := newFakeUpstream(t, "tok")
-	s := New(conf(f.url), "tok")
+	s := New(conf(f.url), fixed("tok"))
 	t.Cleanup(func() { _ = s.Close() })
 	res, err := s.Call(context.Background(), "query", map[string]any{"q": "pao"})
 	require.NoError(t, err)
@@ -101,7 +101,7 @@ func TestACallReachesTheServerWithTheCredential(t *testing.T) {
 
 func TestAToolTheConfigurationDoesNotNameIsNeverCalled(t *testing.T) {
 	f := newFakeUpstream(t, "tok")
-	s := New(conf(f.url), "tok")
+	s := New(conf(f.url), fixed("tok"))
 	t.Cleanup(func() { _ = s.Close() })
 	_, err := s.Call(context.Background(), "secret", map[string]any{"q": "x"})
 	assert.ErrorIs(t, err, ErrNotOffered)
@@ -110,7 +110,7 @@ func TestAToolTheConfigurationDoesNotNameIsNeverCalled(t *testing.T) {
 
 func TestAResultPastTheCapIsRefusedNotCut(t *testing.T) {
 	f := newFakeUpstream(t, "tok")
-	s := New(conf(f.url), "tok")
+	s := New(conf(f.url), fixed("tok"))
 	t.Cleanup(func() { _ = s.Close() })
 	_, err := s.Call(context.Background(), "big", map[string]any{"q": "all"})
 	assert.ErrorIs(t, err, ErrTooLarge)
@@ -119,7 +119,7 @@ func TestAResultPastTheCapIsRefusedNotCut(t *testing.T) {
 
 func TestAWrongCredentialIsAnErrorInPaosWordsWithoutTheToken(t *testing.T) {
 	f := newFakeUpstream(t, "tok")
-	s := New(conf(f.url), "WRONG-SECRET")
+	s := New(conf(f.url), fixed("WRONG-SECRET"))
 	t.Cleanup(func() { _ = s.Close() })
 	_, _, err := s.Tools(context.Background())
 	require.Error(t, err)
@@ -132,7 +132,7 @@ func TestAWrongCredentialIsAnErrorInPaosWordsWithoutTheToken(t *testing.T) {
 
 func TestAServerThatGoesAwayIsReconnectedOnTheNextUse(t *testing.T) {
 	f := newFakeUpstream(t, "tok")
-	s := New(conf(f.url), "tok")
+	s := New(conf(f.url), fixed("tok"))
 	t.Cleanup(func() { _ = s.Close() })
 	_, err := s.Call(context.Background(), "query", map[string]any{"q": "1"})
 	require.NoError(t, err)
@@ -160,7 +160,7 @@ func TestAServerThatForgetsTheSessionFailsOneCallAndTheNextReconnects(t *testing
 	}))
 	t.Cleanup(ts.Close)
 
-	s := New(conf(ts.URL), "")
+	s := New(conf(ts.URL), nil)
 	t.Cleanup(func() { _ = s.Close() })
 	_, err := s.Call(context.Background(), "query", map[string]any{"q": "1"})
 	require.NoError(t, err)
@@ -203,7 +203,7 @@ func TestARedirectToAnotherOriginIsNotFollowedAndGetsNoCredential(t *testing.T) 
 		http.Redirect(w, r, away.url+r.URL.Path, http.StatusTemporaryRedirect)
 	}))
 	t.Cleanup(ts.Close)
-	s := New(conf(ts.URL), "tok")
+	s := New(conf(ts.URL), fixed("tok"))
 	t.Cleanup(func() { _ = s.Close() })
 
 	_, err := s.Call(context.Background(), "query", map[string]any{"q": "pao"})
@@ -225,7 +225,7 @@ func TestARedirectWithinTheServersOwnOriginIsFollowed(t *testing.T) {
 	mux.Handle("/new", proxy)
 	ts := httptest.NewServer(mux)
 	t.Cleanup(ts.Close)
-	s := New(conf(ts.URL+"/old"), "tok")
+	s := New(conf(ts.URL+"/old"), fixed("tok"))
 	t.Cleanup(func() { _ = s.Close() })
 	res, err := s.Call(context.Background(), "query", map[string]any{"q": "pao"})
 	require.NoError(t, err, "the server moving an endpoint within its own origin still works, credential and all")
@@ -234,7 +234,7 @@ func TestARedirectWithinTheServersOwnOriginIsFollowed(t *testing.T) {
 
 func TestTheTokenIsOnlyEverSentToTheConfiguredOrigin(t *testing.T) {
 	away := newRecorder(t)
-	b := &bearer{token: "tok", origin: originOf("https://mcp.example:443/x"), next: http.DefaultTransport}
+	b := &bearer{token: func() string { return "tok" }, header: "Authorization", prefix: "Bearer ", origin: originOf("https://mcp.example:443/x"), next: http.DefaultTransport}
 	req, err := http.NewRequest(http.MethodGet, away.url, nil)
 	require.NoError(t, err)
 	resp, err := b.RoundTrip(req)
@@ -253,3 +253,6 @@ func TestTheTokenIsOnlyEverSentToTheConfiguredOrigin(t *testing.T) {
 		assert.Equal(t, want, originOf(raw), raw)
 	}
 }
+
+// fixed reads a credential that never changes.
+func fixed(v string) func() (string, error) { return func() (string, error) { return v, nil } }
