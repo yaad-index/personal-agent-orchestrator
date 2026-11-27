@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"go.yaml.in/yaml/v3"
@@ -74,6 +75,9 @@ type Orchestrator struct {
 	Gate Gate `yaml:"gate"`
 	// Temp configures temporary agents (ADR-0006).
 	Temp Temp `yaml:"temp"`
+	// ProfileDefaults apply to every agent profile that does not say otherwise,
+	// a temporary agent's included (#179).
+	ProfileDefaults ProfileDefaults `yaml:"profile_defaults"`
 	// Channels are the human fronts to bring up beyond the local channel
 	// (ADR-0020 point 6).
 	Channels []Channel `yaml:"channels"`
@@ -716,6 +720,9 @@ func load(path string, withMesh bool) (*Config, error) {
 	if o.Gate.AskTimeout == 0 {
 		o.Gate.AskTimeout = DefaultAskTimeout
 	}
+	if err := checkTools(o.ProfileDefaults.Tools); err != nil {
+		return nil, fmt.Errorf("%s: profile_defaults.tools: %w", path, err)
+	}
 	if o.Gate.AskTimeout < 0 {
 		return nil, fmt.Errorf("%s: gate.ask_timeout must be positive", path)
 	}
@@ -812,6 +819,11 @@ func load(path string, withMesh bool) (*Config, error) {
 		}
 		if err := validate(p); err != nil {
 			return nil, fmt.Errorf("%s: %w", f, err)
+		}
+		// The node's default tools apply at launch: a backend that cannot turn
+		// them off is refused here, not when the agent first starts.
+		if err := builtin.Table().Check(p.WithToolDefaults(o.ProfileDefaults.Tools)); err != nil {
+			return nil, fmt.Errorf("%s: with profile_defaults: %w", f, err)
 		}
 		if err := o.CheckAccount(p.Account); err != nil {
 			return nil, fmt.Errorf("%s: %w", f, err)
@@ -999,6 +1011,9 @@ func validate(p core.Profile) error {
 	if err := p.Levels.Validate(); err != nil {
 		return fmt.Errorf("levels: %w", err)
 	}
+	if err := checkTools(p.Tools); err != nil {
+		return fmt.Errorf("tools: %w", err)
+	}
 	for _, t := range p.Tags {
 		if !namePattern.MatchString(t) {
 			return fmt.Errorf("tag %q must be lowercase letters, digits, '-' or '_'", t)
@@ -1028,6 +1043,33 @@ func decodeFile(path string, into any) error {
 	dec.KnownFields(true)
 	if err := dec.Decode(into); err != nil {
 		return fmt.Errorf("%s: %s", path, strings.TrimSpace(err.Error()))
+	}
+	return nil
+}
+
+// ProfileDefaults are the settings every agent profile takes unless it gives
+// its own.
+type ProfileDefaults struct {
+	// Tools names the backend's own tools no agent is given unless its profile
+	// gives a tools.disable list of its own, which then replaces this one.
+	Tools core.Tools `yaml:"tools"`
+}
+
+// checkTools refuses a tool name that is empty, has space at either end or
+// holds a control character: none of those names a tool.
+func checkTools(t core.Tools) error {
+	if t.Disable == nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	for _, name := range *t.Disable {
+		if name == "" || strings.TrimSpace(name) != name || strings.ContainsFunc(name, unicode.IsControl) {
+			return fmt.Errorf("disable: %q is not a tool name", name)
+		}
+		if seen[name] {
+			return fmt.Errorf("disable: %q is listed twice", name)
+		}
+		seen[name] = true
 	}
 	return nil
 }

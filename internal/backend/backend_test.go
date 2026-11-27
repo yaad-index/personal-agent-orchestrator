@@ -105,3 +105,29 @@ func TestABackendsOwnHostsArePassedBeforeAProfilesEachOnce(t *testing.T) {
 	p.Egress.Pass = nil
 	assert.Empty(t, tbl.Pass(p))
 }
+
+// disabler is a partial adapter that can also turn its backend's tools off.
+type disabler struct{ partial }
+
+func (disabler) DisablesTools() {}
+
+func TestATurnedOffToolIsRefusedOnABackendThatCannotTurnItOff(t *testing.T) {
+	off, none := []string{"Bash"}, []string{}
+	with := func(backend string, list *[]string) core.Profile {
+		p := profile(backend, all...)
+		p.Tools = core.Tools{Disable: list}
+		return p
+	}
+	tb := Table{"p": partial{can: Categories}, "d": disabler{partial{can: Categories}}}
+
+	err := tb.Check(with("p", &off))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `tools.disable names Bash, but the "p" backend cannot turn its tools off`)
+	_, err = tb.Command(with("p", &off), Launch{})
+	assert.Error(t, err, "and it is not started")
+	assert.Error(t, tb.Check(with("other", &off)), "nor on a backend with no adapter")
+
+	require.NoError(t, tb.Check(with("d", &off)), "an adapter that can turn tools off takes it")
+	require.NoError(t, tb.Check(with("p", &none)), "an empty list asks nothing of the backend")
+	require.NoError(t, tb.Check(with("p", nil)))
+}

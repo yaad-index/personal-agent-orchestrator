@@ -44,6 +44,12 @@ type Adapter struct{}
 
 var _ backend.Adapter = Adapter{}
 
+var _ backend.ToolDisabler = Adapter{}
+
+// DisablesTools implements backend.ToolDisabler: a tool in the profile's
+// tools.disable is denied in the settings the adapter always gives.
+func (Adapter) DisablesTools() {}
+
 // owned are the options and environment variables the adapter sets, or that
 // change what Claude Code loads (--bare and --safe-mode also drop the hook that
 // is pao's gate).
@@ -132,6 +138,11 @@ func (Adapter) Command(p core.Profile, l backend.Launch) (backend.Start, error) 
 		return backend.Start{}, errors.New("no name for pao's MCP server")
 	}
 	settings := map[string]any{"hooks": hooks(l.Hook, int(l.HookTimeout.Seconds()))}
+	if off := p.DisabledTools(); len(off) > 0 {
+		// Claude Code takes a denied tool out of the agent's tool list, and a
+		// deny wins over any allow, so nothing the profile loads can give it back.
+		settings["permissions"] = map[string]any{"deny": off}
+	}
 	if !inherits[backend.Instructions] {
 		if l.Home == "" {
 			return backend.Start{}, errors.New("no home directory to shut out the user's instructions from")
