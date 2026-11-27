@@ -1,6 +1,6 @@
 # ADR 0054: pao is a per-machine node mesh, driven from chat and set up from its UI
 
-**Status:** Proposed
+**Status:** Accepted
 
 Supersedes ADR-0001. It keeps ADR-0001's points 0 to 4 unchanged and replaces point 5. Builds on ADR-0047 (the UI as the primary setup surface), ADR-0005 (the management surface, private and on localhost by default), ADR-0046 (who may issue which command), ADR-0029 (output bindings), ADR-0006 (temporary agents) and ADR-0040 point 4 and ADR-0041 point 4 (no new spawn path).
 
