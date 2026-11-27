@@ -1,6 +1,6 @@
 # ADR 0056: The UI answers the gate's questions and watches an agent's output
 
-**Status:** Proposed
+**Status:** Accepted
 
 Extends ADR-0054 point 5 (driven from chat; set up, launched and bound from the UI), and settles the item it left open, answering approval questions and watching an agent's output from the UI. Builds on ADR-0047 points 4 and 5 (the UI is a front, not a new authority, and stays private), ADR-0004 (the gate), ADR-0027 point 6 (a settled question is closed everywhere it was shown), ADR-0046 point 4 (answering is the operator's) and ADR-0018 (the watch operation).
 
