@@ -33,6 +33,13 @@ described later: reads are not asked.
   credential the server sends back encoded or split up is not recognised.
   The same limit as above applies: this keeps the credential out of what
   agents inherit, not out of reach of another process of the user.
+- **Channel credentials.** A channel names its credential by `credential_env`
+  or as one of the node's secrets, `credential_secret`. Either way it is read
+  once at start, and a variable is unset. Where it is read from is the
+  channel's alone: pao refuses to load a configuration in which that variable
+  or file also holds another secret, another channel's credential or a
+  server's, so no task or server can be given it under another name. No task
+  can name a channel's secret.
 - **Agent tokens.** Each agent session gets a token it uses to call pao as
   itself (the MCP surface). It ties the identity to a live session and ends
   with it, so a token from a finished session is useless and a name alone is

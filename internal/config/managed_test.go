@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,7 +13,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const chanOK = "    kind: bot\n    credential_env: PAO_BOT\n"
+const (
+	chanOK = "    kind: bot\n    credential_env: PAO_BOT\n"
+	// a channel in the managed file has a credential of its own (ADR-0057 point 3)
+	chanUI = "    kind: bot\n    credential_env: PAO_BOT_UI\n"
+)
 
 // managedSetup writes a node whose pao.yaml holds own, naming managed.yaml,
 // which holds managed unless it is empty.
@@ -30,7 +35,7 @@ func managedSetup(t *testing.T, own, managed string) (pao, mf string) {
 }
 
 func TestTheManagedFilesChannelsJoinTheOperatorsOwn(t *testing.T) {
-	pao, mf := managedSetup(t, "channels:\n  - id: 1\n    name: mine\n"+chanOK, "channels:\n  - id: 2\n    name: ui-made\n"+chanOK)
+	pao, mf := managedSetup(t, "channels:\n  - id: 1\n    name: mine\n"+chanOK, "channels:\n  - id: 2\n    name: ui-made\n"+chanUI)
 	cfg, err := Load(pao)
 	require.NoError(t, err)
 	o := cfg.Orchestrator
@@ -136,7 +141,7 @@ func TestAWriteThatLoadsReplacesTheManagedFileWhole(t *testing.T) {
 }
 
 func TestAWriteThatWouldNotLoadIsRefusedAndChangesNothing(t *testing.T) {
-	pao, mf := managedSetup(t, "channels:\n  - id: 1\n    name: mine\n"+chanOK, "channels:\n  - id: 2\n    name: ui-made\n"+chanOK)
+	pao, mf := managedSetup(t, "channels:\n  - id: 1\n    name: mine\n"+chanOK, "channels:\n  - id: 2\n    name: ui-made\n"+chanUI)
 	before, err := os.ReadFile(mf)
 	require.NoError(t, err)
 	for name, m := range map[string]Managed{
@@ -157,7 +162,7 @@ func TestAReaderNeverSeesAHalfWrittenManagedFile(t *testing.T) {
 	many := func(n int) Managed {
 		var m Managed
 		for i := 1; i <= n; i++ {
-			m.Channels = append(m.Channels, Channel{ID: i, Name: "c" + strings.Repeat("x", i%20) + string(rune('a'+i%26)) + "-" + strings.Repeat("0", i/26), Kind: "bot", CredentialEnv: "V"})
+			m.Channels = append(m.Channels, Channel{ID: i, Name: "c" + strings.Repeat("x", i%20) + string(rune('a'+i%26)) + "-" + strings.Repeat("0", i/26), Kind: "bot", CredentialEnv: fmt.Sprintf("V%d", i)})
 		}
 		return m
 	}

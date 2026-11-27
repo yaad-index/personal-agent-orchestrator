@@ -106,18 +106,10 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	if name := cfg.Orchestrator.TokenEnv; name != "" {
 		_ = os.Unsetenv(name)
 	}
-	// A channel's credential is read once and then taken out of the environment
-	// for the same reason: an agent must not be able to read it.
-	creds := make(map[string]string, len(cfg.Orchestrator.Channels))
-	for _, c := range cfg.Orchestrator.Channels {
-		creds[c.Name] = os.Getenv(c.CredentialEnv)
-	}
-	for _, c := range cfg.Orchestrator.Channels {
-		_ = os.Unsetenv(c.CredentialEnv)
-	}
-	// A secret held in a variable likewise: read once and taken out of the
-	// environment, so no agent inherits it; only the run that names it is given
-	// it, as a file (ADR-0036 point 3), or the server it is bound to.
+	// A secret held in a variable is read once and taken out of the environment
+	// for the same reason, so no agent inherits it; only the run that names it is
+	// given it, as a file (ADR-0036 point 3), or the server or channel it is
+	// bound to.
 	secretValues := map[string]string{}
 	for _, sec := range cfg.Orchestrator.Secrets {
 		if sec.Env != "" {
@@ -129,6 +121,9 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 			_ = os.Unsetenv(sec.Env)
 		}
 	}
+	// A channel's credential likewise: read once, from its variable or through
+	// the secret it names (ADR-0057 point 2), and taken out of the environment.
+	creds := channelCredentials(cfg.Orchestrator, secretValues)
 	// An upstream MCP server's credential likewise: pao presents it, no agent
 	// ever holds it (ADR-0024 point 2). A server's secret is read each time pao
 	// connects to it (ADR-0053 point 2).

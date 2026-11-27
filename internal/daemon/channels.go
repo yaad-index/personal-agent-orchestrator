@@ -1,7 +1,10 @@
 package daemon
 
 import (
+	"log/slog"
+	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/adapter"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/comm"
@@ -92,4 +95,32 @@ func admittedGroups(chs []config.Channel) map[string]map[string]comm.Group {
 		}
 	}
 	return out
+}
+
+// channelCredentials reads each channel's credential: from the variable it
+// names, which is then taken out of the environment, or through the secret it
+// names (ADR-0057 point 2), a variable's value as read at start or a file's,
+// without the line end a file holds. A channel whose credential cannot be
+// read is given none, and its adapter reports it as an unset credential.
+func channelCredentials(o config.Orchestrator, secretValues map[string]string) map[string]string {
+	read := readSecret(o, secretValues)
+	creds := make(map[string]string, len(o.Channels))
+	for _, c := range o.Channels {
+		if c.CredentialEnv != "" {
+			creds[c.Name] = os.Getenv(c.CredentialEnv)
+			continue
+		}
+		b, err := read(c.CredentialSecret)
+		if err != nil {
+			slog.Warn("a channel's credential could not be read", "channel", c.Name, "error", err)
+			continue
+		}
+		creds[c.Name] = strings.TrimRight(string(b), "\r\n")
+	}
+	for _, c := range o.Channels {
+		if c.CredentialEnv != "" {
+			_ = os.Unsetenv(c.CredentialEnv)
+		}
+	}
+	return creds
 }
