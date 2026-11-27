@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"runtime/debug"
+	"strings"
 
 	"github.com/alecthomas/kong"
 
@@ -99,6 +100,16 @@ func buildVersion() string {
 // out of its own environment as it starts, so a restart in the same process
 // (from the management UI) starts again from this one.
 var startEnv = os.Environ()
+
+// lookupStartEnv looks a variable up in startEnv.
+func lookupStartEnv(name string) (string, bool) {
+	for _, kv := range startEnv {
+		if k, v, ok := strings.Cut(kv, "="); ok && k == name {
+			return v, true
+		}
+	}
+	return "", false
+}
 
 func main() {
 	// pao re-runs itself as the setup step of a confined agent's namespaces

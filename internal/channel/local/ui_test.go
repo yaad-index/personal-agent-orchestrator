@@ -3,6 +3,8 @@ package local
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"sort"
 	"strings"
@@ -155,4 +157,60 @@ func TestTheChannelsAreReadByTheOperator(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, cs, got)
 	assert.Equal(t, http.StatusUnauthorized, send(t, "GET", ts.URL+"/v1/channels", "", nil, nil))
+}
+
+type fakeChannelConfig struct {
+	put     []ChannelConfigJSON
+	deleted []string
+	err     error
+}
+
+func (f *fakeChannelConfig) List(context.Context) (ChannelConfigListJSON, error) {
+	return ChannelConfigListJSON{ManagedFile: "/n/managed.yaml", Channels: []ChannelConfigEntryJSON{}, Kinds: []string{"bot"}, Secrets: []string{}}, nil
+}
+func (f *fakeChannelConfig) Put(_ context.Context, c ChannelConfigJSON) error {
+	f.put = append(f.put, c)
+	return f.err
+}
+func (f *fakeChannelConfig) Delete(_ context.Context, name string) error {
+	f.deleted = append(f.deleted, name)
+	return f.err
+}
+
+func TestTheChannelConfigurationIsTheOperatorsToChange(t *testing.T) {
+	f := &fakeChannelConfig{}
+	_, ts := newServer(t, &fakeLayer{}, WithChannelConfig(f))
+	c := &Client{URL: ts.URL, Token: token}
+	ctx := context.Background()
+	l, err := c.ChannelConfig(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, "/n/managed.yaml", l.ManagedFile)
+	require.NoError(t, c.PutChannelConfig(ctx, ChannelConfigJSON{ID: 2, Name: "ui", Kind: "bot", CredentialSecret: "s"}))
+	require.NoError(t, c.DeleteChannelConfig(ctx, "ui"))
+	assert.Equal(t, "s", f.put[0].CredentialSecret)
+	assert.Equal(t, []string{"ui"}, f.deleted)
+
+	assert.Equal(t, http.StatusBadRequest, do(t, ts, "PUT", "/v1/config/channels/other", `{"id":2,"name":"ui","kind":"bot"}`, bearer()).StatusCode, "the name is the path's")
+	assert.Equal(t, http.StatusUnauthorized, send(t, "PUT", ts.URL+"/v1/config/channels/ui", `{"name":"ui"}`, nil, nil))
+	assert.Len(t, f.put, 1)
+
+	f.err = ErrConflict
+	assert.Equal(t, http.StatusConflict, do(t, ts, "PUT", "/v1/config/channels/ui", `{"id":2,"name":"ui","kind":"bot"}`, bearer()).StatusCode)
+	f.err = ErrBadRequest
+	assert.Equal(t, http.StatusBadRequest, do(t, ts, "DELETE", "/v1/config/channels/ui", "", bearer()).StatusCode)
+}
+
+func TestARestartThatWouldNotStartIsRefused(t *testing.T) {
+	asked := 0
+	why := errors.New("pao would not start: channel \"x\": variable X is not set")
+	_, ts := newServer(t, &fakeLayer{}, WithRestart(func() { asked++ }), WithRestartCheck(func() error { return why }))
+	resp := do(t, ts, "POST", "/v1/node/restart", "", bearer())
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	assert.Equal(t, http.StatusConflict, resp.StatusCode)
+	assert.Contains(t, string(body), `variable X is not set`)
+	assert.Zero(t, asked, "pao keeps running as it is")
+	why = nil
+	require.NoError(t, (&Client{URL: ts.URL, Token: token}).RestartNode(context.Background()))
+	assert.Equal(t, 1, asked)
 }

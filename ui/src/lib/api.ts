@@ -302,3 +302,50 @@ export interface WatchLine {
   history?: boolean;
 }
 
+
+export interface TopicConfig {
+  id: string;
+  name: string;
+}
+
+export interface GroupConfig {
+  id: string;
+  name: string;
+  members: string;
+  topics?: TopicConfig[];
+}
+
+// A channel as the configuration holds it. Its credential is named, by a
+// variable or one of the node's secrets; its value never passes through here.
+export interface ChannelConfig {
+  id: number;
+  name: string;
+  kind: string;
+  credential_env?: string;
+  credential_secret?: string;
+  options?: Record<string, unknown>;
+  groups?: GroupConfig[];
+}
+
+export interface CredentialStatus {
+  resolves: boolean;
+  problem?: string;
+}
+
+export interface ChannelConfigEntry extends ChannelConfig {
+  managed: boolean;
+  applied: boolean;
+  credential: CredentialStatus;
+}
+
+export interface ChannelConfigList {
+  managed_file: string;
+  channels: ChannelConfigEntry[];
+  restart_needed: boolean;
+  kinds: string[];
+  secrets: string[];
+}
+
+export const channelConfig = () => call<ChannelConfigList>("GET", "/v1/config/channels");
+export const putChannel = (c: ChannelConfig) => call<void>("PUT", `/v1/config/channels/${encodeURIComponent(c.name)}`, c);
+export const deleteChannel = (name: string) => call<void>("DELETE", `/v1/config/channels/${encodeURIComponent(name)}`);

@@ -39,7 +39,9 @@ described later: reads are not asked.
   channel's alone: pao refuses to load a configuration in which that variable
   or file also holds another secret, another channel's credential or a
   server's, so no task or server can be given it under another name. No task
-  can name a channel's secret.
+  can name a channel's secret. The management UI never takes, shows or stores
+  a channel's credential: a channel it defines names one, the value is put in
+  place by hand, and the UI says only whether it is there to read.
 - **Agent tokens.** Each agent session gets a token it uses to call pao as
   itself (the MCP surface). It ties the identity to a live session and ends
   with it, so a token from a finished session is useless and a name alone is

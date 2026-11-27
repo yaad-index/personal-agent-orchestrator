@@ -35,6 +35,10 @@ func (c *Client) Node(ctx context.Context) (NodeJSON, error) {
 // after the answer is sent.
 func WithRestart(restart func()) Option { return func(s *Server) { s.restart = restart } }
 
+// WithRestartCheck makes a restart pass check first; a check that fails
+// refuses the restart with its reason, and the node keeps running.
+func WithRestartCheck(check func() error) Option { return func(s *Server) { s.restartCheck = check } }
+
 // RestartNode asks the node to restart.
 func (c *Client) RestartNode(ctx context.Context) error {
 	return c.do(ctx, http.MethodPost, "/v1/node/restart", nil, http.StatusAccepted, nil)

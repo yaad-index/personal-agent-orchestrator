@@ -3,8 +3,6 @@
 package builtin
 
 import (
-	"fmt"
-
 	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/adapter"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/bot"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/config"
@@ -20,20 +18,5 @@ func Table() adapter.Table {
 // file that defines the channel: the orchestrator config at path, or the file
 // pao manages beside it (ADR-0055).
 func CheckChannels(path string, o config.Orchestrator) error {
-	var own, managed []adapter.Spec
-	for _, ch := range o.Channels {
-		s := adapter.Spec{ID: ch.ID, Name: ch.Name, Kind: ch.Kind, Options: ch.Options}
-		if o.ManagedChannel(ch.Name) {
-			managed = append(managed, s)
-		} else {
-			own = append(own, s)
-		}
-	}
-	if err := Table().Check(own); err != nil {
-		return fmt.Errorf("%s: %w", path, err)
-	}
-	if err := Table().Check(managed); err != nil {
-		return fmt.Errorf("%s: %w", o.ManagedPath(), err)
-	}
-	return nil
+	return Table().CheckConfig(path, o)
 }

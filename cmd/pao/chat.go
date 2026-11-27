@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"syscall"
@@ -40,7 +41,11 @@ func (c RunCmd) Run() error {
 	if err != nil {
 		return err
 	}
-	err = daemon.Run(ctx, cfg, token, daemon.Options{Self: self})
+	path, err := filepath.Abs(c.Path)
+	if err != nil {
+		return err
+	}
+	err = daemon.Run(ctx, cfg, token, daemon.Options{Self: self, ConfigPath: path, StartEnv: lookupStartEnv})
 	if errors.Is(err, daemon.ErrRestart) {
 		// Start again in this same process, as the same binary at the same
 		// path, so a new build there is the one that starts. It gets the

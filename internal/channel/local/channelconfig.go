@@ -1,0 +1,137 @@
+package local
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/url"
+)
+
+// ChannelConfigJSON is a channel's definition as the configuration holds it.
+// Its credential is named, by a variable or a secret, never given: no request
+// or answer here carries a credential's value (ADR-0057 point 1).
+type ChannelConfigJSON struct {
+	ID               int               `json:"id"`
+	Name             string            `json:"name"`
+	Kind             string            `json:"kind"`
+	CredentialEnv    string            `json:"credential_env,omitempty"`
+	CredentialSecret string            `json:"credential_secret,omitempty"`
+	Options          map[string]any    `json:"options,omitempty"`
+	Groups           []GroupConfigJSON `json:"groups,omitempty"`
+}
+
+// GroupConfigJSON is a group a channel serves, as the configuration holds it.
+type GroupConfigJSON struct {
+	ID      string            `json:"id"`
+	Name    string            `json:"name"`
+	Members string            `json:"members"`
+	Topics  []TopicConfigJSON `json:"topics,omitempty"`
+}
+
+// TopicConfigJSON is a named topic of a group.
+type TopicConfigJSON struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// CredentialStatusJSON says whether a channel's credential reference resolves,
+// and if not, why, naming where it looked; never what it found (ADR-0057
+// point 4).
+type CredentialStatusJSON struct {
+	Resolves bool   `json:"resolves"`
+	Problem  string `json:"problem,omitempty"`
+}
+
+// ChannelConfigEntryJSON is one channel of the configuration on disk.
+type ChannelConfigEntryJSON struct {
+	ChannelConfigJSON
+	// Managed is true for a channel in the file pao manages, which the UI may
+	// change, and false for one in pao.yaml, which it shows only (ADR-0055).
+	Managed bool `json:"managed"`
+	// Applied is true when the running node uses this definition as it is;
+	// false until pao next starts.
+	Applied    bool                 `json:"applied"`
+	Credential CredentialStatusJSON `json:"credential"`
+}
+
+// ChannelConfigListJSON is the configuration's channels and what a form needs
+// to define one.
+type ChannelConfigListJSON struct {
+	// ManagedFile is the file pao manages, or empty when the configuration
+	// names none, in which case nothing here can be changed.
+	ManagedFile string                   `json:"managed_file"`
+	Channels    []ChannelConfigEntryJSON `json:"channels"`
+	// RestartNeeded is true when what is on disk differs from what runs.
+	RestartNeeded bool `json:"restart_needed"`
+	// Kinds are the channel adapters this build has.
+	Kinds []string `json:"kinds"`
+	// Secrets are the names of the node's secrets a channel may name.
+	Secrets []string `json:"secrets"`
+}
+
+// ChannelConfigAPI is the operator's view and change of the channels pao
+// manages (ADR-0055, ADR-0057).
+type ChannelConfigAPI interface {
+	List(ctx context.Context) (ChannelConfigListJSON, error)
+	// Put defines or redefines a channel in the managed file.
+	Put(ctx context.Context, c ChannelConfigJSON) error
+	// Delete removes a channel from the managed file.
+	Delete(ctx context.Context, name string) error
+}
+
+// WithChannelConfig serves the channel configuration routes.
+func WithChannelConfig(a ChannelConfigAPI) Option { return func(s *Server) { s.channelConfig = a } }
+
+func (s *Server) registerChannelConfig(mux *http.ServeMux) {
+	if s.channelConfig == nil {
+		return
+	}
+	mux.HandleFunc("GET /v1/config/channels", s.auth(func(w http.ResponseWriter, r *http.Request) {
+		out, err := s.channelConfig.List(r.Context())
+		if err != nil {
+			writeError(w, tempStatus(err), err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, out)
+	}))
+	mux.HandleFunc("PUT /v1/config/channels/{name}", s.auth(func(w http.ResponseWriter, r *http.Request) {
+		var c ChannelConfigJSON
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&c); err != nil {
+			writeError(w, http.StatusBadRequest, "the body must be a channel's definition")
+			return
+		}
+		if c.Name != r.PathValue("name") {
+			writeError(w, http.StatusBadRequest, "the channel's name is the one in the path")
+			return
+		}
+		if err := s.channelConfig.Put(r.Context(), c); err != nil {
+			writeError(w, tempStatus(err), err.Error())
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	mux.HandleFunc("DELETE /v1/config/channels/{name}", s.auth(func(w http.ResponseWriter, r *http.Request) {
+		if err := s.channelConfig.Delete(r.Context(), r.PathValue("name")); err != nil {
+			writeError(w, tempStatus(err), err.Error())
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+}
+
+// ChannelConfig lists the configuration's channels.
+func (c *Client) ChannelConfig(ctx context.Context) (ChannelConfigListJSON, error) {
+	var out ChannelConfigListJSON
+	err := c.do(ctx, http.MethodGet, "/v1/config/channels", nil, http.StatusOK, &out)
+	return out, err
+}
+
+// PutChannelConfig defines or redefines a channel in the managed file.
+func (c *Client) PutChannelConfig(ctx context.Context, ch ChannelConfigJSON) error {
+	return c.do(ctx, http.MethodPut, "/v1/config/channels/"+url.PathEscape(ch.Name), ch, http.StatusNoContent, nil)
+}
+
+// DeleteChannelConfig removes a channel from the managed file.
+func (c *Client) DeleteChannelConfig(ctx context.Context, name string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/config/channels/"+url.PathEscape(name), nil, http.StatusNoContent, nil)
+}

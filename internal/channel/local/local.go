@@ -72,11 +72,15 @@ type Server struct {
 	profiles   ProfilesAPI
 	node       func() NodeJSON
 	restart    func()
-	questions  func() []QuestionJSON
-	recipes    func() ([]RecipeJSON, error)
-	channels   []ChannelJSON
-	token      []byte
-	heartbeat  time.Duration
+	// restartCheck, when set, must pass before a restart is asked.
+	restartCheck func() error
+	questions    func() []QuestionJSON
+	recipes      func() ([]RecipeJSON, error)
+	channels     []ChannelJSON
+	// channelConfig is the channel configuration's view and change.
+	channelConfig ChannelConfigAPI
+	token         []byte
+	heartbeat     time.Duration
 
 	mu   sync.Mutex
 	subs map[chan core.Message]struct{}
@@ -177,11 +181,19 @@ func (s *Server) Handler() http.Handler {
 	s.registerTasks(mux)
 	s.registerProfiles(mux)
 	s.registerOperate(mux)
+	s.registerChannelConfig(mux)
 	if s.node != nil {
 		mux.HandleFunc("GET /v1/node", s.auth(func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, http.StatusOK, s.node()) }))
 	}
 	if s.restart != nil {
 		mux.HandleFunc("POST /v1/node/restart", s.auth(func(w http.ResponseWriter, _ *http.Request) {
+			if s.restartCheck != nil {
+				if err := s.restartCheck(); err != nil {
+					// pao keeps running as it is
+					writeError(w, http.StatusConflict, err.Error())
+					return
+				}
+			}
 			s.restart()
 			w.WriteHeader(http.StatusAccepted)
 		}))
