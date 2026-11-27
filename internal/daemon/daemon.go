@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -89,6 +90,14 @@ type Options struct {
 	// egress plane (ADR-0049). Empty means the node does not confine: a task
 	// with a secret to inject is refused and other task-agents run unconfined.
 	Self string
+	// ConfigPath is the orchestrator config the node was loaded from. Set, the
+	// management UI may change the channels of the file pao manages beside it
+	// (ADR-0055); empty, it shows and changes none.
+	ConfigPath string
+	// StartEnv looks a variable up in the environment pao was started with,
+	// which a restart starts with again. It tells the UI whether a channel's
+	// credential would resolve (ADR-0057 point 4). Nil reads the current one.
+	StartEnv func(string) (string, bool)
 }
 
 // Run serves the node until ctx is done. token is the local channel's bearer
@@ -489,6 +498,20 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	dispatcher.Liveness = taskLiveness{reg: reg, thresholds: mgr.Thresholds}
 	tasks.Changed, tasks.Tell = dispatcher.Kick, fleet.Tell
 	localOpts = append(localOpts, local.WithBudget(budgetJSON(book)))
+	if opts.ConfigPath != "" {
+		startEnv := opts.StartEnv
+		if startEnv == nil {
+			startEnv = os.LookupEnv
+		}
+		adapters := opts.Adapters
+		if adapters == nil {
+			adapters = builtin.Table()
+		}
+		channelConfig := &channelConfigAPI{
+			path: opts.ConfigPath, running: slices.Clone(cfg.Orchestrator.Channels), startEnv: startEnv, adapters: adapters,
+		}
+		localOpts = append(localOpts, local.WithChannelConfig(channelConfig), local.WithRestartCheck(channelConfig.RestartCheck))
+	}
 	uiSessions := webui.NewSessions()
 	localOpts = append(localOpts, local.WithQuestions(questionsOf(pending)), local.WithRecipes(recipesOf(mgr)), local.WithChannels(channelsOf(cfg.Orchestrator.Channels)))
 	restartCh := make(chan struct{}, 1)

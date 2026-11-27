@@ -104,3 +104,17 @@ details.rejected pre { white-space: pre-wrap; word-break: break-word; font-size:
 .wline { padding: 2px 0; }
 .wline .wtext { white-space: pre-wrap; word-break: break-word; }
 .wline.history { opacity: 0.7; }
+fieldset { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+legend { padding: 0 4px; }
+.group-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.group-row input { flex: 1 1 120px; min-width: 0; }
+.card.notice { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; margin-bottom: 12px; }
+.card.notice p { margin: 0; }
+p code { word-break: break-all; }
+@media (max-width: 560px) {
+  table.channels .row-actions { white-space: normal; }
+  table.channels .row-actions > * { display: block; margin: 0 0 6px 0; }
+  table.channels .row-actions > * + * { margin-left: 0; }
+}
+table.channels td { overflow-wrap: anywhere; }
+table.channels td.row-actions { overflow-wrap: normal; }

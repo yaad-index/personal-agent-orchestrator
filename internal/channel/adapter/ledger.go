@@ -47,24 +47,49 @@ func OpenLedger(path string) (*Ledger, error) {
 	return l, nil
 }
 
+// Check reports whether Admit would admit the channels, writing nothing.
+func (l *Ledger) Check(specs []Spec) error {
+	for _, s := range specs {
+		if prev, ok := l.ids[s.ID]; ok && prev != s.Name {
+			return fmt.Errorf("channel id %d is channel %q, not %q: an id is never reused and a channel keeps its name", s.ID, prev, s.Name)
+		}
+		if id, ok := l.IDOf(s.Name); ok && id != s.ID {
+			return fmt.Errorf("channel %q was id %d: a channel keeps its id", s.Name, id)
+		}
+	}
+	return nil
+}
+
+// IDOf returns the id the named channel was served under, if it was.
+func (l *Ledger) IDOf(name string) (int, bool) {
+	for id, n := range l.ids {
+		if n == name {
+			return id, true
+		}
+	}
+	return 0, false
+}
+
+// MaxID returns the highest id served, 0 when none was.
+func (l *Ledger) MaxID() int {
+	m := 0
+	for id := range l.ids {
+		m = max(m, id)
+	}
+	return m
+}
+
 // Admit checks the channels against what has been served and, if they are all
 // consistent, records them. Nothing is written when any is refused.
 func (l *Ledger) Admit(specs []Spec) error {
-	byName := map[string]int{}
-	for id, n := range l.ids {
-		byName[n] = id
+	if err := l.Check(specs); err != nil {
+		return err
 	}
 	next := map[int]string{}
 	for id, n := range l.ids {
 		next[id] = n
 	}
 	for _, s := range specs {
-		if prev, ok := l.ids[s.ID]; ok && prev != s.Name {
-			return fmt.Errorf("channel id %d is channel %q, not %q: an id is never reused and a channel keeps its name", s.ID, prev, s.Name)
-		}
-		if id, ok := byName[s.Name]; ok && id != s.ID {
-			return fmt.Errorf("channel %q was id %d: a channel keeps its id", s.Name, id)
-		}
 		next[s.ID] = s.Name
 	}
 	if len(next) == len(l.ids) {

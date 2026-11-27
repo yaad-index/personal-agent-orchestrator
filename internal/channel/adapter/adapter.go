@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/comm"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/config"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
 )
 
@@ -136,4 +137,27 @@ func (t Table) Build(specs []Spec, h Handler) ([]Adapter, error) {
 		out = append(out, a)
 	}
 	return out, nil
+}
+
+// CheckConfig checks every configured channel's kind and options against the
+// table, as starting the node would. An error names the file that defines the
+// channel: the orchestrator config at path, or the file pao manages beside it
+// (ADR-0055).
+func (t Table) CheckConfig(path string, o config.Orchestrator) error {
+	var own, managed []Spec
+	for _, ch := range o.Channels {
+		s := Spec{ID: ch.ID, Name: ch.Name, Kind: ch.Kind, Options: ch.Options}
+		if o.ManagedChannel(ch.Name) {
+			managed = append(managed, s)
+		} else {
+			own = append(own, s)
+		}
+	}
+	if err := t.Check(own); err != nil {
+		return fmt.Errorf("%s: %w", path, err)
+	}
+	if err := t.Check(managed); err != nil {
+		return fmt.Errorf("%s: %w", o.ManagedPath(), err)
+	}
+	return nil
 }
