@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { node, budget, type NodeInfo, type Budget } from "../lib/api";
+  import { node, budget, restartNode, type NodeInfo, type Budget } from "../lib/api";
 
   let { onLost }: { onLost: (err: unknown) => void } = $props();
   let info: NodeInfo | null = $state(null);
@@ -23,6 +23,22 @@
 
   onMount(load);
 
+  let restarting = $state(false);
+
+  // Restarting stops pao and starts it again in the same process; its agents
+  // keep running. Sign-ins are held in memory, so everyone signs in again.
+  async function restart() {
+    if (!confirm("Restart pao? Its agents keep running. You will sign in again.")) return;
+    error = "";
+    try {
+      await restartNode();
+      restarting = true;
+    } catch (err) {
+      onLost(err);
+      error = err instanceof Error ? err.message : "Could not restart pao.";
+    }
+  }
+
   // left reads a window's share left; a window the node did not send, or a
   // value that is not a number, shows as a dash.
   function left(w?: { left: number }) {
@@ -36,6 +52,9 @@
     <button class="link" onclick={load} disabled={loading}>{loading ? "Refreshing…" : "Refresh"}</button>
   </div>
   {#if info}<p class="muted">Build {info.build}</p>{/if}
+  {#if restarting}
+    <p class="ok" role="status">pao is restarting. <a href="/ui/">Sign in again</a> in a moment.</p>
+  {/if}
   {#if error}<p class="error" role="alert">{error}</p>{/if}
 
   <h2>Agents</h2>
@@ -59,6 +78,10 @@
       </tbody>
     </table>
   {/if}
+
+  <h2>Node</h2>
+  <p class="muted">A restart applies configuration pao reads at start, such as a new channel. Agents keep running.</p>
+  <button class="secondary" onclick={restart} disabled={restarting}>Restart pao</button>
 
   <h2>Accounts</h2>
   {#if accounts.length === 0}

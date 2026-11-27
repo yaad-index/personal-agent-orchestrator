@@ -94,6 +94,10 @@ type Options struct {
 // Run serves the node until ctx is done. token is the local channel's bearer
 // token.
 func Run(ctx context.Context, cfg *config.Config, token string, opts Options) error {
+	// A restart asked from the management UI stops the node as a signal does:
+	// everything the node runs is under this context.
+	ctx, stopRun := context.WithCancel(ctx)
+	defer stopRun()
 	// Agents run under a tmux server this process starts, and a session inherits
 	// the server's environment. The operator's token must not be in it: an agent
 	// could otherwise read it from its own environment and speak as the operator.
@@ -491,6 +495,13 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	tasks.Changed, tasks.Tell = dispatcher.Kick, fleet.Tell
 	localOpts = append(localOpts, local.WithBudget(budgetJSON(book)))
 	uiSessions := webui.NewSessions()
+	restartCh := make(chan struct{}, 1)
+	localOpts = append(localOpts, local.WithRestart(func() {
+		select {
+		case restartCh <- struct{}{}:
+		default: // a restart is already on its way
+		}
+	}))
 	if profiles != nil {
 		localOpts = append(localOpts, local.WithProfiles(profiles))
 	}
@@ -597,6 +608,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	go dispatcher.Run(budgetCtx, opts.DispatchEvery)
 	slog.Info("pao serving", "node", cfg.Orchestrator.Node, "listen", ln.Addr().String(), "agents", len(cfg.Profiles))
 
+	restarting := false
 	select {
 	case err := <-serveErr:
 		_ = gateSrv.Close()
@@ -608,6 +620,12 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		adaptersWG.Wait()
 		return err
 	case <-ctx.Done():
+	case <-restartCh:
+		// Asked to restart from the management UI: stop as for a signal, and
+		// let the caller start the node again. Agents keep running (ADR-0051).
+		restarting = true
+		slog.Info("pao restarting")
+		stopRun()
 	}
 	shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -626,8 +644,15 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	stopAdapters()
 	adaptersWG.Wait()
 	hook.follow.wait()
+	if restarting && err == nil {
+		return ErrRestart
+	}
 	return err
 }
+
+// ErrRestart is what Run returns when it stopped because the operator asked
+// pao to restart: the caller starts it again.
+var ErrRestart = errors.New("pao was asked to restart")
 
 // launchHook is the Launcher the router uses: it launches through the control
 // plane, starts following the agent's transcript once it is up, and tells the

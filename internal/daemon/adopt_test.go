@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -157,4 +158,24 @@ func TestPruneKeepsOnlyTheNamedTokens(t *testing.T) {
 	require.NoError(t, files.prune(map[string]bool{"a": true}))
 	assert.FileExists(t, files.path("a"))
 	assert.NoFileExists(t, files.path("b"))
+}
+
+func TestARestartAskedOfTheNodeStopsItGracefullyForTheCallerToStartAgain(t *testing.T) {
+	n := startNode(t, map[string]string{"a": ""})
+	_, err := n.client.Post(context.Background(), "human", "hi", "name", "a")
+	require.NoError(t, err)
+	n.next(t)
+	pid := panePID(t, n, "a")
+
+	require.NoError(t, n.client.RestartNode(context.Background()))
+	select {
+	case err := <-n.done:
+		assert.ErrorIs(t, err, ErrRestart)
+	case <-time.After(10 * time.Second):
+		t.Fatal("the node did not stop")
+	}
+	n.cancel, n.done = nil, make(chan error, 1)
+	n.streamWG.Wait()
+	n.run(t)
+	assert.Equal(t, pid, panePID(t, n, "a"), "the agent ran on through the restart")
 }

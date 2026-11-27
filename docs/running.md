@@ -57,6 +57,8 @@ A backend that can't turn its tools off refuses a profile that asks it to, wheth
 
 pao serves its management UI at `/ui` on the same address as its API, `listen` in `pao.yaml`, which is on localhost by default: `http://127.0.0.1:7744/ui/` unless you changed it. Sign in with the node's operator token, the one in the variable `token_env` names. The sign-in lasts 12 hours, or until you sign out or pao restarts.
 
+The Node page's **Restart pao** stops pao gracefully and starts it again in the same process, with the environment it was started with, so a service manager sees nothing. Agents keep running and are taken back. Restarting applies configuration pao reads only at start, and picks up a new pao binary at the same path. Everyone signs in again afterwards.
+
 The UI acts as the operator, so keep it on localhost. To reach it from another machine, forward the port over SSH (`ssh -L 7744:127.0.0.1:7744 <host>`) rather than binding `listen` to a public address.
 
 ### Profiles

@@ -29,3 +29,13 @@ func (c *Client) Node(ctx context.Context) (NodeJSON, error) {
 	err := c.do(ctx, http.MethodGet, "/v1/node", nil, http.StatusOK, &out)
 	return out, err
 }
+
+// WithRestart serves POST /v1/node/restart: the node stops gracefully and starts
+// again, its agents kept running (ADR-0051). restart only asks; the node stops
+// after the answer is sent.
+func WithRestart(restart func()) Option { return func(s *Server) { s.restart = restart } }
+
+// RestartNode asks the node to restart.
+func (c *Client) RestartNode(ctx context.Context) error {
+	return c.do(ctx, http.MethodPost, "/v1/node/restart", nil, http.StatusAccepted, nil)
+}

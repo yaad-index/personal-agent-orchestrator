@@ -71,6 +71,7 @@ type Server struct {
 	sessions   *webui.Sessions
 	profiles   ProfilesAPI
 	node       func() NodeJSON
+	restart    func()
 	token      []byte
 	heartbeat  time.Duration
 
@@ -174,6 +175,12 @@ func (s *Server) Handler() http.Handler {
 	s.registerProfiles(mux)
 	if s.node != nil {
 		mux.HandleFunc("GET /v1/node", s.auth(func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, http.StatusOK, s.node()) }))
+	}
+	if s.restart != nil {
+		mux.HandleFunc("POST /v1/node/restart", s.auth(func(w http.ResponseWriter, _ *http.Request) {
+			s.restart()
+			w.WriteHeader(http.StatusAccepted)
+		}))
 	}
 	for _, m := range s.mounts {
 		mux.Handle(m.path, m.h)

@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -39,7 +40,15 @@ func (c RunCmd) Run() error {
 	if err != nil {
 		return err
 	}
-	return daemon.Run(ctx, cfg, token, daemon.Options{Self: self})
+	err = daemon.Run(ctx, cfg, token, daemon.Options{Self: self})
+	if errors.Is(err, daemon.ErrRestart) {
+		// Start again in this same process, as the same binary at the same
+		// path, so a new build there is the one that starts. It gets the
+		// environment pao started with, which the node took its credentials
+		// out of when it started.
+		return syscall.Exec(self, os.Args, startEnv)
+	}
+	return err
 }
 
 // ChatCmd is a minimal client for the local channel: each line typed is sent
