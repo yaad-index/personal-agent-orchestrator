@@ -56,18 +56,24 @@ export interface NodeInfo {
   agents: Agent[];
 }
 
+// The shapes below are the node's own JSON (internal/channel/local): a field
+// named here must be one the node sends.
+
 export interface BudgetWindow {
-  used_percent: number;
-  resets_at?: string;
+  // left is the share of the window left, in percent.
+  left: number;
+  resets?: string;
 }
 
 export interface Budget {
   account: string;
+  // state is "unmetered", "readable" or "fault".
   state: string;
   week?: BudgetWindow;
   five_hour?: BudgetWindow;
   fault?: string;
   retrying?: string;
+  headroom: boolean;
 }
 
 export const login = (token: string) => call<void>("POST", "/ui/api/login", { token });

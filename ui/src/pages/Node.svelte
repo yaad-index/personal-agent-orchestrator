@@ -23,8 +23,10 @@
 
   onMount(load);
 
-  function percent(w?: { used_percent: number }) {
-    return w ? `${Math.round(w.used_percent)}%` : "—";
+  // left reads a window's share left; a window the node did not send, or a
+  // value that is not a number, shows as a dash.
+  function left(w?: { left: number }) {
+    return w && Number.isFinite(w.left) ? `${Math.round(w.left)}% left` : "—";
   }
 </script>
 
@@ -71,8 +73,8 @@
           <tr>
             <td>{b.account}</td>
             <td>{b.state}{#if b.fault}: {b.fault}{/if}</td>
-            <td>{percent(b.five_hour)}</td>
-            <td>{percent(b.week)}</td>
+            <td>{left(b.five_hour)}</td>
+            <td>{left(b.week)}</td>
           </tr>
         {/each}
       </tbody>
