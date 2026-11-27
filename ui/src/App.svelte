@@ -7,6 +7,9 @@
   import ProfileEdit from "./pages/ProfileEdit.svelte";
   import NewProfile from "./pages/NewProfile.svelte";
   import Agents from "./pages/Agents.svelte";
+  import Tasks from "./pages/Tasks.svelte";
+  import TaskView from "./pages/TaskView.svelte";
+  import NewTask from "./pages/NewTask.svelte";
 
   // checking: asking whether the cookie is still good; out: the login form;
   // in: the pages.
@@ -51,6 +54,7 @@
     <nav>
       <a href="#/node" class:active={page === "node"}>Node</a>
       <a href="#/agents" class:active={page === "agents"}>Agents</a>
+      <a href="#/tasks" class:active={page.startsWith("tasks")}>Tasks</a>
       <a href="#/profiles" class:active={page.startsWith("profiles")}>Profiles</a>
     </nav>
     <button class="link" onclick={signOut}>Sign out</button>
@@ -60,6 +64,12 @@
       <Node onLost={lost} />
     {:else if page === "agents"}
       <Agents onLost={lost} />
+    {:else if page === "tasks"}
+      <Tasks onLost={lost} />
+    {:else if page === "tasks/new"}
+      <NewTask onLost={lost} />
+    {:else if page.startsWith("tasks/")}
+      {#key page}<TaskView id={decodeURIComponent(page.slice("tasks/".length))} onLost={lost} />{/key}
     {:else if page === "profiles"}
       <Profiles onLost={lost} />
     {:else if page === "profiles/new"}

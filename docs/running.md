@@ -61,6 +61,8 @@ The Node page's **Restart pao** stops pao gracefully and starts it again in the 
 
 The **Agents** page starts, stops and restarts configured agents, spawns a temporary agent from a recipe, and kills one, harvesting it first. Each is the same operation as `pao agent`, `pao spawn` and `pao kill`, under the same checks: a spawn the operator holds no grant for (`pao access`) is refused here as it is at the command line.
 
+The **Tasks** page lists the tasks still open (and the ended ones when asked), shows a task with its log, creates one, and cancels one with a reason. These are `pao tasks list`, `show`, `create` and `cancel`, under the same checks: a task is created only for tags the operator holds a grant on, and a secret it names must be configured.
+
 The UI acts as the operator, so keep it on localhost. To reach it from another machine, forward the port over SSH (`ssh -L 7744:127.0.0.1:7744 <host>`) rather than binding `listen` to a public address.
 
 ### Profiles

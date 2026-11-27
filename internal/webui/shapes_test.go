@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/local"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/task"
 )
 
 // jsonFields are the JSON names a Go type sends, embedded structs flattened.
@@ -58,16 +59,20 @@ func TestTheUIReadsOnlyFieldsTheNodeSends(t *testing.T) {
 	require.NoError(t, err)
 	src := string(b)
 	for ts, goType := range map[string]reflect.Type{
-		"BudgetWindow": reflect.TypeFor[local.BudgetWindowJSON](),
-		"Budget":       reflect.TypeFor[local.BudgetJSON](),
-		"NodeInfo":     reflect.TypeFor[local.NodeJSON](),
-		"Agent":        reflect.TypeFor[local.NodeAgentJSON](),
-		"Profile":      reflect.TypeFor[local.ProfileJSON](),
-		"ProfileFile":  reflect.TypeFor[local.ProfileFileJSON](),
-		"ProfileDraft": reflect.TypeFor[local.ProfileDraftJSON](),
-		"Recipe":       reflect.TypeFor[local.RecipeJSON](),
-		"Spawned":      reflect.TypeFor[local.SpawnJSON](),
-		"KillResult":   reflect.TypeFor[local.KillJSON](),
+		"BudgetWindow":    reflect.TypeFor[local.BudgetWindowJSON](),
+		"Budget":          reflect.TypeFor[local.BudgetJSON](),
+		"NodeInfo":        reflect.TypeFor[local.NodeJSON](),
+		"Agent":           reflect.TypeFor[local.NodeAgentJSON](),
+		"Profile":         reflect.TypeFor[local.ProfileJSON](),
+		"ProfileFile":     reflect.TypeFor[local.ProfileFileJSON](),
+		"ProfileDraft":    reflect.TypeFor[local.ProfileDraftJSON](),
+		"Recipe":          reflect.TypeFor[local.RecipeJSON](),
+		"Spawned":         reflect.TypeFor[local.SpawnJSON](),
+		"KillResult":      reflect.TypeFor[local.KillJSON](),
+		"Task":            reflect.TypeFor[local.TaskJSON](),
+		"TaskLogEntry":    reflect.TypeFor[task.LogEntry](),
+		"TaskAttachments": reflect.TypeFor[task.Attachments](),
+		"NewTask":         reflect.TypeFor[local.NewTaskJSON](),
 	} {
 		sent := jsonFields(goType)
 		for _, f := range tsFields(t, src, ts) {

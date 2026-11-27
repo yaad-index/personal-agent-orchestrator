@@ -133,3 +133,57 @@ export const agentAction = (name: string, action: "start" | "stop" | "restart") 
   call<void>("POST", `/v1/agents/${encodeURIComponent(name)}/${action}`);
 export const spawn = (recipe: string, name: string) => call<Spawned>("POST", "/v1/temp", { recipe, name, channel: "" });
 export const kill = (name: string) => call<KillResult>("DELETE", `/v1/temp/${encodeURIComponent(name)}`);
+
+export type TaskStatus = "open" | "assigned" | "running" | "blocked" | "done" | "failed" | "canceled";
+
+export interface TaskAttachments {
+  tools?: string[];
+  scripts?: string[];
+  // the name of a secret, never its value
+  secret?: string;
+}
+
+export interface TaskLogEntry {
+  at: string;
+  by: string;
+  kind: string;
+  status?: TaskStatus;
+  text?: string;
+}
+
+export interface Task {
+  id: string;
+  title: string;
+  description: string;
+  done: string;
+  how?: string;
+  tags: string[];
+  owner: string;
+  parent?: string;
+  attachments?: TaskAttachments;
+  status: TaskStatus;
+  assignee?: string;
+  one_off?: boolean;
+  removed?: boolean;
+  created: string;
+  updated: string;
+  log?: TaskLogEntry[];
+  dropped?: number;
+  folder: string;
+}
+
+export interface NewTask {
+  title: string;
+  description: string;
+  done: string;
+  how?: string;
+  tags: string[];
+  parent?: string;
+  attachments?: TaskAttachments;
+}
+
+export const tasks = () => call<Task[]>("GET", "/v1/tasks");
+export const getTask = (id: string) => call<Task>("GET", `/v1/tasks/${encodeURIComponent(id)}`);
+export const createTask = (t: NewTask) => call<Task>("POST", "/v1/tasks", t);
+export const cancelTask = (id: string, reason: string) =>
+  call<Task>("POST", `/v1/tasks/${encodeURIComponent(id)}/cancel`, { reason });
