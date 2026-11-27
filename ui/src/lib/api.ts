@@ -38,8 +38,9 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
     }
     throw new APIError(res.status, msg);
   }
-  if (res.status === 204) return undefined as T;
-  return (await res.json()) as T;
+  // An answer with no body, such as 204 or 202, has nothing to read.
+  const text = await res.text();
+  return (text ? JSON.parse(text) : undefined) as T;
 }
 
 export interface Agent {
@@ -109,4 +110,5 @@ export const profile = (file: string) => call<ProfileFile>("GET", `/v1/profiles/
 export const createProfile = (text: string) => call<Profile>("POST", "/v1/profiles", { text });
 export const saveProfile = (file: string, text: string) => call<Profile>("PUT", `/v1/profiles/${encodeURIComponent(file)}`, { text });
 export const draftProfile = (d: ProfileDraft) => call<{ text: string }>("POST", "/v1/profiles/draft", d);
+export const restartNode = () => call<void>("POST", "/v1/node/restart");
 export const restartAgent = (name: string) => call<void>("POST", `/v1/agents/${encodeURIComponent(name)}/restart`);

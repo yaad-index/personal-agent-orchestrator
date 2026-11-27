@@ -88,6 +88,11 @@ func buildVersion() string {
 	return "devel"
 }
 
+// startEnv is the environment pao started with. The node takes credentials
+// out of its own environment as it starts, so a restart in the same process
+// (from the management UI) starts again from this one.
+var startEnv = os.Environ()
+
 func main() {
 	// pao re-runs itself as the setup step of a confined agent's namespaces
 	// (ADR-0049); that step is not a command line to parse.

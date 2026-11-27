@@ -106,3 +106,24 @@ func keys(m map[string]any) []any {
 	}
 	return res
 }
+
+func TestARestartIsAskedOnlyByTheOperator(t *testing.T) {
+	asked := 0
+	sessions := webui.NewSessions()
+	_, ts := newServer(t, &fakeLayer{}, WithRestart(func() { asked++ }), WithSessions(sessions), WithMount(webui.Prefix, webui.Handler(sessions, token)))
+	assert.Equal(t, http.StatusUnauthorized, send(t, "POST", ts.URL+"/v1/node/restart", "", nil, nil))
+	assert.Equal(t, 0, asked)
+	require.NoError(t, (&Client{URL: ts.URL, Token: token}).RestartNode(context.Background()))
+	assert.Equal(t, 1, asked)
+
+	req, err := http.NewRequest("POST", ts.URL+"/ui/api/login", strings.NewReader(`{"token":"`+token+`"}`))
+	require.NoError(t, err)
+	req.Header.Set(webui.Header, "1")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	c := resp.Cookies()[0]
+	assert.Equal(t, http.StatusForbidden, send(t, "POST", ts.URL+"/v1/node/restart", "", nil, c), "a page elsewhere cannot restart pao")
+	assert.Equal(t, http.StatusAccepted, send(t, "POST", ts.URL+"/v1/node/restart", "", map[string]string{webui.Header: "1"}, c))
+	assert.Equal(t, 2, asked)
+}
