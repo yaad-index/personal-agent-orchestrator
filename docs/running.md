@@ -53,6 +53,18 @@ An empty list (`disable: []`) gives that agent every tool back. Tools are named 
 
 A backend that can't turn its tools off refuses a profile that asks it to, whether the list comes from the profile or from `profile_defaults`. pao says so when it loads the configuration.
 
+## The file pao manages
+
+pao never writes `pao.yaml`. Settings the management UI sets go in a second file, which you name in `pao.yaml`:
+
+```yaml
+managed: managed.yaml   # relative to pao.yaml's directory, or an absolute path
+```
+
+Without `managed`, pao writes no configuration and the UI changes none of those settings. The file is created on pao's first write; until then it holds nothing. It takes channels, written as in `pao.yaml`, and nothing else: any other setting in it is an error.
+
+At start, the channels of both files are joined. A channel, group or topic defined in both, by name or by number, stops pao from loading, and the error names both files; pao never picks one. pao writes the file only with content that loads and that this build's channel adapters accept, and writes it whole, so it is never half-written. Read it, back it up or delete it as you like, but don't edit it while pao runs: pao's next write replaces it. `pao config check` names it.
+
 ## The management UI
 
 pao serves its management UI at `/ui` on the same address as its API, `listen` in `pao.yaml`, which is on localhost by default: `http://127.0.0.1:7744/ui/` unless you changed it. Sign in with the node's operator token, the one in the variable `token_env` names. The sign-in lasts 12 hours, or until you sign out or pao restarts.
