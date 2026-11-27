@@ -1,6 +1,6 @@
 # ADR 0052: Sending a file from an agent's working directory
 
-**Status:** Proposed
+**Status:** Accepted
 
 Extends ADR-0026 (chat commands), ADR-0027 (action buttons) and ADR-0050 (agent Markdown rendered per channel). Builds on ADR-0010 (the message model and its attachments), ADR-0012 (access bounded by what a subject may reach), ADR-0019 (channel adapters) and ADR-0025 (what an agent's working directory is).
 
