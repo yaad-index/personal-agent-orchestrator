@@ -293,3 +293,12 @@ export const deleteHarvest = (id: string) => call<void>("DELETE", `/v1/harvests/
 export const harvestFileURL = (id: string, path: string) =>
   `/v1/harvests/${encodeURIComponent(id)}/file?${new URLSearchParams({ path })}`;
 export const rejected = () => call<Rejected[]>("GET", "/v1/inbound/rejected");
+
+export interface WatchLine {
+  // RFC 3339, empty when the entry has none
+  time?: string;
+  text: string;
+  // the recent past, sent before the output that arrives after the watch began
+  history?: boolean;
+}
+

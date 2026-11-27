@@ -67,7 +67,7 @@ textarea.code { width: 100%; font-family: ui-monospace, "SF Mono", Menlo, Consol
 .stack { display: flex; flex-direction: column; gap: 8px; max-width: 480px; }
 select { font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); }
 .row-actions { text-align: right; white-space: nowrap; }
-.row-actions button + button { margin-left: 12px; }
+.row-actions > * + * { margin-left: 12px; }
 button.danger, .link.danger { color: var(--bad); }
 button.secondary.danger { border-color: var(--bad); }
 .question { margin-bottom: 12px; }
@@ -77,7 +77,7 @@ button.secondary.danger { border-color: var(--bad); }
 .small { font-size: 0.8rem; }
 @media (max-width: 560px) {
   .wide-only { display: none; }
-  table.agents .row-actions button + button { margin-left: 8px; }
+  table.agents .row-actions > * + * { margin-left: 8px; }
 }
 .facts { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 16px 0; }
 .facts dt { color: var(--muted); }
@@ -99,3 +99,8 @@ ul.skipped code { word-break: break-all; }
 details.rejected { margin-bottom: 10px; }
 details.rejected summary { cursor: pointer; }
 details.rejected pre { white-space: pre-wrap; word-break: break-word; font-size: 0.85rem; background: var(--bg); padding: 10px; border-radius: 6px; margin-top: 10px; }
+.watch-controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.watch { margin-top: 12px; height: 60vh; overflow-y: auto; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.85rem; }
+.wline { padding: 2px 0; }
+.wline .wtext { white-space: pre-wrap; word-break: break-word; }
+.wline.history { opacity: 0.7; }
