@@ -8,4 +8,6 @@ Status: early development. The single-node MVP is being built against the Accept
 
 To drive pao in plain words, see [the governor](docs/governor.md).
 
+To run pao as a service so its agents outlive a restart, see [running pao](docs/running.md).
+
 What pao does and does not promise about keeping an agent within bounds is in [SECURITY.md](SECURITY.md).

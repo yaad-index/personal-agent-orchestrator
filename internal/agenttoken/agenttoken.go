@@ -48,6 +48,22 @@ func (r *Registry) Mint(agent string) string {
 }
 
 // Revoke ends the agent's token. Revoking an agent with none is a no-op.
+// Restore makes token agent's again, as it was before pao restarted: an agent
+// whose session outlived pao keeps calling with the token it was started with
+// (ADR-0051 point 3). It replaces any token the agent holds.
+func (r *Registry) Restore(agent, token string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if old, ok := r.byAgent[agent]; ok {
+		delete(r.byToken, old)
+	}
+	if prev, ok := r.byToken[token]; ok && prev != agent {
+		delete(r.byAgent, prev)
+	}
+	r.byAgent[agent] = token
+	r.byToken[token] = agent
+}
+
 func (r *Registry) Revoke(agent string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

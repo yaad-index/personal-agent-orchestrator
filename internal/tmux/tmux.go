@@ -92,6 +92,25 @@ func (d *Driver) HasSession(ctx context.Context, agent string) (bool, error) {
 	return false, err
 }
 
+// Sessions lists the agents that have a session on this server. A server
+// that is not running has none.
+func (d *Driver) Sessions(ctx context.Context) ([]string, error) {
+	out, err := d.run(ctx, nil, "list-sessions", "-F", "#{session_name}")
+	if err != nil {
+		if isNoSession(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var agents []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if agent, ok := strings.CutPrefix(line, SessionPrefix); ok && agent != "" {
+			agents = append(agents, agent)
+		}
+	}
+	return agents, nil
+}
+
 // KillSession ends the agent's session.
 func (d *Driver) KillSession(ctx context.Context, agent string) error {
 	_, err := d.run(ctx, nil, "kill-session", "-t", exact(agent))

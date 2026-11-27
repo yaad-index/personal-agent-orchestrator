@@ -176,3 +176,20 @@ func TestOperationsOnMissingSession(t *testing.T) {
 	assert.Error(t, d.Paste(ctx, "ghost", "x"))
 	assert.Error(t, d.KillSession(ctx, "ghost"))
 }
+
+func TestSessionsListsTheAgentsWithASession(t *testing.T) {
+	d := newDriver(t)
+	ctx := context.Background()
+	got, err := d.Sessions(ctx)
+	require.NoError(t, err, "no server is no sessions")
+	assert.Empty(t, got)
+
+	require.NoError(t, d.NewSession(ctx, "a", "", "sleep 30", nil))
+	require.NoError(t, d.NewSession(ctx, "b-2", "", "sleep 30", nil))
+	out, err := exec.Command("tmux", "-L", d.socket, "new-session", "-d", "-s", "not-pao", "sleep 30").CombinedOutput()
+	require.NoError(t, err, string(out))
+
+	got, err = d.Sessions(ctx)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"a", "b-2"}, got, "only pao's sessions, by agent name")
+}

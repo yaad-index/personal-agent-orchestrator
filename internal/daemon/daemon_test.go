@@ -70,6 +70,12 @@ type node struct {
 	// a test waiting for a question that never came can say why.
 	askMu   sync.Mutex
 	askErrs []error
+
+	// What a run of the daemon needs, kept so the node can be restarted.
+	cfg      *config.Config
+	token    string
+	optFns   []func(*Options)
+	streamWG sync.WaitGroup
 }
 
 // startNode runs a daemon over real tmux with one agent per name.
@@ -141,36 +147,49 @@ func startNodeWith(t *testing.T, agents map[string]string, adjust func(dir, scri
 		adjust(dir, scriptPath, cfg)
 	}
 
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithCancel(context.Background())
 	n := &node{
-		dir: dir, sock: sock, scriptPath: scriptPath, url: "http://" + ln.Addr().String(),
+		dir: dir, sock: sock, scriptPath: scriptPath,
 		gateSock: filepath.Join(cfg.Orchestrator.StateDir, "gate.sock"),
 		stateDir: cfg.Orchestrator.StateDir,
-		client:   &local.Client{URL: "http://" + ln.Addr().String(), Token: token},
-		cancel:   cancel,
-		done:     make(chan error, 1),
-		events:   make(chan local.MessageJSON, 64),
+		cfg:      cfg, token: token, optFns: optFns,
 	}
+	n.run(t)
+	// One cleanup, in the order that works: stop the daemon first (which also
+	// ends the stream's context), then wait for the stream reader. It stops
+	// whichever run is current, so a restarted node is stopped too.
+	t.Cleanup(func() { n.stop(t) })
+	return n
+}
+
+// run starts the daemon on the node's config and waits until its stream and
+// gate are open.
+func (n *node) run(t *testing.T) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	n.url = "http://" + ln.Addr().String()
+	n.client = &local.Client{URL: n.url, Token: n.token}
+	n.cancel = cancel
+	n.done = make(chan error, 1)
+	n.events = make(chan local.MessageJSON, 64)
+	done, events, client := n.done, n.events, n.client
 	go func() {
 		o := Options{Listener: ln, MirrorPoll: 10 * time.Millisecond, PollInterval: 20 * time.Millisecond}
-		for _, f := range optFns {
+		for _, f := range n.optFns {
 			f(&o)
 		}
-		n.done <- Run(ctx, cfg, token, o)
+		done <- Run(ctx, n.cfg, n.token, o)
 	}()
 
 	// Stream from the start: the test goes on once the server has taken the
 	// stream, so nothing sent from here on is missed.
-	var wg sync.WaitGroup
-	wg.Add(1)
+	n.streamWG.Add(1)
 	opened := make(chan struct{})
 	streamErr := make(chan error, 1)
 	go func() {
-		defer wg.Done()
-		streamErr <- n.client.StreamOpened(ctx, func() { close(opened) }, func(m local.MessageJSON) { n.events <- m })
+		defer n.streamWG.Done()
+		streamErr <- client.StreamOpened(ctx, func() { close(opened) }, func(m local.MessageJSON) { events <- m })
 	}()
 	select {
 	case <-opened:
@@ -188,20 +207,31 @@ func startNodeWith(t *testing.T, agents map[string]string, adjust func(dir, scri
 		}
 		return err == nil
 	}, 10*time.Second, 10*time.Millisecond, "the gate's socket did not open")
+}
 
-	// One cleanup, in the order that works: stop the daemon first (which also
-	// ends the stream's context), then wait for the stream reader.
-	t.Cleanup(func() {
-		cancel()
-		select {
-		case err := <-n.done:
-			assert.NoError(t, err)
-		case <-time.After(10 * time.Second):
-			t.Error("daemon did not stop")
-		}
-		wg.Wait()
-	})
-	return n
+// stop ends the current run of the daemon, leaving the multiplexer's sessions
+// as they are, as a pao that stops does (ADR-0051 point 1).
+func (n *node) stop(t *testing.T) {
+	t.Helper()
+	if n.cancel == nil {
+		return
+	}
+	n.cancel()
+	n.cancel = nil
+	select {
+	case err := <-n.done:
+		assert.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		t.Error("daemon did not stop")
+	}
+	n.streamWG.Wait()
+}
+
+// restart stops the daemon and starts it again on the same config and state.
+func (n *node) restart(t *testing.T) {
+	t.Helper()
+	n.stop(t)
+	n.run(t)
 }
 
 const operatorTestGrants = `{"version":1,"grants":[{"subject":"operator","kind":"agent","tag":"team"},{"subject":"operator","kind":"agent","tag":"temp"}]}`
