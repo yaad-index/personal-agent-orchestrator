@@ -5,10 +5,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/backend"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/shell"
 )
+
+// tokenPattern is what agenttoken mints: 256 bits in hex.
+var tokenPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 // agentTokenFiles hands each agent's token to its session through a file in
 // pao's state that only the node user can read. A value in a session's
@@ -19,12 +23,45 @@ type agentTokenFiles struct{ dir string }
 
 func (f agentTokenFiles) path(agent string) string { return filepath.Join(f.dir, agent) }
 
-// reset empties the directory, made readable by the node user alone.
-func (f agentTokenFiles) reset() error {
-	if err := os.RemoveAll(f.dir); err != nil {
+// prepare makes the directory, readable by the node user alone. What is in it
+// is kept: an agent whose session outlived pao still holds its token
+// (ADR-0051 point 3).
+func (f agentTokenFiles) prepare() error {
+	if err := os.MkdirAll(f.dir, 0o700); err != nil {
 		return err
 	}
-	return os.MkdirAll(f.dir, 0o700)
+	return os.Chmod(f.dir, 0o700)
+}
+
+// read is agent's token as it was handed to its session.
+func (f agentTokenFiles) read(agent string) (string, error) {
+	b, err := os.ReadFile(f.path(agent))
+	if err != nil {
+		return "", err
+	}
+	tok := string(b)
+	if !tokenPattern.MatchString(tok) {
+		return "", fmt.Errorf("agent %q: its token file does not hold a token", agent)
+	}
+	return tok, nil
+}
+
+// prune removes every token file except those of the agents keep names.
+func (f agentTokenFiles) prune(keep map[string]bool) error {
+	entries, err := os.ReadDir(f.dir)
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, e := range entries {
+		if keep[e.Name()] {
+			continue
+		}
+		if err := os.Remove(filepath.Join(f.dir, e.Name())); err != nil && !errors.Is(err, os.ErrNotExist) {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // write puts agent's token in its file, readable by the node user alone,

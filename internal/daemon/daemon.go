@@ -216,10 +216,10 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	// node is listening.
 	tokens := agenttoken.New()
 	// The token reaches the session through a file only the node user can read,
-	// never a command line, which any local user can read. At start no session
-	// holds a token yet.
+	// never a command line, which any local user can read. A session that
+	// outlived the last run of pao still holds its token (ADR-0051 point 3).
 	tokenFiles := agentTokenFiles{dir: filepath.Join(cfg.Orchestrator.StateDir, "agent-tokens")}
-	if err := tokenFiles.reset(); err != nil {
+	if err := tokenFiles.prepare(); err != nil {
 		return fmt.Errorf("agent tokens: %w", err)
 	}
 	var mcpURL atomic.Pointer[string]
@@ -304,7 +304,8 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 				slog.Warn("could not close an agent's egress", "agent", agent, "error", err)
 			}
 		}))
-	plane := control.New(tmux.New(tmux.WithSocket(cfg.Orchestrator.TmuxSocket)), ctlOpts...)
+	term := tmux.New(tmux.WithSocket(cfg.Orchestrator.TmuxSocket))
+	plane := control.New(term, ctlOpts...)
 
 	hook := &launchHook{plane: plane}
 	router := route.New(reg, hook, plane)
@@ -498,6 +499,23 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	if table == nil {
 		table = builtin.Table()
 	}
+	// Agents still running from before this start are taken back before any
+	// channel can route to them (ADR-0051 point 2), and the tokens of agents not
+	// taken back are let go.
+	found, err := adopter{
+		sessions: term.Sessions,
+		tokens:   tokens,
+		files:    tokenFiles,
+		follow:   hook.follow,
+		running:  func(agent string) error { return reg.SetState(agent, core.Running) },
+	}.adopt(ctx, cfg.Profiles)
+	if err != nil {
+		return fmt.Errorf("take back running agents: %w", err)
+	}
+	found.log()
+	if err := tokenFiles.prune(found.keep()); err != nil {
+		return fmt.Errorf("agent tokens: %w", err)
+	}
 	adapters, err := wireChannels(cfg, creds, table, layer, ids, rejects)
 	if err != nil {
 		return err
@@ -515,6 +533,11 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 				slog.Error("channel stopped", "channel", a.Name(), "error", err)
 			}
 		}()
+	}
+	if text := found.notice(cfg.Orchestrator.TmuxSocket); text != "" {
+		if _, err := layer.NotifyOperators(ctx, core.Message{Sender: "pao", Kind: core.MessageSystemEvent, Text: text}); err != nil {
+			slog.Warn("could not tell the operator what was found running", "error", err)
+		}
 	}
 
 	ln := opts.Listener

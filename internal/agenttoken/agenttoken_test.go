@@ -69,3 +69,23 @@ func TestConcurrentUse(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestARestoredTokenIsTheAgentsAgainAndReplacesAnother(t *testing.T) {
+	r := New()
+	minted := r.Mint("a")
+	r.Restore("a", "kept")
+	name, ok := r.Resolve("kept")
+	require.True(t, ok)
+	assert.Equal(t, "a", name)
+	_, ok = r.Resolve(minted)
+	assert.False(t, ok, "the token it held before is let go")
+
+	r.Restore("b", "kept")
+	name, ok = r.Resolve("kept")
+	require.True(t, ok)
+	assert.Equal(t, "b", name, "one token, one agent")
+	r.Revoke("a")
+	name, ok = r.Resolve("kept")
+	require.True(t, ok)
+	assert.Equal(t, "b", name, "revoking the agent that lost the token leaves it with its new holder")
+}
