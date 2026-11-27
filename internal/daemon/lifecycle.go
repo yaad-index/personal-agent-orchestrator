@@ -29,6 +29,9 @@ type lifecycle struct {
 	plane  *control.Plane
 	reg    *registry.Registry
 	follow follower
+	// profiles hands over a profile saved while the agent ran; nil where the
+	// node's profiles are not managed.
+	profiles *profileFiles
 }
 
 func (l lifecycle) find(name string) (core.Profile, registry.AgentView, error) {
@@ -91,5 +94,14 @@ func (l lifecycle) stop(ctx context.Context, p core.Profile) error {
 		return err
 	}
 	l.follow.Stop(p.Name)
+	// A profile saved while the agent ran takes effect now that it has
+	// stopped, so its next start uses it.
+	if l.profiles != nil {
+		if next, ok := l.profiles.takePending(p.Name); ok {
+			if err := l.reg.Replace(next); err != nil {
+				return fmt.Errorf("apply the saved profile of %q: %w", p.Name, err)
+			}
+		}
+	}
 	return nil
 }

@@ -54,3 +54,13 @@ tr:last-child td { border-bottom: 0; }
 @media (max-width: 600px) {
   th:nth-child(4), td:nth-child(4), th:nth-child(5), td:nth-child(5) { display: none; }
 }
+a { color: var(--accent); }
+.button { display: inline-block; padding: 8px 14px; border-radius: 6px; background: var(--accent); color: #fff; text-decoration: none; }
+button.secondary { background: none; color: var(--accent); border: 1px solid var(--accent); }
+.badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 0.85rem; background: var(--line); }
+.badge.warn { background: #f3e2b3; color: #6b4e00; }
+@media (prefers-color-scheme: dark) { .badge.warn { background: #4a3c12; color: #f1d58a; } }
+.ok { color: var(--ok); }
+textarea.code { width: 100%; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.9rem; padding: 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--fg); resize: vertical; }
+.actions { display: flex; gap: 12px; margin-top: 12px; }
+.stack { display: flex; flex-direction: column; gap: 8px; max-width: 480px; }

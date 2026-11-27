@@ -69,6 +69,7 @@ type Server struct {
 	tasks      TasksAPI
 	mounts     []mount
 	sessions   *webui.Sessions
+	profiles   ProfilesAPI
 	node       func() NodeJSON
 	token      []byte
 	heartbeat  time.Duration
@@ -170,6 +171,7 @@ func (s *Server) Handler() http.Handler {
 	s.registerMesh(mux)
 	s.registerBudget(mux)
 	s.registerTasks(mux)
+	s.registerProfiles(mux)
 	if s.node != nil {
 		mux.HandleFunc("GET /v1/node", s.auth(func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, http.StatusOK, s.node()) }))
 	}

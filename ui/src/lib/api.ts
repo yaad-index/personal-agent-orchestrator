@@ -76,8 +76,37 @@ export interface Budget {
   headroom: boolean;
 }
 
+export interface Profile {
+  file: string;
+  // name is the agent the profile defines; empty for an invalid file.
+  name: string;
+  backend?: string;
+  tags: string[];
+  // status is "loaded", "restart_to_apply", "not_applied" or "invalid".
+  status: string;
+  running: boolean;
+  error?: string;
+}
+
+export interface ProfileFile extends Profile {
+  text: string;
+}
+
+export interface ProfileDraft {
+  name: string;
+  workdir: string;
+  model: string;
+  tags: string[];
+}
+
 export const login = (token: string) => call<void>("POST", "/ui/api/login", { token });
 export const logout = () => call<void>("POST", "/ui/api/logout");
 export const session = () => call<void>("GET", "/ui/api/session");
 export const node = () => call<NodeInfo>("GET", "/v1/node");
 export const budget = () => call<Budget[]>("GET", "/v1/budget");
+export const profiles = () => call<Profile[]>("GET", "/v1/profiles");
+export const profile = (file: string) => call<ProfileFile>("GET", `/v1/profiles/${encodeURIComponent(file)}`);
+export const createProfile = (text: string) => call<Profile>("POST", "/v1/profiles", { text });
+export const saveProfile = (file: string, text: string) => call<Profile>("PUT", `/v1/profiles/${encodeURIComponent(file)}`, { text });
+export const draftProfile = (d: ProfileDraft) => call<{ text: string }>("POST", "/v1/profiles/draft", d);
+export const restartAgent = (name: string) => call<void>("POST", `/v1/agents/${encodeURIComponent(name)}/restart`);

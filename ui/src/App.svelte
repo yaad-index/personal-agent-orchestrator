@@ -3,14 +3,22 @@
   import { session, logout, Unauthorized } from "./lib/api";
   import Login from "./pages/Login.svelte";
   import Node from "./pages/Node.svelte";
+  import Profiles from "./pages/Profiles.svelte";
+  import ProfileEdit from "./pages/ProfileEdit.svelte";
+  import NewProfile from "./pages/NewProfile.svelte";
 
   // checking: asking whether the cookie is still good; out: the login form;
   // in: the pages.
   let phase: "checking" | "out" | "in" = $state("checking");
   let page = $state(location.hash.replace(/^#\//, "") || "node");
+  // draft is a new profile's text, from the new-profile form to the editor.
+  let draft = $state("");
 
   onMount(() => {
-    const onHash = () => (page = location.hash.replace(/^#\//, "") || "node");
+    const onHash = () => {
+      page = location.hash.replace(/^#\//, "") || "node";
+      if (page !== "profiles/new") draft = "";
+    };
     window.addEventListener("hashchange", onHash);
     session()
       .then(() => (phase = "in"))
@@ -41,12 +49,23 @@
     <span class="brand">pao</span>
     <nav>
       <a href="#/node" class:active={page === "node"}>Node</a>
+      <a href="#/profiles" class:active={page.startsWith("profiles")}>Profiles</a>
     </nav>
     <button class="link" onclick={signOut}>Sign out</button>
   </header>
   <main>
     {#if page === "node"}
       <Node onLost={lost} />
+    {:else if page === "profiles"}
+      <Profiles onLost={lost} />
+    {:else if page === "profiles/new"}
+      {#if draft}
+        {#key draft}<ProfileEdit file="" {draft} onLost={lost} />{/key}
+      {:else}
+        <NewProfile onDraft={(t) => (draft = t)} onLost={lost} />
+      {/if}
+    {:else if page.startsWith("profiles/")}
+      {#key page}<ProfileEdit file={decodeURIComponent(page.slice("profiles/".length))} onLost={lost} />{/key}
     {:else}
       <p class="muted">No such page.</p>
     {/if}

@@ -55,7 +55,7 @@ func (r *bindingRig) path() string { return filepath.Join(r.dir, "bindings.json"
 
 func (r *bindingRig) load(t *testing.T) *bindingSet {
 	t.Helper()
-	s, err := loadBindingSet(r.path(), r.cfg, r.layer, func(name string) bool { return name == "alice" })
+	s, err := loadBindingSet(r.path(), r.cfg, r.layer, func(name string) bool { return name == "alice" }, profilesIn(r.cfg))
 	require.NoError(t, err)
 	return s
 }
@@ -171,7 +171,7 @@ func TestASavedBindingThatNoLongerChecksIsDroppedOnLoad(t *testing.T) {
 func TestAnUnreadableBindingsFileStopsTheNode(t *testing.T) {
 	r := newBindingRig(t)
 	require.NoError(t, os.WriteFile(r.path(), []byte(`{not json`), 0o600))
-	_, err := loadBindingSet(r.path(), r.cfg, r.layer, func(string) bool { return true })
+	_, err := loadBindingSet(r.path(), r.cfg, r.layer, func(string) bool { return true }, profilesIn(r.cfg))
 	require.Error(t, err)
 	assert.False(t, errors.Is(err, os.ErrNotExist))
 }
@@ -196,4 +196,16 @@ func TestTheGovernorTakesNoBindingAtRuntime(t *testing.T) {
 	assert.Contains(t, err.Error(), "is the governor")
 	_, err = r.set.add(config.Binding{Agent: "wasp", To: "private:alice"})
 	assert.NoError(t, err, "another agent still may be bound")
+}
+
+// profilesIn says whether a name is one of cfg's profiles.
+func profilesIn(cfg *config.Config) func(string) bool {
+	return func(name string) bool {
+		for _, p := range cfg.Profiles {
+			if p.Name == name {
+				return true
+			}
+		}
+		return false
+	}
 }

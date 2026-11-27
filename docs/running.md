@@ -58,3 +58,15 @@ A backend that can't turn its tools off refuses a profile that asks it to, wheth
 pao serves its management UI at `/ui` on the same address as its API, `listen` in `pao.yaml`, which is on localhost by default: `http://127.0.0.1:7744/ui/` unless you changed it. Sign in with the node's operator token, the one in the variable `token_env` names. The sign-in lasts 12 hours, or until you sign out or pao restarts.
 
 The UI acts as the operator, so keep it on localhost. To reach it from another machine, forward the port over SSH (`ssh -L 7744:127.0.0.1:7744 <host>`) rather than binding `listen` to a public address.
+
+### Profiles
+
+The UI's Profiles page lists every file in `profiles_dir` and what the node does with it:
+- **Loaded:** the node runs the profile as written.
+- **Restart to apply:** it was saved while its agent ran. The agent keeps the profile it started with until it's restarted, which the page offers.
+- **Not applied:** the file was changed outside pao since the node started. Saving it from the UI applies it.
+- **Invalid:** the node wouldn't load it. The page shows why.
+
+A profile is edited as the text of its file, so comments and layout stay as you wrote them. A save is checked exactly as loading the configuration checks it, and refused if it wouldn't load. A saved profile applies without restarting pao: a new profile becomes an agent at once, a stopped agent takes its new profile at once, and a running agent takes it when it's restarted. A profile keeps its agent's name; a new name is a new profile.
+
+"New profile" asks for a name, a working directory, a model and tags, and fills in a starting Claude Code profile for you to read and change before it's created.
