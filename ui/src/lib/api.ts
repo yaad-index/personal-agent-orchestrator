@@ -239,3 +239,46 @@ export const setDefault = (channel: string, agent: string) =>
   call<DefaultChange>("PUT", `/v1/channels/${encodeURIComponent(channel)}/default`, { agent });
 export const clearDefault = (channel: string) =>
   call<DefaultChange>("DELETE", `/v1/channels/${encodeURIComponent(channel)}/default`);
+
+export interface HarvestFile {
+  path: string;
+  size: number;
+}
+
+export interface HarvestSkip {
+  path: string;
+  reason: string;
+}
+
+export interface Harvest {
+  id: string;
+  agent: string;
+  tags: string[];
+  requester: string;
+  time: string;
+  complete: boolean;
+  files: HarvestFile[];
+  bytes: number;
+  skipped?: HarvestSkip[];
+  skipped_total?: number;
+}
+
+export interface Rejected {
+  channel: string;
+  sender: string;
+  kind: string;
+  reason: string;
+  first: string;
+  last: string;
+  count: number;
+  // a stranger's content: shown as text, never acted on
+  payload: string;
+}
+
+export const harvests = () => call<Harvest[]>("GET", "/v1/harvests");
+export const harvest = (id: string) => call<Harvest>("GET", `/v1/harvests/${encodeURIComponent(id)}`);
+export const deleteHarvest = (id: string) => call<void>("DELETE", `/v1/harvests/${encodeURIComponent(id)}`);
+// A harvested file downloads; the node serves it as an attachment, never as a page.
+export const harvestFileURL = (id: string, path: string) =>
+  `/v1/harvests/${encodeURIComponent(id)}/file?${new URLSearchParams({ path })}`;
+export const rejected = () => call<Rejected[]>("GET", "/v1/inbound/rejected");

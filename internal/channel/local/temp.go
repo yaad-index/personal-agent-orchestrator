@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
+	"path"
 	"time"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/harvest"
@@ -180,8 +182,12 @@ func (s *Server) getHarvestFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, tempStatus(err), err.Error())
 		return
 	}
+	// A harvested file is the agent's content: it is downloaded, never shown in
+	// the node's own origin, where a page could act with the operator's session.
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": path.Base(r.URL.Query().Get("path"))}))
+	w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'")
 	_, _ = w.Write(data)
 }
 

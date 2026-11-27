@@ -1,7 +1,9 @@
 package webui_test
 
 import (
+	"io/fs"
 	"os"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"strings"
@@ -11,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/local"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/harvest"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/task"
 )
 
@@ -79,10 +82,34 @@ func TestTheUIReadsOnlyFieldsTheNodeSends(t *testing.T) {
 		"ChannelDefault":  reflect.TypeFor[local.DefaultJSON](),
 		"ChannelDefaults": reflect.TypeFor[local.DefaultsJSON](),
 		"DefaultChange":   reflect.TypeFor[local.DefaultChangeJSON](),
+		"Harvest":         reflect.TypeFor[harvest.Manifest](),
+		"HarvestFile":     reflect.TypeFor[harvest.File](),
+		"HarvestSkip":     reflect.TypeFor[harvest.Skip](),
+		"Rejected":        reflect.TypeFor[local.RejectedJSON](),
 	} {
 		sent := jsonFields(goType)
 		for _, f := range tsFields(t, src, ts) {
 			assert.True(t, sent[f], "api.ts %s.%s is not a field %s sends", ts, f, goType.Name())
 		}
 	}
+}
+
+// The page shows what the node sends as text, never as markup: much of it is
+// written by agents or by strangers (a rejected inbound's payload, a harvested
+// file's name), and markup from it would run with the operator's session.
+func TestThePageNeverRendersMarkupItWasSent(t *testing.T) {
+	err := filepath.WalkDir("../../ui/src", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		for _, never := range []string{"{@html", "innerHTML", "outerHTML", "insertAdjacentHTML", "document.write"} {
+			assert.NotContains(t, string(b), never, p)
+		}
+		return nil
+	})
+	require.NoError(t, err)
 }

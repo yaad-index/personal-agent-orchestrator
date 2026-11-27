@@ -89,3 +89,10 @@ ol.log .badge { margin-left: 6px; }
   .facts dd { margin-bottom: 8px; }
 }
 table.defaults select { width: 100%; max-width: 260px; }
+table.files td.path { word-break: break-all; }
+table.files td.size { text-align: right; white-space: nowrap; }
+ul.skipped { padding-left: 18px; }
+ul.skipped code { word-break: break-all; }
+details.rejected { margin-bottom: 10px; }
+details.rejected summary { cursor: pointer; }
+details.rejected pre { white-space: pre-wrap; word-break: break-word; font-size: 0.85rem; background: var(--bg); padding: 10px; border-radius: 6px; margin-top: 10px; }
