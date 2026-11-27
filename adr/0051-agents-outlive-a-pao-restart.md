@@ -1,6 +1,6 @@
 # ADR 0051: Agents outlive a pao restart
 
-**Status:** Proposed
+**Status:** Accepted
 
 Extends ADR-0007 (the control plane). Builds on ADR-0002 (the terminal driver), ADR-0006 (temporary agents and their explicit kill), ADR-0016 (pao's MCP surface, which an agent calls as itself), ADR-0037 (tasks and their one-off agents) and ADR-0049 (the egress plane).
 
