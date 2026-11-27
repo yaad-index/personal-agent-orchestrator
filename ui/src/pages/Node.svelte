@@ -61,7 +61,7 @@
   {#if info && info.agents.length === 0}
     <p class="muted">No agents are configured on this node.</p>
   {:else if info}
-    <table>
+    <table class="trim">
       <thead>
         <tr><th>Name</th><th>State</th><th>Tags</th><th>Backend</th><th>Kind</th></tr>
       </thead>
@@ -87,7 +87,7 @@
   {#if accounts.length === 0}
     <p class="muted">No accounts.</p>
   {:else}
-    <table>
+    <table class="trim">
       <thead>
         <tr><th>Account</th><th>State</th><th>5 hours</th><th>Week</th></tr>
       </thead>

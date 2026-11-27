@@ -27,7 +27,7 @@
   {#if list && list.length === 0}
     <p class="muted">No profiles yet.</p>
   {:else if list}
-    <table>
+    <table class="trim">
       <thead>
         <tr><th>Agent</th><th>Status</th><th>Tags</th><th>File</th></tr>
       </thead>

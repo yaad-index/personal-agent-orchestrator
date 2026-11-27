@@ -127,3 +127,15 @@ func TestARestartIsAskedOnlyByTheOperator(t *testing.T) {
 	assert.Equal(t, http.StatusAccepted, send(t, "POST", ts.URL+"/v1/node/restart", "", map[string]string{webui.Header: "1"}, c))
 	assert.Equal(t, 2, asked)
 }
+
+func TestTheRecipesAreReadByTheOperator(t *testing.T) {
+	rs := []RecipeJSON{{Name: "fake", Description: "a fake agent", Tags: []string{"temp"}}}
+	_, ts := newServer(t, &fakeLayer{}, WithRecipes(func() ([]RecipeJSON, error) { return rs, nil }))
+	got, err := (&Client{URL: ts.URL, Token: token}).Recipes(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, rs, got)
+	assert.Equal(t, http.StatusUnauthorized, send(t, "GET", ts.URL+"/v1/recipes", "", nil, nil))
+
+	_, plain := newServer(t, &fakeLayer{})
+	assert.Equal(t, http.StatusNotFound, do(t, plain, "GET", "/v1/recipes", "", bearer()).StatusCode)
+}

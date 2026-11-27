@@ -7,6 +7,7 @@ import (
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/local"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/registry"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/temp"
 )
 
 // nodeInfo is what the node is and the agents it holds, for the management
@@ -56,4 +57,27 @@ func buildRevision() string {
 		rev += "-dirty"
 	}
 	return rev
+}
+
+// recipesOf is the recipes a temporary agent can be spawned from, for the UI.
+func recipesOf(m *temp.Manager) func() ([]local.RecipeJSON, error) {
+	return func() ([]local.RecipeJSON, error) {
+		out := []local.RecipeJSON{}
+		if m == nil || m.Recipes == nil {
+			return out, nil
+		}
+		set, err := m.Recipes()
+		if err != nil {
+			return nil, err
+		}
+		for _, n := range set.Names() {
+			r, _ := set.Get(n)
+			tags := slices.Clone(r.Profile.Tags)
+			if tags == nil {
+				tags = []string{}
+			}
+			out = append(out, local.RecipeJSON{Name: n, Description: r.Description, Tags: tags})
+		}
+		return out, nil
+	}
 }
