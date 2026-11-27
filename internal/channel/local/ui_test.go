@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -128,16 +129,23 @@ func TestARestartIsAskedOnlyByTheOperator(t *testing.T) {
 	assert.Equal(t, 2, asked)
 }
 
-func TestTheRecipesAreReadByTheOperator(t *testing.T) {
+func TestWaitingQuestionsAndRecipesAreReadByTheOperator(t *testing.T) {
+	asked := time.Date(2026, 11, 27, 12, 0, 0, 0, time.UTC)
+	qs := []QuestionJSON{{ID: "q1", Agent: "a", Tool: "Bash", Text: "agent \"a\" wants to run Bash", Asked: asked}}
 	rs := []RecipeJSON{{Name: "fake", Description: "a fake agent", Tags: []string{"temp"}}}
-	_, ts := newServer(t, &fakeLayer{}, WithRecipes(func() ([]RecipeJSON, error) { return rs, nil }))
-	got, err := (&Client{URL: ts.URL, Token: token}).Recipes(context.Background())
+	_, ts := newServer(t, &fakeLayer{}, WithQuestions(func() []QuestionJSON { return qs }), WithRecipes(func() ([]RecipeJSON, error) { return rs, nil }))
+	c := &Client{URL: ts.URL, Token: token}
+	gotQ, err := c.Questions(context.Background())
 	require.NoError(t, err)
-	assert.Equal(t, rs, got)
+	assert.Equal(t, qs, gotQ)
+	gotR, err := c.Recipes(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, rs, gotR)
+	assert.Equal(t, http.StatusUnauthorized, send(t, "GET", ts.URL+"/v1/questions", "", nil, nil))
 	assert.Equal(t, http.StatusUnauthorized, send(t, "GET", ts.URL+"/v1/recipes", "", nil, nil))
 
 	_, plain := newServer(t, &fakeLayer{})
-	assert.Equal(t, http.StatusNotFound, do(t, plain, "GET", "/v1/recipes", "", bearer()).StatusCode)
+	assert.Equal(t, http.StatusNotFound, do(t, plain, "GET", "/v1/questions", "", bearer()).StatusCode)
 }
 
 func TestTheChannelsAreReadByTheOperator(t *testing.T) {

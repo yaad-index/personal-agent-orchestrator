@@ -7,6 +7,7 @@ import (
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/local"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/config"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/gate"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/registry"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/temp"
 )
@@ -58,6 +59,17 @@ func buildRevision() string {
 		rev += "-dirty"
 	}
 	return rev
+}
+
+// questionsOf is the approval questions waiting on the node, for the UI.
+func questionsOf(p *gate.Pending) func() []local.QuestionJSON {
+	return func() []local.QuestionJSON {
+		out := []local.QuestionJSON{}
+		for _, w := range p.List() {
+			out = append(out, local.QuestionJSON{ID: w.ID, Agent: w.Agent, Tool: w.Tool, Text: w.Text, Asked: w.Asked})
+		}
+		return out
+	}
 }
 
 // recipesOf is the recipes a temporary agent can be spawned from, for the UI.

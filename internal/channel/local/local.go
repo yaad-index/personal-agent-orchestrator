@@ -72,6 +72,7 @@ type Server struct {
 	profiles   ProfilesAPI
 	node       func() NodeJSON
 	restart    func()
+	questions  func() []QuestionJSON
 	recipes    func() ([]RecipeJSON, error)
 	channels   []ChannelJSON
 	token      []byte

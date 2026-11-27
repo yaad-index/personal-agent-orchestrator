@@ -318,3 +318,41 @@ func TestAQuestionPartlyAnnouncedIsClosedAndOneNotAnnouncedIsNot(t *testing.T) {
 	assert.Empty(t, b.settled, "nothing was shown, so nothing is closed")
 	b.mu.Unlock()
 }
+
+func TestTheWaitingQuestionsAreListedUntilAnswered(t *testing.T) {
+	p := NewPending(NotifyFunc(func(context.Context, string) error { return nil }))
+	now := time.Date(2026, 11, 27, 12, 0, 0, 0, time.UTC)
+	p.now = func() time.Time { now = now.Add(time.Second); return now }
+	assert.Empty(t, p.List())
+
+	done := make(chan Answer, 2)
+	for _, tool := range []string{"Bash", "Write"} {
+		go func() {
+			a, _ := p.Ask(context.Background(), Request{Agent: "a", Tool: tool}, `{"x":1}`)
+			done <- a
+		}()
+		require.Eventually(t, func() bool { return len(p.List()) == map[string]int{"Bash": 1, "Write": 2}[tool] }, time.Second, time.Millisecond)
+	}
+	list := p.List()
+	require.Len(t, list, 2)
+	assert.Equal(t, "Bash", list[0].Tool, "oldest first")
+	assert.Equal(t, "a", list[0].Agent)
+	assert.Contains(t, list[0].Text, "wants to run Bash")
+	assert.True(t, list[0].Asked.Before(list[1].Asked))
+
+	require.NoError(t, p.Answer(list[0].ID, Answer{Allow: true}))
+	assert.Len(t, p.List(), 1, "an answered question leaves the list at once")
+	require.NoError(t, p.Answer(list[1].ID, Answer{}))
+	<-done
+	<-done
+	assert.Empty(t, p.List())
+}
+
+func TestAQuestionThatTimesOutLeavesTheList(t *testing.T) {
+	p := NewPending(NotifyFunc(func(context.Context, string) error { return nil }))
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { _, _ = p.Ask(ctx, Request{Agent: "a", Tool: "Bash"}, `{}`) }()
+	require.Eventually(t, func() bool { return len(p.List()) == 1 }, time.Second, time.Millisecond)
+	cancel()
+	require.Eventually(t, func() bool { return len(p.List()) == 0 }, time.Second, time.Millisecond)
+}

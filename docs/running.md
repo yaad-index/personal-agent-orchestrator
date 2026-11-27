@@ -59,7 +59,7 @@ pao serves its management UI at `/ui` on the same address as its API, `listen` i
 
 The Node page's **Restart pao** stops pao gracefully and starts it again in the same process, with the environment it was started with, so a service manager sees nothing. Agents keep running and are taken back. Restarting applies configuration pao reads only at start, and picks up a new pao binary at the same path. Everyone signs in again afterwards.
 
-The **Agents** page starts, stops and restarts configured agents, spawns a temporary agent from a recipe, and kills one, harvesting it first. Each is the same operation as `pao agent`, `pao spawn` and `pao kill`, under the same checks: a spawn the operator holds no grant for (`pao access`) is refused here as it is at the command line.
+The **Agents** page starts, stops and restarts configured agents, spawns a temporary agent from a recipe, and kills one, harvesting it first. Each is the same operation as `pao agent`, `pao spawn` and `pao kill`, under the same checks: a spawn the operator holds no grant for (`pao access`) is refused here as it is at the command line. The **Approvals** page lists the questions the gate is waiting on, oldest first, and answers them: allow, always, or deny with a reason. A question answered in chat leaves the list too.
 
 The **Tasks** page lists the tasks still open (and the ended ones when asked), shows a task with its log, creates one, and cancels one with a reason. These are `pao tasks list`, `show`, `create` and `cancel`, under the same checks: a task is created only for tags the operator holds a grant on, and a secret it names must be configured.
 

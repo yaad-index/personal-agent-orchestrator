@@ -86,6 +86,7 @@ func TestTheUIReadsOnlyFieldsTheNodeSends(t *testing.T) {
 		"HarvestFile":     reflect.TypeFor[harvest.File](),
 		"HarvestSkip":     reflect.TypeFor[harvest.Skip](),
 		"Rejected":        reflect.TypeFor[local.RejectedJSON](),
+		"Question":        reflect.TypeFor[local.QuestionJSON](),
 	} {
 		sent := jsonFields(goType)
 		for _, f := range tsFields(t, src, ts) {
