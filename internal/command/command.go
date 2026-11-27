@@ -48,6 +48,17 @@ type Ops interface {
 	// Kill harvests a temporary agent's outputs and then removes it (ADR-0006
 	// point 4).
 	Kill(ctx context.Context, name string) (Killed, error)
+	// File reads a file from the agent's working directory for the caller
+	// (ADR-0052). An agent the caller may not address, and a path that is not
+	// a regular file inside the working directory, are both a refusal that
+	// says nothing about which.
+	File(ctx context.Context, agent, path string) (File, error)
+}
+
+// File is a file a command sends to its caller alone.
+type File struct {
+	Name string
+	Data []byte
 }
 
 // Killed is what a kill reports.
@@ -103,6 +114,9 @@ type Result struct {
 	Reply   string
 	Address *core.Target
 	Text    string
+	// File, when set, is sent to the caller alone with Reply (ADR-0052 point
+	// 1). A channel that can't carry files answers that instead.
+	File *File
 }
 
 // spec is one command of the table.
@@ -127,6 +141,7 @@ var table = []spec{
 	{word: "bindings", args: "[agent]", about: "list the standing bindings, and where each was set", operator: true, run: runBindings},
 	{word: "spawn", args: "<recipe> [name]", about: "start a temporary agent from a recipe, its output on this channel; you are told when it is ready", operator: true, run: runSpawn},
 	{word: "kill", args: "<agent>", about: "harvest a temporary agent's outputs, then remove it", operator: true, run: runKill},
+	{word: "file", args: "<agent> <path>", about: "send you a file from an agent's working directory", run: runFile},
 	{word: "view", args: "<agent> pause|resume", about: "hold an agent's output back, or send what was held and let it through again", operator: true, run: runView},
 	{word: "allow", args: "<question>", about: "allow what a gate question asks, once", operator: true, run: decide("allow")},
 	{word: "always", args: "<question>", about: "allow what a gate question asks, and remember it", operator: true, run: decide("always")},
@@ -406,6 +421,22 @@ const (
 	streamStdout = "stdout"
 	streamStderr = "stderr"
 )
+
+// runFile reads /pao file <agent> <path>. The path is the rest of the line,
+// so it may hold a space.
+func runFile(ctx context.Context, ops Ops, _ Caller, args []string, rest string) (Result, bool) {
+	if len(args) < 2 {
+		return Result{}, false
+	}
+	agent := args[0]
+	_, path := cut(rest)
+	path = strings.TrimSpace(path)
+	f, err := ops.File(ctx, agent, path)
+	if err != nil {
+		return Result{Reply: err.Error()}, true
+	}
+	return Result{Reply: fmt.Sprintf("%s from %s", path, agent), File: &f}, true
+}
 
 // runBind reads /pao bind <agent> <destination> [stdout|stderr] [level|log]
 // [prefix]. The prefix is the rest of the line, so it may hold a space.

@@ -14,6 +14,7 @@
 package bot
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -32,6 +33,7 @@ import (
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/adapter"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/comm"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/command"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
 )
 
@@ -447,9 +449,31 @@ func (b *Bot) handle(ctx context.Context, u *models.Update) {
 			b.last[lastKey(at, sender)] = *res.Addressed
 			b.mu.Unlock()
 		}
+		if res.File != nil {
+			b.deliverFile(ctx, at, group, m.From.ID, res)
+			return
+		}
 		if res.Reply != "" {
 			b.reply(ctx, at, res.Reply)
 		}
+	}
+}
+
+// deliverFile sends a command's file to the sender alone (ADR-0052 point 1): in
+// their private chat with the bot, also when the command was typed in a group.
+// Nothing is said in a group but a failure, which names no file.
+func (b *Bot) deliverFile(ctx context.Context, at addr, group bool, from int64, res comm.ChannelResult) {
+	to := at
+	if group {
+		to = addr{chat: from}
+	}
+	if err := b.sendFile(ctx, to, res.File, res.Reply); err != nil {
+		slog.Warn("channel could not send a file", "channel", b.name, "error", err)
+		if group {
+			b.reply(ctx, at, fileNotSentPrivately)
+			return
+		}
+		b.reply(ctx, at, "the file could not be sent: "+err.Error())
 	}
 }
 
@@ -622,6 +646,33 @@ func cuts(r []rune, limit int) [][2]int {
 	return out
 }
 
+// maxDocument is the largest file the adapter sends. The service takes more,
+// but a larger upload may not finish within the client's timeout.
+const maxDocument = 20 << 20
+
+// errFileTooLarge is a file past maxDocument.
+var errFileTooLarge = fmt.Errorf("it is larger than this channel carries (%d MB)", maxDocument>>20)
+
+// fileNotSentPrivately is said in a group when a file asked for there could not
+// reach the sender's private chat: it names no file.
+const fileNotSentPrivately = "the file could not be sent to you privately; start a private chat with the bot and ask again."
+
+// sendFile posts f to a chat as a document, with caption under it.
+func (b *Bot) sendFile(ctx context.Context, at addr, f *command.File, caption string) error {
+	if len(f.Data) > maxDocument {
+		return errFileTooLarge
+	}
+	_, err := b.api.SendDocument(ctx, &api.SendDocumentParams{
+		ChatID: at.chat, MessageThreadID: at.topic,
+		Document: &models.InputFileUpload{Filename: f.Name, Data: bytes.NewReader(f.Data)},
+		Caption:  caption,
+	})
+	if err != nil {
+		return b.describe(err)
+	}
+	return nil
+}
+
 // keyboard draws actions as one row of buttons, each carrying its command. An
 // action without a label, or whose command does not fit in a button, gets none.
 // It is nil when no action gets a button.
@@ -759,6 +810,15 @@ func (b *Bot) press(ctx context.Context, q *models.CallbackQuery) {
 		slog.Error("channel could not record a rejected inbound", "channel", b.name, "error", err)
 	case err != nil:
 		answer = err.Error()
+	case res.File != nil:
+		// A file goes to the presser's private chat, whoever else saw the
+		// button (ADR-0052 point 4).
+		if err := b.sendFile(ctx, addr{chat: q.From.ID}, res.File, res.Reply); err != nil {
+			slog.Warn("channel could not send a file", "channel", b.name, "error", err)
+			answer = "the file could not be sent to your private chat with the bot: " + err.Error()
+		} else {
+			answer = pressAnsweredPrivately
+		}
 	default:
 		answer = res.Reply
 	}

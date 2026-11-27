@@ -29,6 +29,8 @@ type fakeOps struct {
 	spawnCtx error
 	// untilDone keeps Spawn waiting until its context ends.
 	untilDone bool
+	// file is what File returns.
+	file File
 }
 
 func (f *fakeOps) Agents(context.Context) ([]Agent, error) {
@@ -85,6 +87,11 @@ func (f *fakeOps) Spawn(ctx context.Context, recipe, name, channel string) (stri
 func (f *fakeOps) Kill(_ context.Context, name string) (Killed, error) {
 	f.calls = append(f.calls, "kill|"+name)
 	return f.killed, f.err
+}
+
+func (f *fakeOps) File(_ context.Context, agent, path string) (File, error) {
+	f.calls = append(f.calls, "file|"+agent+"|"+path)
+	return f.file, f.err
 }
 
 func itoa(n int) string { return string(rune('0' + n)) }
@@ -475,4 +482,24 @@ func TestProposable(t *testing.T) {
 		require.Error(t, err, "%q", text)
 		assert.Contains(t, err.Error(), why, "%q", text)
 	}
+}
+
+func TestFileSendsAFileToWhoeverMayAddressTheAgent(t *testing.T) {
+	ops := &fakeOps{file: File{Name: "a b.md", Data: []byte("x")}}
+	for _, c := range []Caller{operator, other} {
+		res := Run(context.Background(), ops, c, "/pao file vault notes/a b.md")
+		require.NotNil(t, res.File, "not for the operator alone (ADR-0052 point 2)")
+		assert.Equal(t, "a b.md", res.File.Name)
+		assert.Equal(t, "notes/a b.md from vault", res.Reply)
+	}
+	assert.Equal(t, []string{"file|vault|notes/a b.md", "file|vault|notes/a b.md"}, ops.calls, "the path is the rest of the line, spaces kept")
+
+	ops = &fakeOps{err: errors.New("no file \"x\" for agent \"vault\" that you may have")}
+	res := Run(context.Background(), ops, operator, "/pao file vault x")
+	assert.Nil(t, res.File)
+	assert.Equal(t, ops.err.Error(), res.Reply, "the refusal is the operation's own words")
+
+	res = Run(context.Background(), &fakeOps{}, operator, "/pao file vault")
+	assert.Equal(t, "usage: /pao file <agent> <path>", res.Reply)
+	assert.Contains(t, Help(other), "/pao file", "listed for a caller who is not the operator too")
 }

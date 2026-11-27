@@ -29,6 +29,10 @@ const (
 // ReplyNotACommand answers an operator's press whose payload is not a pao command.
 const ReplyNotACommand = "that button is not a pao command."
 
+// ReplyNoFiles answers a command that sends a file, on a channel that carries
+// text alone (ADR-0052 point 5).
+const ReplyNoFiles = "this channel can't carry files."
+
 // ErrRecord wraps a failure to keep the record of a rejected inbound. It is for the
 // adapter to log; the sender, who may be a stranger, is told nothing of it.
 var ErrRecord = errors.New("could not record a rejected inbound")
@@ -183,6 +187,10 @@ type ChannelResult struct {
 	Reply     string
 	Delivery  *Delivery
 	Addressed *core.Target
+	// File is a file a command sends to its caller alone (ADR-0052): the
+	// adapter sends it to the sender's own conversation, or answers that the
+	// channel can't carry files.
+	File *command.File
 }
 
 // Defaults is each channel's default agent (ADR-0023 point 5).
@@ -370,7 +378,7 @@ func (l *Layer) receiveAsOperator(ctx context.Context, in ChannelInbound, subjec
 	if command.Is(in.Text) {
 		res := command.Run(ctx, l.commandOps(), command.Caller{Channel: in.Channel, Operator: true, Later: l.later(in.Channel, subject)}, in.Text)
 		if res.Address == nil {
-			return ChannelResult{Reply: res.Reply}, nil
+			return ChannelResult{Reply: res.Reply, File: res.File}, nil
 		}
 		addressed = res.Address
 		in.Target, in.Text = *res.Address, res.Text
@@ -452,6 +460,9 @@ func (noCommands) Spawn(context.Context, string, string, string) (string, error)
 func (noCommands) Kill(context.Context, string) (command.Killed, error) {
 	return command.Killed{}, errNoCommands
 }
+func (noCommands) File(context.Context, string, string) (command.File, error) {
+	return command.File{}, errNoCommands
+}
 
 // later is how a command's later answer reaches its sender: told to subject alone
 // on channel, or to the channel's one conversation when subject is empty.
@@ -486,6 +497,10 @@ func (l *Layer) CommandAsOperator(ctx context.Context, in Inbound) (reply string
 		return "", nil, false, nil
 	}
 	res := command.Run(ctx, l.commandOps(), command.Caller{Channel: in.Source, Operator: true, Later: l.later(in.Source, "")}, in.Text)
+	if res.File != nil {
+		// The local channel carries text alone (ADR-0052 point 5).
+		return ReplyNoFiles, nil, true, nil
+	}
 	if res.Address == nil {
 		return res.Reply, nil, true, nil
 	}

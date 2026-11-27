@@ -475,3 +475,41 @@ func cut(s Span, codes, links []Span) []Span {
 	}
 	return parts
 }
+
+// Paths are the relative addresses src links to, in the order they first
+// appear, each once: the links ADR-0050 shows only as their text, which may
+// name a file beside the agent (ADR-0052 point 4). A fragment or query is left
+// off and an escaped character is read back.
+func Paths(src string) []string {
+	b := []byte(src)
+	var out []string
+	seen := map[string]bool{}
+	_ = ast.Walk(parser.Parse(text.NewReader(b)), func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		if !entering {
+			return ast.WalkContinue, nil
+		}
+		var dest []byte
+		switch n := n.(type) {
+		case *ast.Link:
+			dest = n.Destination
+		case *ast.Image:
+			dest = n.Destination
+		default:
+			return ast.WalkContinue, nil
+		}
+		d := string(unescape(dest))
+		if u, err := url.Parse(d); err != nil || u.Scheme != "" || u.Host != "" {
+			return ast.WalkContinue, nil
+		} else if p, err := url.PathUnescape(u.EscapedPath()); err == nil {
+			d = p
+		} else {
+			d = u.Path
+		}
+		if d != "" && !seen[d] {
+			seen[d] = true
+			out = append(out, d)
+		}
+		return ast.WalkContinue, nil
+	})
+	return out
+}

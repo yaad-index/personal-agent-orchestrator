@@ -147,3 +147,11 @@ func ExampleRender() {
 	fmt.Printf("%q %v\n", d.Text, shown(d))
 	// Output: "Saved inbox/a.md" [bold:Saved code:inbox/a.md]
 }
+
+func TestPathsAreTheRelativeAddressesLinkedTo(t *testing.T) {
+	src := "See [a](notes/a.md), [again](notes/a.md#top), ![img](img/c%20d.png), [web](https://e.example/x.md), " +
+		"[mail](mailto:x@e.example), [q](daily/2026.md?x=1), [abs](/etc/passwd), [esc](notes/b\\_c.md), [scheme](ftp://h/x), <https://auto.example>"
+	assert.Equal(t, []string{"notes/a.md", "img/c d.png", "daily/2026.md", "/etc/passwd", "notes/b_c.md"}, Paths(src),
+		"each once, without fragment or query, unescaped; an absolute path is passed on for the caller to refuse")
+	assert.Empty(t, Paths("no links, `[x](y)` in code"))
+}
