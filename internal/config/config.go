@@ -393,7 +393,12 @@ type Channel struct {
 	Kind string `yaml:"kind"`
 	// CredentialEnv names the environment variable that holds the channel's
 	// credential. The credential itself never lives in a config file.
-	CredentialEnv string `yaml:"credential_env"`
+	CredentialEnv string `yaml:"credential_env,omitempty"`
+	// CredentialSecret names one of the node's secrets as the channel's
+	// credential instead (ADR-0057 point 2). A channel names one or the other.
+	// Either way, where the value is read from is this channel's alone
+	// (ADR-0057 point 3).
+	CredentialSecret string `yaml:"credential_secret,omitempty"`
 	// Options are the adapter's own settings; only the adapter interprets them.
 	Options map[string]any `yaml:"options,omitempty"`
 	// Groups are the group conversations the channel serves (ADR-0028 point 1).
@@ -484,7 +489,9 @@ func checkChannelsOf(src channelSource, ids map[int]string, names, groupNames ma
 			return fmt.Errorf("%s: name %q is reserved", at, c.Name)
 		case c.Kind == "":
 			return fmt.Errorf("%s: kind is required", at)
-		case !envNamePattern.MatchString(c.CredentialEnv):
+		case (c.CredentialEnv == "") == (c.CredentialSecret == ""):
+			return fmt.Errorf("%s: name the credential with credential_env or credential_secret, one of them", at)
+		case c.CredentialEnv != "" && !envNamePattern.MatchString(c.CredentialEnv):
 			return fmt.Errorf("%s: credential_env must name an environment variable", at)
 		}
 		if prev, dup := ids[c.ID]; dup {
@@ -812,6 +819,9 @@ func load(path string, withMesh bool, override *Managed) (*Config, error) {
 		if f := o.Secrets[i].File; f != "" && !filepath.IsAbs(f) {
 			o.Secrets[i].File = filepath.Join(filepath.Dir(path), f)
 		}
+	}
+	if err := checkChannelCredentials(path, o); err != nil {
+		return nil, err
 	}
 	if o.Budget.Poll == 0 {
 		o.Budget.Poll = DefaultBudgetPoll
