@@ -32,19 +32,31 @@ func open(t *testing.T, opt Options) (*Store, *clock) {
 
 func TestARejectedMessageIsRecordedInFull(t *testing.T) {
 	s, c := open(t, Options{})
-	require.NoError(t, s.Record("chat", "1001", Message, "no subject", "hello there"))
+	require.NoError(t, s.Record("chat", "1001", "Ada Lovelace @ada", Message, "no subject", "hello there"))
 	es, err := s.List()
 	require.NoError(t, err)
 	require.Len(t, es, 1)
-	assert.Equal(t, Entry{Channel: "chat", Sender: "1001", Kind: Message, Reason: "no subject", First: c.t, Last: c.t, Count: 1, Payload: "hello there"}, es[0])
+	assert.Equal(t, Entry{Channel: "chat", Sender: "1001", Name: "Ada Lovelace @ada", Kind: Message, Reason: "no subject", First: c.t, Last: c.t, Count: 1, Payload: "hello there"}, es[0])
+}
+
+func TestAWholeChatMessageIsKeptAndANameIsBounded(t *testing.T) {
+	s, _ := open(t, Options{})
+	// a chat message is at most 4096 characters, and one may take four bytes
+	whole := strings.Repeat("😀", 4096)
+	require.NoError(t, s.Record("chat", "1", strings.Repeat("n", 1000), Message, "no subject", whole))
+	es, err := s.List()
+	require.NoError(t, err)
+	require.Len(t, es, 1)
+	assert.Equal(t, whole, es[0].Payload, "kept whole")
+	assert.Len(t, es[0].Name, maxName)
 }
 
 func TestARepeatFromOneSenderUpdatesItsEntryInsteadOfAddingOne(t *testing.T) {
 	s, c := open(t, Options{})
-	require.NoError(t, s.Record("chat", "1", Message, "no subject", "first"))
+	require.NoError(t, s.Record("chat", "1", "", Message, "no subject", "first"))
 	first := c.t
 	c.tick(time.Minute)
-	require.NoError(t, s.Record("chat", "1", Message, "outside access", "second"))
+	require.NoError(t, s.Record("chat", "1", "", Message, "outside access", "second"))
 	es, err := s.List()
 	require.NoError(t, err)
 	require.Len(t, es, 1)
@@ -57,8 +69,8 @@ func TestARepeatFromOneSenderUpdatesItsEntryInsteadOfAddingOne(t *testing.T) {
 
 func TestTheSameSenderIdOnAnotherChannelIsAnotherEntry(t *testing.T) {
 	s, _ := open(t, Options{})
-	require.NoError(t, s.Record("a", "1", Message, "r", "x"))
-	require.NoError(t, s.Record("b", "1", Message, "r", "x"))
+	require.NoError(t, s.Record("a", "1", "", Message, "r", "x"))
+	require.NoError(t, s.Record("b", "1", "", Message, "r", "x"))
 	es, err := s.List()
 	require.NoError(t, err)
 	assert.Len(t, es, 2)
@@ -66,7 +78,7 @@ func TestTheSameSenderIdOnAnotherChannelIsAnotherEntry(t *testing.T) {
 
 func TestARegistrationAttemptNeverKeepsWhatItCarried(t *testing.T) {
 	s, _ := open(t, Options{})
-	require.NoError(t, s.Record("chat", "1", Registration, "bad secret", "SECRET-ABC-123"))
+	require.NoError(t, s.Record("chat", "1", "", Registration, "bad secret", "SECRET-ABC-123"))
 	es, err := s.List()
 	require.NoError(t, err)
 	require.Len(t, es, 1)
@@ -79,9 +91,9 @@ func TestARegistrationAttemptNeverKeepsWhatItCarried(t *testing.T) {
 
 func TestAPayloadIsTruncatedWithoutSplittingACharacter(t *testing.T) {
 	s, _ := open(t, Options{MaxPayload: 10})
-	require.NoError(t, s.Record("chat", "1", Message, "r", strings.Repeat("a", 50)))
-	require.NoError(t, s.Record("chat", "2", Message, "r", strings.Repeat("é", 20)))
-	require.NoError(t, s.Record("chat", "3", Message, "r", "a"+strings.Repeat("é", 20)))
+	require.NoError(t, s.Record("chat", "1", "", Message, "r", strings.Repeat("a", 50)))
+	require.NoError(t, s.Record("chat", "2", "", Message, "r", strings.Repeat("é", 20)))
+	require.NoError(t, s.Record("chat", "3", "", Message, "r", "a"+strings.Repeat("é", 20)))
 	es, err := s.List()
 	require.NoError(t, err)
 	got := map[string]string{}
@@ -97,7 +109,7 @@ func TestAFloodOfDistinctSendersIsCappedAndKeepsTheMostRecent(t *testing.T) {
 	s, c := open(t, Options{MaxEntries: 3})
 	for i := 1; i <= 6; i++ {
 		c.tick(time.Second)
-		require.NoError(t, s.Record("chat", fmt.Sprint(i), Message, "r", ""))
+		require.NoError(t, s.Record("chat", fmt.Sprint(i), "", Message, "r", ""))
 	}
 	es, err := s.List()
 	require.NoError(t, err)
@@ -110,11 +122,11 @@ func TestAFloodOfDistinctSendersIsCappedAndKeepsTheMostRecent(t *testing.T) {
 
 func TestARepeatAtTheCapDisplacesNobody(t *testing.T) {
 	s, c := open(t, Options{MaxEntries: 2})
-	require.NoError(t, s.Record("chat", "1", Message, "r", ""))
+	require.NoError(t, s.Record("chat", "1", "", Message, "r", ""))
 	c.tick(time.Second)
-	require.NoError(t, s.Record("chat", "2", Message, "r", ""))
+	require.NoError(t, s.Record("chat", "2", "", Message, "r", ""))
 	c.tick(time.Second)
-	require.NoError(t, s.Record("chat", "1", Message, "r", ""))
+	require.NoError(t, s.Record("chat", "1", "", Message, "r", ""))
 	es, err := s.List()
 	require.NoError(t, err)
 	assert.Len(t, es, 2)
@@ -122,16 +134,16 @@ func TestARepeatAtTheCapDisplacesNobody(t *testing.T) {
 
 func TestEntriesAgeOutAfterTheRetentionPeriod(t *testing.T) {
 	s, c := open(t, Options{Retention: time.Hour})
-	require.NoError(t, s.Record("chat", "old", Message, "r", ""))
+	require.NoError(t, s.Record("chat", "old", "", Message, "r", ""))
 	c.tick(30 * time.Minute)
-	require.NoError(t, s.Record("chat", "mid", Message, "r", ""))
+	require.NoError(t, s.Record("chat", "mid", "", Message, "r", ""))
 	c.tick(31 * time.Minute)
 	es, err := s.List()
 	require.NoError(t, err)
 	require.Len(t, es, 1, "listing hides what has aged out before anything prunes it")
 	assert.Equal(t, "mid", es[0].Sender)
 
-	require.NoError(t, s.Record("chat", "new", Message, "r", ""))
+	require.NoError(t, s.Record("chat", "new", "", Message, "r", ""))
 	c.tick(time.Second)
 	n := 0
 	require.NoError(t, s.db.View(func(tx *bolt.Tx) error {
@@ -147,7 +159,7 @@ func TestARecordWithoutAChannelSenderOrKnownKindIsRefused(t *testing.T) {
 		ch, snd string
 		k       Kind
 	}{{"", "1", Message}, {"chat", "", Message}, {"chat", "1", "other"}, {"a\x00b", "1", Message}} {
-		assert.ErrorIs(t, s.Record(c.ch, c.snd, c.k, "r", "p"), ErrInvalid)
+		assert.ErrorIs(t, s.Record(c.ch, c.snd, "", c.k, "r", "p"), ErrInvalid)
 	}
 	es, err := s.List()
 	require.NoError(t, err)
@@ -158,7 +170,7 @@ func TestTheRecordSurvivesReopening(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "r.db")
 	s, err := Open(path, Options{})
 	require.NoError(t, err)
-	require.NoError(t, s.Record("chat", "1", Message, "r", "p"))
+	require.NoError(t, s.Record("chat", "1", "", Message, "r", "p"))
 	require.NoError(t, s.Close())
 	s, err = Open(path, Options{})
 	require.NoError(t, err)

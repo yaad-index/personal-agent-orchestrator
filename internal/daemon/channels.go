@@ -16,8 +16,8 @@ import (
 // rejectRecorder is the layer's write-only view of the rejected-inbound record.
 type rejectRecorder struct{ s *rejected.Store }
 
-func (r rejectRecorder) Record(channel, sender, kind, reason, payload string) error {
-	return r.s.Record(channel, sender, rejected.Kind(kind), reason, payload)
+func (r rejectRecorder) Record(channel, sender, name, kind, reason, payload string) error {
+	return r.s.Record(channel, sender, name, rejected.Kind(kind), reason, payload)
 }
 
 // wireChannels gives the layer what channel inbound needs and builds the

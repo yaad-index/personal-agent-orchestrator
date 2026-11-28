@@ -55,12 +55,14 @@ func (f *fakeIdentity) Operators(ch string) []string {
 type rec struct{ channel, sender, kind, reason, payload string }
 
 type fakeRecorder struct {
-	got []rec
-	err error
+	got   []rec
+	names []string
+	err   error
 }
 
-func (f *fakeRecorder) Record(ch, snd, kind, reason, payload string) error {
+func (f *fakeRecorder) Record(ch, snd, name, kind, reason, payload string) error {
 	f.got = append(f.got, rec{ch, snd, kind, reason, payload})
+	f.names = append(f.names, name)
 	return f.err
 }
 

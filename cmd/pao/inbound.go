@@ -32,8 +32,8 @@ func (c RejectedCmd) run(w io.Writer) error {
 	for _, e := range es {
 		// The payload is stranger content: quoted, so a newline or a control
 		// character in it cannot pass for another row or move the cursor.
-		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\tx%d\t%s\t%s\n", e.Last.UTC().Format("2006-01-02T15:04:05Z"),
-			e.Channel, strconv.Quote(e.Sender), e.Kind, e.Count, strconv.Quote(e.Reason), strconv.Quote(e.Payload)); err != nil {
+		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\tx%d\t%s\t%s\n", e.Last.UTC().Format("2006-01-02T15:04:05Z"),
+			e.Channel, strconv.Quote(e.Sender), strconv.Quote(e.Name), e.Kind, e.Count, strconv.Quote(e.Reason), strconv.Quote(e.Payload)); err != nil {
 			return err
 		}
 	}
