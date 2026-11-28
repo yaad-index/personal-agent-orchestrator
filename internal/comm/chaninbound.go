@@ -374,7 +374,8 @@ func (l *Layer) receiveAsOperator(ctx context.Context, in ChannelInbound, subjec
 
 	// A /gpao request is pao's too: it goes to the governor alone, and leaves the
 	// sender's last address as it was.
-	if _, ok := l.governorRequest(in.Text); ok {
+	_, toGovernor := l.governorRequest(in.Text)
+	if toGovernor {
 		target, request, reply := l.toGovernor(ctx, in.Text, subject)
 		if reply != "" {
 			return ChannelResult{Reply: reply}, nil
@@ -416,6 +417,12 @@ func (l *Layer) receiveAsOperator(ctx context.Context, in ChannelInbound, subjec
 	if target.Kind == 0 {
 		if agent, ok := l.DefaultAgentIn(in.Channel, conversation); ok {
 			target = core.Target{Kind: core.ByName, Value: agent}
+		}
+	}
+	// A channel reaches its own agent and no other (ADR-0058 point 4).
+	if !toGovernor {
+		if reply := l.onlyItsAgent(in.Channel, target); reply != "" {
+			return ChannelResult{Reply: reply}, nil
 		}
 	}
 	d, err := l.ReceiveAsOperator(ctx, Inbound{

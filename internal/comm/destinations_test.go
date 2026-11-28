@@ -55,7 +55,8 @@ func TestOutputOfAnAgentTheOperatorMayNotReachIsShownInNoConversation(t *testing
 		l, r, _, _ := set(t)
 		r.agents["b"] = []string{"b"}
 		l.SetOperatorAccess(func(p core.Profile) bool { return p.Name != "a" })
-		assert.Empty(t, l.Destinations("chat", output), name)
+		assert.Empty(t, l.Destinations("chat", output), "%s: the channel's own agent, which the operator may not reach", name)
+		l.SetDefaults(mapDefaults{"chat": "b"})
 		assert.NotEmpty(t, l.Destinations("chat", core.Message{Sender: "b", Kind: core.MessageContent, Text: "x"}), "%s: an agent the operator may reach", name)
 		assert.NotEmpty(t, l.Destinations("chat", question), "%s: a question is the operator's to answer", name)
 		assert.NotEmpty(t, l.Destinations("chat", notice), "%s: pao's own notice is the operator's", name)

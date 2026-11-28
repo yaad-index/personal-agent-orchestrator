@@ -73,6 +73,8 @@ func chanSetup(t *testing.T) (*Layer, *fakeRouter, *fakeIdentity, *fakeRecorder)
 	rc := &fakeRecorder{}
 	l.SetIdentity(id, rc)
 	l.SetScopes(map[string]Scope{"chat": {Owner: "alice"}})
+	// the channel is agent a's, as every channel is one agent's (ADR-0058 point 4)
+	l.SetDefaults(mapDefaults{"chat": "a"})
 	return l, r, id, rc
 }
 
@@ -215,6 +217,9 @@ func TestAFailureToRecordIsReturnedAndNeverSentToTheSender(t *testing.T) {
 
 func TestAnOperatorMessageToNoAgentIsAnErrorForTheAdapter(t *testing.T) {
 	l, r, _, rc := chanSetup(t)
+	// routing precedence, beneath the rule that a channel reaches only its agent
+	l.unscoped = true
+	l.SetDefaults(mapDefaults{})
 	_, err := l.ReceiveFromChannel(context.Background(), ChannelInbound{Channel: "chat", Sender: "op", Text: "hi", Target: byName("nobody")})
 	require.Error(t, err)
 	assert.Empty(t, r.routed)
@@ -279,6 +284,9 @@ func TestAReplyWithNoAddressGoesToTheAgentThatWroteTheMessage(t *testing.T) {
 
 func TestAnUnaddressedMessageThatIsNotAReplyIsNotRouted(t *testing.T) {
 	l, r, _, rc := chanSetup(t)
+	// routing precedence, beneath the rule that a channel reaches only its agent
+	l.unscoped = true
+	l.SetDefaults(mapDefaults{})
 	_, err := l.ReceiveFromChannel(context.Background(), ChannelInbound{Channel: "chat", Sender: "op", Text: "hi"})
 	require.Error(t, err)
 	assert.Empty(t, r.routed)
@@ -307,6 +315,9 @@ func (m mapDefaults) Get(channel string) (string, bool) { a, ok := m[channel]; r
 
 func TestAMessageNamingNoAgentGoesToTheChannelsDefaultLast(t *testing.T) {
 	l, r, _, rc := chanSetup(t)
+	// routing precedence, beneath the rule that a channel reaches only its agent
+	l.unscoped = true
+	l.SetDefaults(mapDefaults{})
 	r.agents["b"] = []string{"b"}
 	l.SetDefaults(mapDefaults{"chat": "b"})
 
@@ -329,6 +340,9 @@ func TestAMessageNamingNoAgentGoesToTheChannelsDefaultLast(t *testing.T) {
 
 func TestADefaultIsPerChannelAndOneThatIsGoneIsAnErrorNotAGuess(t *testing.T) {
 	l, r, id, _ := chanSetup(t)
+	// routing precedence, beneath the rule that a channel reaches only its agent
+	l.unscoped = true
+	l.SetDefaults(mapDefaults{})
 	id.bound["other\x00op"] = "alice"
 	l.SetScopes(map[string]Scope{"chat": {Owner: "alice"}, "other": {Owner: "alice"}})
 	l.SetDefaults(mapDefaults{"chat": "gone"})
@@ -348,6 +362,9 @@ func TestADefaultIsPerChannelAndOneThatIsGoneIsAnErrorNotAGuess(t *testing.T) {
 
 func TestTheOperatorsChannelMessagesAreBoundedByWhatTheOperatorMayReach(t *testing.T) {
 	l, r, _, _ := chanSetup(t)
+	// routing precedence, beneath the rule that a channel reaches only its agent
+	l.unscoped = true
+	l.SetDefaults(mapDefaults{})
 	r.agents["b"] = []string{"b"}
 	l.SetDefaults(mapDefaults{"chat": "b"})
 	l.SetOperatorAccess(func(p core.Profile) bool { return p.Name == "a" })

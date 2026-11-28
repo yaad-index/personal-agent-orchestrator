@@ -71,6 +71,28 @@ func standingBindings(bs []config.Binding) []comm.Binding {
 	return out
 }
 
+// warnUnknownOwners logs each channel whose owner is no subject the node knows.
+// Such a channel acts on nothing until the subject is added, which fails safe
+// but is easy to miss, as a misspelt owner would be.
+func warnUnknownOwners(ids interface {
+	Subjects() ([]identity.Subject, error)
+}, chs []config.Channel) {
+	subs, err := ids.Subjects()
+	if err != nil {
+		slog.Warn("could not list the subjects to check the channels' owners", "error", err)
+		return
+	}
+	known := make(map[string]bool, len(subs))
+	for _, s := range subs {
+		known[s.Name] = true
+	}
+	for _, c := range chs {
+		if !known[c.Owner] {
+			slog.Warn("a channel's owner is no subject the node knows: the channel acts on nothing until it is added", "channel", c.Name, "owner", c.Owner)
+		}
+	}
+}
+
 // channelScopes is each channel's owner and one conversation.
 func channelScopes(chs []config.Channel) map[string]comm.Scope {
 	out := make(map[string]comm.Scope, len(chs))

@@ -60,6 +60,10 @@ type Profile struct {
 	// the node's configured accounts. The account's credential stays in the
 	// orchestrator config, never here (ADR-0015 point 4).
 	Account string `yaml:"account"`
+	// User is the subject the agent belongs to. Only a channel the same subject
+	// owns may be the agent's (ADR-0058 point 9); an agent with no user has no
+	// channel.
+	User string `yaml:"user"`
 	// Budget is how the agent's headroom is judged from its account's figure.
 	Budget BudgetRule `yaml:"budget"`
 }

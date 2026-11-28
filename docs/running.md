@@ -79,6 +79,16 @@ channels:
 
 A channel whose target is a group lists that group, and only that group, under `groups`. A channel whose target is `private` lists none. Both `owner` and `target` are required: a configuration without them doesn't load. Since each channel reads with its own credential, a second conversation needs a second bot.
 
+A channel is also one agent's: its default agent. Everything the owner writes there goes to that agent, and the channel shows that agent's words and pao's own, and no other agent's. Addressing another agent from the channel, by name or by a tag, is answered `only <agent> is reached from this channel.` and goes nowhere. A channel with no default agent reaches none. An agent belongs to a user, named in its profile:
+
+```yaml
+# profiles/notes.yaml
+name: notes
+user: alice      # only a channel alice owns may be this agent's
+```
+
+Setting a channel's default agent is refused unless the agent's `user` is the channel's `owner`. An agent with no `user` is no channel's. An agent is the default of one channel at a time: making it another's moves it there. pao warns at start about a channel whose owner is no subject it knows, since that channel acts on nothing until the subject is added.
+
 ## The file pao manages
 
 pao never writes `pao.yaml`. Settings the management UI sets go in a second file, which you name in `pao.yaml`:
