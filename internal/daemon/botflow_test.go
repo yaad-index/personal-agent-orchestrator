@@ -140,7 +140,7 @@ func TestAHumanReachesAnAgentThroughTheBotAndHearsBack(t *testing.T) {
 	t.Setenv("PAO_TEST_BOT_TOKEN", "tok-1")
 
 	n := startNodeWith(t, map[string]string{"bee": ""}, func(_, _ string, cfg *config.Config) {
-		cfg.Orchestrator.Channels = []config.Channel{{ID: 1, Name: "chat", Kind: "bot", CredentialEnv: "PAO_TEST_BOT_TOKEN",
+		cfg.Orchestrator.Channels = []config.Channel{{ID: 1, Name: "chat", Kind: "bot", CredentialEnv: "PAO_TEST_BOT_TOKEN", Owner: "alice", Target: config.TargetPrivate,
 			Options: map[string]any{"endpoint": ts.URL + "/bot{token}/{method}", "poll_timeout": 0}}}
 	}, func(o *Options) { o.Adapters = builtin.Table() })
 	ctx := context.Background()
@@ -211,7 +211,7 @@ func TestTheChannelsDefaultAgentIsReloadedSwitchedAtRuntimeAndSpeaksUnprefixed(t
 	t.Setenv("PAO_TEST_BOT_TOKEN", "tok-1")
 
 	n := startNodeWith(t, map[string]string{"bee": "", "wasp": ""}, func(_, _ string, cfg *config.Config) {
-		cfg.Orchestrator.Channels = []config.Channel{{ID: 1, Name: "chat", Kind: "bot", CredentialEnv: "PAO_TEST_BOT_TOKEN",
+		cfg.Orchestrator.Channels = []config.Channel{{ID: 1, Name: "chat", Kind: "bot", CredentialEnv: "PAO_TEST_BOT_TOKEN", Owner: "alice", Target: config.TargetPrivate,
 			Options: map[string]any{"endpoint": ts.URL + "/bot{token}/{method}", "poll_timeout": 0}}}
 		// What a node that ran before left behind.
 		require.NoError(t, os.MkdirAll(cfg.Orchestrator.StateDir, 0o700))
@@ -298,7 +298,7 @@ func TestAGateQuestionIsAnsweredByAButtonAndItsButtonsAreClosed(t *testing.T) {
 	t.Setenv("PAO_TEST_BOT_TOKEN", "tok-1")
 
 	n := startNodeWith(t, map[string]string{"bee": ""}, func(_, _ string, cfg *config.Config) {
-		cfg.Orchestrator.Channels = []config.Channel{{ID: 1, Name: "chat", Kind: "bot", CredentialEnv: "PAO_TEST_BOT_TOKEN",
+		cfg.Orchestrator.Channels = []config.Channel{{ID: 1, Name: "chat", Kind: "bot", CredentialEnv: "PAO_TEST_BOT_TOKEN", Owner: "alice", Target: config.TargetPrivate,
 			Options: map[string]any{"endpoint": ts.URL + "/bot{token}/{method}", "poll_timeout": 0}}}
 	}, func(o *Options) { o.Adapters = builtin.Table() })
 	ctx := context.Background()
@@ -332,7 +332,7 @@ func TestAGateQuestionIsAnsweredByAButtonAndItsButtonsAreClosed(t *testing.T) {
 
 	svc.push(pressUpdate(20, native, other, "cb-other", "/pao allow q1"))
 	require.Eventually(t, func() bool { return len(svc.calls("answerCallbackQuery")) == 1 }, 5*time.Second, 20*time.Millisecond)
-	assert.Equal(t, "no access.", svc.calls("answerCallbackQuery")[0]["text"], "a press is checked as its command, from the presser")
+	assert.Empty(t, svc.calls("answerCallbackQuery")[0]["text"], "a press from someone who is not the channel's owner is told nothing")
 	select {
 	case d := <-decided:
 		t.Fatalf("a press by someone who is not the operator decided the question: %+v", d)
@@ -370,12 +370,12 @@ func groupUpdate(id, msg, from, chat int, text string) map[string]any {
 	return u
 }
 
-// TestAnAdmittedGroupServesTheOperatorAndNoOneElse runs ADR-0028 on a real node:
-// the operator reaches an agent from an admitted group and its output comes back to
-// the group, not privately; anyone else in the group, a group that is not admitted,
-// and a registration from a group are recorded and answered with nothing; a gate
-// question reaches the operator privately and not the group, and a press decides
-// it and closes its buttons.
+// TestAnAdmittedGroupServesTheOperatorAndNoOneElse runs ADR-0028 on a real node,
+// on a channel that is the group: the owner reaches an agent from the group and its
+// output comes back to the group, not privately; the owner writing privately,
+// anyone else in the group, a group that is not the channel's, and a registration
+// from a group are recorded and answered with nothing; a gate question reaches the
+// owner privately and not the group, and a press decides it and closes its buttons.
 func TestAnAdmittedGroupServesTheOperatorAndNoOneElse(t *testing.T) {
 	svc := &service{}
 	ts := httptest.NewServer(http.HandlerFunc(svc.handler))
@@ -384,7 +384,7 @@ func TestAnAdmittedGroupServesTheOperatorAndNoOneElse(t *testing.T) {
 	const person, other, stranger, group, unlisted = 4242, 5151, 6161, -700, -800
 
 	n := startNodeWith(t, map[string]string{"bee": ""}, func(_, _ string, cfg *config.Config) {
-		cfg.Orchestrator.Channels = []config.Channel{{ID: 1, Name: "chat", Kind: "bot", CredentialEnv: "PAO_TEST_BOT_TOKEN",
+		cfg.Orchestrator.Channels = []config.Channel{{ID: 1, Name: "chat", Kind: "bot", CredentialEnv: "PAO_TEST_BOT_TOKEN", Owner: "alice", Target: strconv.Itoa(group),
 			Options: map[string]any{"endpoint": ts.URL + "/bot{token}/{method}", "poll_timeout": 0},
 			Groups:  []config.Group{{ID: strconv.Itoa(group), Name: "team", Members: config.MembersOperators}}}}
 	}, func(o *Options) { o.Adapters = builtin.Table() })
@@ -410,13 +410,13 @@ func TestAnAdmittedGroupServesTheOperatorAndNoOneElse(t *testing.T) {
 	svc.push(groupUpdate(4, 21, person, group, "and again"))
 	assert.Equal(t, "[bee]: echo: [alice]: and again", lineWith(t, svc, group, "and again"), "the address made in the group is kept there")
 
-	// A reply goes back to the conversation it was addressed from, though the
-	// channel has an admitted group (ADR-0029 point 2).
+	// The owner's private conversation is not the channel's: what the owner writes
+	// there reaches no agent, and is answered with nothing.
 	svc.push(chatUpdate(40, 40, person, "/pao agent bee in private"))
-	assert.Equal(t, "[bee]: echo: [alice]: in private", lineWith(t, svc, person, "in private"), "a private message is answered privately")
-	assert.Nil(t, svc.sentWith(group, "in private"), "and not in the group")
 	svc.push(groupUpdate(41, 41, person, group, "back in the group"))
 	lineWith(t, svc, group, "back in the group")
+	assert.Nil(t, svc.sentWith(person, "in private"), "a private message on a group's channel is not answered")
+	assert.Nil(t, svc.sentWith(group, "in private"), "nor routed to the group")
 	assert.Nil(t, svc.sentWith(person, "back in the group"), "the next message from the group is answered there")
 
 	inv, err := n.client.Invite(ctx, "bob", time.Hour)
@@ -425,7 +425,7 @@ func TestAnAdmittedGroupServesTheOperatorAndNoOneElse(t *testing.T) {
 	svc.push(groupUpdate(6, 23, person, unlisted, "/pao agent bee from elsewhere"))
 	svc.push(groupUpdate(7, 24, stranger, group, "/register "+inv.Secret))
 	// The record keeps each sender's latest rejection.
-	want := map[string]string{strconv.Itoa(other): "message/outside access in group team", strconv.Itoa(person): "message/group " + strconv.Itoa(unlisted), strconv.Itoa(stranger): "registration/from a group"}
+	want := map[string]string{strconv.Itoa(other): "message/not the channel's owner", strconv.Itoa(person): "message/not the channel's conversation: " + strconv.Itoa(unlisted), strconv.Itoa(stranger): "registration/from a group"}
 	require.Eventually(t, func() bool {
 		rej, err := n.client.Rejected(ctx)
 		if err != nil {
@@ -488,64 +488,35 @@ func TestAnAdmittedGroupServesTheOperatorAndNoOneElse(t *testing.T) {
 
 // TestAStandingBindingFollowsTheAgentBesideTheOrigin runs ADR-0029 point 3 on a
 // real node: the operator writes privately, the reply comes back privately, and a
-// standing binding shows the agent's output in the group as well, with its
-// prefix in place of the agent's name.
+// standing binding shows the agent's output in the group, another channel, as
+// well, with its prefix in place of the agent's name.
 func TestAStandingBindingFollowsTheAgentBesideTheOrigin(t *testing.T) {
-	svc := &service{}
-	ts := httptest.NewServer(http.HandlerFunc(svc.handler))
-	t.Cleanup(ts.Close)
-	t.Setenv("PAO_TEST_BOT_TOKEN", "tok-1")
-	const person, group = 4242, -700
-
-	n := startNodeWith(t, map[string]string{"bee": ""}, func(_, _ string, cfg *config.Config) {
-		cfg.Orchestrator.Channels = []config.Channel{{ID: 1, Name: "chat", Kind: "bot", CredentialEnv: "PAO_TEST_BOT_TOKEN",
-			Options: map[string]any{"endpoint": ts.URL + "/bot{token}/{method}", "poll_timeout": 0},
-			Groups:  []config.Group{{ID: strconv.Itoa(group), Name: "team", Members: config.MembersOperators}}}}
+	const person = 4242
+	p := startPair(t, map[string]string{"bee": ""}, func(_, _ string, cfg *config.Config) {
 		cfg.Orchestrator.Bindings = []config.Binding{{Agent: "bee", Stream: config.StreamStdout, To: "group:team", Level: 1, Prefix: "B:"}}
-	}, func(o *Options) { o.Adapters = builtin.Table() })
-	ctx := context.Background()
+	})
 
-	require.NoError(t, n.client.AddSubject(ctx, "alice"))
-	inv, err := n.client.Invite(ctx, "alice", time.Hour)
-	require.NoError(t, err)
-	svc.push(chatUpdate(1, 10, person, "/register "+inv.Secret))
-	lineWith(t, svc, float64(person), "registered.")
-	require.NoError(t, n.client.SetOperator(ctx, "alice", true))
-
-	svc.push(chatUpdate(2, 11, person, "/pao agent bee hello"))
-	assert.Equal(t, "[bee]: echo: [alice]: hello", lineWith(t, svc, person, "hello"), "the origin: privately, named as before")
-	assert.Equal(t, "B: echo: [alice]: hello", lineWith(t, svc, group, "hello"), "the binding: in the group, with its prefix")
+	p.svc.push(chatUpdate(2, 11, person, "/pao agent bee hello"))
+	assert.Equal(t, "[bee]: echo: [alice]: hello", lineWith(t, p.svc, person, "hello"), "the origin: privately, named as before")
+	assert.Equal(t, "B: echo: [alice]: hello", lineWith(t, p.gsvc, pairGroup, "hello"), "the binding: in the group, with its prefix")
 }
 
 // TestALogBindingMirrorsWhatTheAgentIsSent runs the log level on a real node: the
 // group follows the agent at log, so it is shown the operator's private message,
 // named by its sender, and then the agent's answer.
 func TestALogBindingMirrorsWhatTheAgentIsSent(t *testing.T) {
-	svc := &service{}
-	ts := httptest.NewServer(http.HandlerFunc(svc.handler))
-	t.Cleanup(ts.Close)
-	t.Setenv("PAO_TEST_BOT_TOKEN", "tok-1")
-	const person, group = 4242, -700
-
-	n := startNodeWith(t, map[string]string{"bee": ""}, func(_, _ string, cfg *config.Config) {
-		cfg.Orchestrator.Channels = []config.Channel{{ID: 1, Name: "chat", Kind: "bot", CredentialEnv: "PAO_TEST_BOT_TOKEN",
-			Options: map[string]any{"endpoint": ts.URL + "/bot{token}/{method}", "poll_timeout": 0},
-			Groups:  []config.Group{{ID: strconv.Itoa(group), Name: "team", Members: config.MembersOperators}}}}
+	const person, group = 4242, pairGroup
+	p := startPair(t, map[string]string{"bee": ""}, func(_, _ string, cfg *config.Config) {
 		cfg.Orchestrator.Bindings = []config.Binding{{Agent: "bee", Stream: config.StreamStdout, To: "group:team", Level: config.BindingLevel(core.LevelLog)}}
-	}, func(o *Options) { o.Adapters = builtin.Table() })
+	})
+	n, svc, gsvc := p.n, p.svc, p.gsvc
 	ctx := context.Background()
-
-	require.NoError(t, n.client.AddSubject(ctx, "alice"))
-	inv, err := n.client.Invite(ctx, "alice", time.Hour)
-	require.NoError(t, err)
-	svc.push(chatUpdate(1, 10, person, "/register "+inv.Secret))
-	lineWith(t, svc, float64(person), "registered.")
-	require.NoError(t, n.client.SetOperator(ctx, "alice", true))
+	_, _, _ = n, svc, ctx
 
 	svc.push(chatUpdate(2, 11, person, "/pao agent bee hello"))
 	assert.Equal(t, "[bee]: echo: [alice]: hello", lineWith(t, svc, person, "echo"), "the origin is answered")
-	assert.Equal(t, "[alice]: hello", lineWith(t, svc, group, "[alice]: hello"), "the group is shown what the agent was sent")
-	assert.Equal(t, "[bee]: echo: [alice]: hello", lineWith(t, svc, group, "echo"), "and what it said")
+	assert.Equal(t, "[alice]: hello", lineWith(t, gsvc, group, "[alice]: hello"), "the group is shown what the agent was sent")
+	assert.Equal(t, "[bee]: echo: [alice]: hello", lineWith(t, gsvc, group, "echo"), "and what it said")
 	for _, s := range svc.texts(person) {
 		assert.NotEqual(t, "[alice]: hello", s, "the sender is not shown their own message")
 	}
@@ -556,41 +527,28 @@ func TestALogBindingMirrorsWhatTheAgentIsSent(t *testing.T) {
 // the group and not to the operator privately, and the operator's press there
 // decides it and closes the group's copy.
 func TestAStderrBindingTakesTheAgentsGateQuestions(t *testing.T) {
-	svc := &service{}
-	ts := httptest.NewServer(http.HandlerFunc(svc.handler))
-	t.Cleanup(ts.Close)
-	t.Setenv("PAO_TEST_BOT_TOKEN", "tok-1")
-	const person, group = 4242, -700
-
-	n := startNodeWith(t, map[string]string{"bee": ""}, func(_, _ string, cfg *config.Config) {
-		cfg.Orchestrator.Channels = []config.Channel{{ID: 1, Name: "chat", Kind: "bot", CredentialEnv: "PAO_TEST_BOT_TOKEN",
-			Options: map[string]any{"endpoint": ts.URL + "/bot{token}/{method}", "poll_timeout": 0},
-			Groups:  []config.Group{{ID: strconv.Itoa(group), Name: "team", Members: config.MembersOperators}}}}
+	const person, group = 4242, pairGroup
+	p := startPair(t, map[string]string{"bee": ""}, func(_, _ string, cfg *config.Config) {
 		cfg.Orchestrator.Bindings = []config.Binding{{Agent: "bee", Stream: config.StreamStderr, To: "group:team"}}
-	}, func(o *Options) { o.Adapters = builtin.Table() })
+	})
+	n, svc, gsvc := p.n, p.svc, p.gsvc
 	ctx := context.Background()
-
-	require.NoError(t, n.client.AddSubject(ctx, "alice"))
-	inv, err := n.client.Invite(ctx, "alice", time.Hour)
-	require.NoError(t, err)
-	svc.push(chatUpdate(1, 10, person, "/register "+inv.Secret))
-	lineWith(t, svc, float64(person), "registered.")
-	require.NoError(t, n.client.SetOperator(ctx, "alice", true))
+	_, _, _ = n, svc, ctx
 
 	decided := make(chan gate.Decision, 1)
 	go func() {
 		d, _ := gate.Ask(ctx, n.gateSock, gate.Request{Agent: "bee", Tool: "Bash", Input: []byte(`{"command":"echo hi"}`)})
 		decided <- d
 	}()
-	lineWith(t, svc, group, `agent "bee" wants to run Bash`)
-	q := svc.sentWith(group, `agent "bee" wants to run Bash`)
+	lineWith(t, gsvc, group, `agent "bee" wants to run Bash`)
+	q := gsvc.sentWith(group, `agent "bee" wants to run Bash`)
 	assert.Contains(t, q["reply_markup"].(string), "/pao allow q1", "the question carries its buttons")
 	assert.Nil(t, svc.sentWith(person, "wants to run"), "not privately: the binding takes the default's place")
 
 	native := func() int {
-		svc.mu.Lock()
-		defer svc.mu.Unlock()
-		for i, m := range svc.sent {
+		gsvc.mu.Lock()
+		defer gsvc.mu.Unlock()
+		for i, m := range gsvc.sent {
 			if m["chat_id"].(float64) == group && strings.Contains(m["text"].(string), "wants to run") {
 				return 5001 + i
 			}
@@ -600,15 +558,15 @@ func TestAStderrBindingTakesTheAgentsGateQuestions(t *testing.T) {
 	require.NotZero(t, native)
 	press := pressUpdate(30, native, person, "cb-group", "/pao allow q1")
 	press["callback_query"].(map[string]any)["message"].(map[string]any)["chat"] = map[string]any{"id": group, "type": "supergroup"}
-	svc.push(press)
+	gsvc.push(press)
 	select {
 	case d := <-decided:
 		assert.Equal(t, gate.Decision{Allow: true, Via: "operator", Reason: "approved by the operator"}, d)
 	case <-time.After(5 * time.Second):
 		t.Fatal("the operator's press in the group did not decide the question")
 	}
-	require.Eventually(t, func() bool { return len(svc.calls("editMessageText")) == 1 }, 5*time.Second, 20*time.Millisecond, "the group's copy is closed")
-	assert.Equal(t, float64(group), svc.calls("editMessageText")[0]["chat_id"].(float64))
+	require.Eventually(t, func() bool { return len(gsvc.calls("editMessageText")) == 1 }, 5*time.Second, 20*time.Millisecond, "the group's copy is closed")
+	assert.Equal(t, float64(group), gsvc.calls("editMessageText")[0]["chat_id"].(float64))
 }
 
 // TestANoticeThatAnAgentIsNotReadyGoesToItsStderrDestinations runs ADR-0029
@@ -616,34 +574,21 @@ func TestAStderrBindingTakesTheAgentsGateQuestions(t *testing.T) {
 // notice that it did not become ready goes there; wasp has no stderr binding, so
 // its notice goes to the operator privately and not to the admitted group.
 func TestANoticeThatAnAgentIsNotReadyGoesToItsStderrDestinations(t *testing.T) {
-	svc := &service{}
-	ts := httptest.NewServer(http.HandlerFunc(svc.handler))
-	t.Cleanup(ts.Close)
-	t.Setenv("PAO_TEST_BOT_TOKEN", "tok-1")
-	const person, group = 4242, -700
-
-	n := startNodeWith(t, map[string]string{"bee": neverReady, "wasp": neverReady}, func(_, _ string, cfg *config.Config) {
-		cfg.Orchestrator.Channels = []config.Channel{{ID: 1, Name: "chat", Kind: "bot", CredentialEnv: "PAO_TEST_BOT_TOKEN",
-			Options: map[string]any{"endpoint": ts.URL + "/bot{token}/{method}", "poll_timeout": 0},
-			Groups:  []config.Group{{ID: strconv.Itoa(group), Name: "team", Members: config.MembersOperators}}}}
+	const person, group = 4242, pairGroup
+	p := startPair(t, map[string]string{"bee": neverReady, "wasp": neverReady}, func(_, _ string, cfg *config.Config) {
 		cfg.Orchestrator.Bindings = []config.Binding{{Agent: "bee", Stream: config.StreamStderr, To: "group:team"}}
-	}, func(o *Options) { o.Adapters = builtin.Table() })
+	})
+	n, svc, gsvc := p.n, p.svc, p.gsvc
 	ctx := context.Background()
-
-	require.NoError(t, n.client.AddSubject(ctx, "alice"))
-	inv, err := n.client.Invite(ctx, "alice", time.Hour)
-	require.NoError(t, err)
-	svc.push(chatUpdate(1, 10, person, "/register "+inv.Secret))
-	lineWith(t, svc, float64(person), "registered.")
-	require.NoError(t, n.client.SetOperator(ctx, "alice", true))
+	_, _, _ = n, svc, ctx
 
 	svc.push(chatUpdate(2, 11, person, "/pao agent bee hello"))
-	lineWith(t, svc, group, `agent "bee" is not ready`)
+	lineWith(t, gsvc, group, `agent "bee" is not ready`)
 	assert.Nil(t, svc.sentWith(person, `agent "bee" is not ready`), "bee's notice is not shown privately")
 
 	svc.push(chatUpdate(3, 12, person, "/pao agent wasp hello"))
 	lineWith(t, svc, person, `agent "wasp" is not ready`)
-	assert.Nil(t, svc.sentWith(group, `agent "wasp" is not ready`), "wasp's notice is not shown in the group")
+	assert.Nil(t, gsvc.sentWith(group, `agent "wasp" is not ready`), "wasp's notice is not shown in the group")
 }
 
 // neverReady starts an agent that stays up and never shows its ready prompt; what
@@ -656,31 +601,18 @@ const neverReady = "sh -c 'sleep 30' sh"
 // removed shows nothing more. A config binding cannot be removed, and an agent the
 // operator may not reach is answered as one that does not exist.
 func TestABindingSetWhileTheNodeRunsFollowsTheAgent(t *testing.T) {
-	svc := &service{}
-	ts := httptest.NewServer(http.HandlerFunc(svc.handler))
-	t.Cleanup(ts.Close)
-	t.Setenv("PAO_TEST_BOT_TOKEN", "tok-1")
-	const person, group = 4242, -700
-
-	n := startNodeWith(t, map[string]string{"bee": "", "hidden": ""}, func(_, _ string, cfg *config.Config) {
-		cfg.Orchestrator.Channels = []config.Channel{{ID: 1, Name: "chat", Kind: "bot", CredentialEnv: "PAO_TEST_BOT_TOKEN",
-			Options: map[string]any{"endpoint": ts.URL + "/bot{token}/{method}", "poll_timeout": 0},
-			Groups:  []config.Group{{ID: strconv.Itoa(group), Name: "team", Members: config.MembersOperators}}}}
+	const person, group = 4242, pairGroup
+	p := startPair(t, map[string]string{"bee": "", "hidden": ""}, func(_, _ string, cfg *config.Config) {
 		cfg.Orchestrator.Bindings = []config.Binding{{Agent: "bee", Stream: config.StreamStderr, To: "private:alice"}}
 		for i := range cfg.Profiles {
 			if cfg.Profiles[i].Name == "hidden" {
 				cfg.Profiles[i].Tags = []string{"elsewhere"}
 			}
 		}
-	}, func(o *Options) { o.Adapters = builtin.Table() })
+	})
+	n, svc, gsvc := p.n, p.svc, p.gsvc
 	ctx := context.Background()
-
-	require.NoError(t, n.client.AddSubject(ctx, "alice"))
-	inv, err := n.client.Invite(ctx, "alice", time.Hour)
-	require.NoError(t, err)
-	svc.push(chatUpdate(1, 10, person, "/register "+inv.Secret))
-	lineWith(t, svc, float64(person), "registered.")
-	require.NoError(t, n.client.SetOperator(ctx, "alice", true))
+	_, _, _ = n, svc, ctx
 
 	b, err := n.client.BindStanding(ctx, local.StandingJSON{Agent: "bee", To: "group:team", Prefix: "B:"})
 	require.NoError(t, err)
@@ -695,13 +627,13 @@ func TestABindingSetWhileTheNodeRunsFollowsTheAgent(t *testing.T) {
 
 	svc.push(chatUpdate(2, 11, person, "/pao agent bee hello"))
 	assert.Equal(t, "[bee]: echo: [alice]: hello", lineWith(t, svc, person, "hello"), "the origin")
-	assert.Equal(t, "B: echo: [alice]: hello", lineWith(t, svc, group, "hello"), "the binding set at runtime")
+	assert.Equal(t, "B: echo: [alice]: hello", lineWith(t, gsvc, group, "hello"), "the binding set at runtime")
 
 	_, err = n.client.UnbindStanding(ctx, local.StandingJSON{Agent: "bee", To: "group:team"})
 	require.NoError(t, err)
 	svc.push(chatUpdate(3, 12, person, "/pao agent bee again"))
 	lineWith(t, svc, person, "again")
-	assert.Nil(t, svc.sentWith(group, "again"), "removed, it shows nothing more")
+	assert.Nil(t, gsvc.sentWith(group, "again"), "removed, it shows nothing more")
 
 	_, err = n.client.UnbindStanding(ctx, local.StandingJSON{Agent: "bee", Stream: "stderr", To: "private:alice"})
 	requireStatus(t, err, "409", "a config binding is the config's")
@@ -727,25 +659,12 @@ func requireStatus(t *testing.T, err error, status, msg string) {
 // node: /pao bind, /pao bindings and /pao unbind are answered to the operator
 // alone, and the binding shows the agent's output in the group while it lasts.
 func TestTheOperatorBindsAnAgentFromChat(t *testing.T) {
-	svc := &service{}
-	ts := httptest.NewServer(http.HandlerFunc(svc.handler))
-	t.Cleanup(ts.Close)
-	t.Setenv("PAO_TEST_BOT_TOKEN", "tok-1")
-	const person, group = 4242, -700
-
-	n := startNodeWith(t, map[string]string{"bee": ""}, func(_, _ string, cfg *config.Config) {
-		cfg.Orchestrator.Channels = []config.Channel{{ID: 1, Name: "chat", Kind: "bot", CredentialEnv: "PAO_TEST_BOT_TOKEN",
-			Options: map[string]any{"endpoint": ts.URL + "/bot{token}/{method}", "poll_timeout": 0},
-			Groups:  []config.Group{{ID: strconv.Itoa(group), Name: "team", Members: config.MembersOperators}}}}
-	}, func(o *Options) { o.Adapters = builtin.Table() })
+	const person, group = 4242, pairGroup
+	p := startPair(t, map[string]string{"bee": ""}, func(_, _ string, cfg *config.Config) {
+	})
+	n, svc, gsvc := p.n, p.svc, p.gsvc
 	ctx := context.Background()
-
-	require.NoError(t, n.client.AddSubject(ctx, "alice"))
-	inv, err := n.client.Invite(ctx, "alice", time.Hour)
-	require.NoError(t, err)
-	svc.push(chatUpdate(1, 10, person, "/register "+inv.Secret))
-	lineWith(t, svc, float64(person), "registered.")
-	require.NoError(t, n.client.SetOperator(ctx, "alice", true))
+	_, _, _ = n, svc, ctx
 
 	svc.push(chatUpdate(2, 11, person, "/pao bind bee group:team 2 B:"))
 	assert.Equal(t, `group:team follows bee's stdout at level 2, prefix "B:"`, lineWith(t, svc, person, "group:team follows bee"))
@@ -757,54 +676,41 @@ func TestTheOperatorBindsAnAgentFromChat(t *testing.T) {
 	lineWith(t, svc, person, "private:alice no longer follows bee's stderr")
 
 	svc.push(chatUpdate(6, 15, person, "/pao agent bee hello"))
-	assert.Equal(t, "B: echo: [alice]: hello", lineWith(t, svc, group, "hello"), "the binding set from chat")
+	assert.Equal(t, "B: echo: [alice]: hello", lineWith(t, gsvc, group, "hello"), "the binding set from chat")
 
 	svc.push(chatUpdate(7, 16, person, "/pao unbind bee group:team"))
 	lineWith(t, svc, person, "group:team no longer follows bee's stdout")
 	svc.push(chatUpdate(8, 17, person, "/pao agent bee again"))
 	lineWith(t, svc, person, "again")
-	assert.Nil(t, svc.sentWith(group, "again"), "unbound, the group is shown nothing more")
+	assert.Nil(t, gsvc.sentWith(group, "again"), "unbound, the group is shown nothing more")
 
 	svc.push(chatUpdate(9, 18, person, "/pao bind bee group:nope"))
 	assert.Equal(t, `no admitted group is named "nope"`, lineWith(t, svc, person, "nope"))
-	for _, s := range svc.texts(group) {
+	for _, s := range gsvc.texts(group) {
 		assert.NotContains(t, s, "follows", "a command's answer goes to the sender alone")
 		assert.NotContains(t, s, "standing bindings")
 	}
 }
 
 func TestTheOperatorSpawnsAndKillsATemporaryAgentFromChat(t *testing.T) {
-	svc := &service{}
-	ts := httptest.NewServer(http.HandlerFunc(svc.handler))
-	t.Cleanup(ts.Close)
-	t.Setenv("PAO_TEST_BOT_TOKEN", "tok-1")
-	const person, group = 4242, -700
-
-	n := startNodeWith(t, map[string]string{"bee": ""}, func(dir, script string, cfg *config.Config) {
+	const person, group = 4242, pairGroup
+	p := startPair(t, map[string]string{"bee": ""}, func(dir, script string, cfg *config.Config) {
 		rdir := filepath.Join(dir, "recipes")
 		require.NoError(t, os.MkdirAll(rdir, 0o700))
 		require.NoError(t, os.WriteFile(filepath.Join(rdir, "fake.yaml"), []byte(strings.ReplaceAll(goodRecipe("fake"), "@@SCRIPT@@", script)), 0o600))
 		cfg.Orchestrator.RecipesDir = rdir
-		cfg.Orchestrator.Channels = []config.Channel{{ID: 1, Name: "chat", Kind: "bot", CredentialEnv: "PAO_TEST_BOT_TOKEN",
-			Options: map[string]any{"endpoint": ts.URL + "/bot{token}/{method}", "poll_timeout": 0},
-			Groups:  []config.Group{{ID: strconv.Itoa(group), Name: "team", Members: config.MembersOperators}}}}
-	}, func(o *Options) { o.Adapters = builtin.Table() })
+	})
+	n, svc, gsvc := p.n, p.svc, p.gsvc
 	ctx := context.Background()
+	_, _, _ = n, svc, ctx
 
-	require.NoError(t, n.client.AddSubject(ctx, "alice"))
-	inv, err := n.client.Invite(ctx, "alice", time.Hour)
-	require.NoError(t, err)
-	svc.push(chatUpdate(1, 10, person, "/register "+inv.Secret))
-	lineWith(t, svc, float64(person), "registered.")
-	require.NoError(t, n.client.SetOperator(ctx, "alice", true))
-
-	svc.push(groupUpdate(2, 11, person, group, "/pao spawn fake scout"))
-	assert.Equal(t, "spawning an agent from recipe fake; you will be told when it is ready", lineWith(t, svc, group, "spawning"))
-	assert.Equal(t, "[pao]: scout is ready, spawned from recipe fake", lineWith(t, svc, person, "scout is ready"), "told privately, though asked in the group")
-	assert.Nil(t, svc.sentWith(group, "scout is ready"))
+	gsvc.push(groupUpdate(2, 11, person, group, "/pao spawn fake scout"))
+	assert.Equal(t, "spawning an agent from recipe fake; you will be told when it is ready", lineWith(t, gsvc, group, "spawning"))
+	assert.Equal(t, "[pao]: scout is ready, spawned from recipe fake", lineWith(t, gsvc, person, "scout is ready"), "told privately, though asked in the group")
+	assert.Nil(t, gsvc.sentWith(group, "scout is ready"))
 	a, ok := agentByName(t, n, "scout")
 	require.True(t, ok)
-	assert.Equal(t, "chat", a.Channel, "its stream is bound to the channel the spawn came from")
+	assert.Equal(t, "team", a.Channel, "its stream is bound to the channel the spawn came from")
 
 	svc.push(chatUpdate(3, 12, person, "/pao agent scout hi"))
 	lineWith(t, svc, person, "echo: [alice]: hi")
@@ -823,29 +729,16 @@ func TestTheOperatorSpawnsAndKillsATemporaryAgentFromChat(t *testing.T) {
 }
 
 func TestAGovernorRequestFromChatIsAnsweredToTheRequesterAlone(t *testing.T) {
-	svc := &service{}
-	ts := httptest.NewServer(http.HandlerFunc(svc.handler))
-	t.Cleanup(ts.Close)
-	t.Setenv("PAO_TEST_BOT_TOKEN", "tok-1")
-	const person, group = 4242, -700
-
-	n := startNodeWith(t, map[string]string{"bee": "", "gov": ""}, func(_, _ string, cfg *config.Config) {
+	const person, group = 4242, pairGroup
+	p := startPair(t, map[string]string{"bee": "", "gov": ""}, func(_, _ string, cfg *config.Config) {
 		cfg.Orchestrator.Governor = config.Governor{Agent: "gov"}
-		cfg.Orchestrator.Channels = []config.Channel{{ID: 1, Name: "chat", Kind: "bot", CredentialEnv: "PAO_TEST_BOT_TOKEN",
-			Options: map[string]any{"endpoint": ts.URL + "/bot{token}/{method}", "poll_timeout": 0},
-			Groups:  []config.Group{{ID: strconv.Itoa(group), Name: "team", Members: config.MembersOperators}}}}
-	}, func(o *Options) { o.Adapters = builtin.Table() })
+	})
+	n, svc, gsvc := p.n, p.svc, p.gsvc
 	ctx := context.Background()
+	_, _, _ = n, svc, ctx
 
-	require.NoError(t, n.client.AddSubject(ctx, "alice"))
-	inv, err := n.client.Invite(ctx, "alice", time.Hour)
-	require.NoError(t, err)
-	svc.push(chatUpdate(1, 10, person, "/register "+inv.Secret))
-	lineWith(t, svc, float64(person), "registered.")
-	require.NoError(t, n.client.SetOperator(ctx, "alice", true))
-
-	svc.push(groupUpdate(2, 11, person, group, "/gpao pause the bee"))
-	assert.Equal(t, "[gov]: echo: [alice]: pause the bee", lineWith(t, svc, group, "pause the bee"), "the governor's answer, in the group it was asked in")
+	gsvc.push(groupUpdate(2, 11, person, group, "/gpao pause the bee"))
+	assert.Equal(t, "[gov]: echo: [alice]: pause the bee", lineWith(t, gsvc, group, "pause the bee"), "the governor's answer, in the group it was asked in")
 	assert.Nil(t, svc.sentWith(person, "echo: [alice]: pause the bee"), "and not privately")
 
 	svc.push(chatUpdate(3, 12, person, "/gpao list the agents"))
@@ -872,7 +765,7 @@ func TestAPressOfACommandWithAListIsAnsweredInThePressersPrivateChat(t *testing.
 	t.Setenv("PAO_TEST_BOT_TOKEN", "tok-1")
 	const person = 4242
 	n := startNodeWith(t, map[string]string{"bee": "", "wasp": ""}, func(_, _ string, cfg *config.Config) {
-		cfg.Orchestrator.Channels = []config.Channel{{ID: 1, Name: "chat", Kind: "bot", CredentialEnv: "PAO_TEST_BOT_TOKEN",
+		cfg.Orchestrator.Channels = []config.Channel{{ID: 1, Name: "chat", Kind: "bot", CredentialEnv: "PAO_TEST_BOT_TOKEN", Owner: "alice", Target: config.TargetPrivate,
 			Options: map[string]any{"endpoint": ts.URL + "/bot{token}/{method}", "poll_timeout": 0}}}
 	}, func(o *Options) { o.Adapters = builtin.Table() })
 	ctx := context.Background()
@@ -899,7 +792,7 @@ func TestANoticeAboutTheGovernorGoesToItsRequesterAlone(t *testing.T) {
 
 	n := startNodeWith(t, map[string]string{"gov": neverReady}, func(_, _ string, cfg *config.Config) {
 		cfg.Orchestrator.Governor = config.Governor{Agent: "gov"}
-		cfg.Orchestrator.Channels = []config.Channel{{ID: 1, Name: "chat", Kind: "bot", CredentialEnv: "PAO_TEST_BOT_TOKEN",
+		cfg.Orchestrator.Channels = []config.Channel{{ID: 1, Name: "chat", Kind: "bot", CredentialEnv: "PAO_TEST_BOT_TOKEN", Owner: "alice", Target: strconv.Itoa(group),
 			Options: map[string]any{"endpoint": ts.URL + "/bot{token}/{method}", "poll_timeout": 0},
 			Groups:  []config.Group{{ID: strconv.Itoa(group), Name: "team", Members: config.MembersOperators}}}}
 	}, func(o *Options) { o.Adapters = builtin.Table() })
@@ -921,4 +814,48 @@ func TestANoticeAboutTheGovernorGoesToItsRequesterAlone(t *testing.T) {
 	lineWith(t, svc, alice, `agent "gov" is not ready`)
 	assert.Nil(t, svc.sentWith(bob, `agent "gov" is not ready`), "the other operator is not shown it")
 	assert.Nil(t, svc.sentWith(group, `agent "gov" is not ready`), "nor the group it was asked in")
+}
+
+// pair is a node with two chat channels, as a test needs that shows a private
+// conversation and a group at once: a channel is one conversation (#215). "chat"
+// is alice's private conversation on svc, and "team" is the group on gsvc, a
+// service of its own. alice registers on both and is flagged operator.
+type pair struct {
+	n         *node
+	svc, gsvc *service
+}
+
+const pairGroup = -700
+
+func startPair(t *testing.T, agents map[string]string, adjust func(dir, script string, cfg *config.Config)) pair {
+	t.Helper()
+	p := pair{svc: &service{}, gsvc: &service{}}
+	ts := httptest.NewServer(http.HandlerFunc(p.svc.handler))
+	t.Cleanup(ts.Close)
+	gts := httptest.NewServer(http.HandlerFunc(p.gsvc.handler))
+	t.Cleanup(gts.Close)
+	t.Setenv("PAO_TEST_BOT_TOKEN", "tok-1")
+	t.Setenv("PAO_TEST_GROUP_BOT_TOKEN", "tok-2")
+	p.n = startNodeWith(t, agents, func(dir, script string, cfg *config.Config) {
+		cfg.Orchestrator.Channels = []config.Channel{
+			{ID: 1, Name: "chat", Kind: "bot", CredentialEnv: "PAO_TEST_BOT_TOKEN", Owner: "alice", Target: config.TargetPrivate,
+				Options: map[string]any{"endpoint": ts.URL + "/bot{token}/{method}", "poll_timeout": 0}},
+			{ID: 2, Name: "team", Kind: "bot", CredentialEnv: "PAO_TEST_GROUP_BOT_TOKEN", Owner: "alice", Target: strconv.Itoa(pairGroup),
+				Options: map[string]any{"endpoint": gts.URL + "/bot{token}/{method}", "poll_timeout": 0},
+				Groups:  []config.Group{{ID: strconv.Itoa(pairGroup), Name: "team", Members: config.MembersOperators}}},
+		}
+		if adjust != nil {
+			adjust(dir, script, cfg)
+		}
+	}, func(o *Options) { o.Adapters = builtin.Table() })
+	ctx := context.Background()
+	require.NoError(t, p.n.client.AddSubject(ctx, "alice"))
+	for i, s := range []*service{p.svc, p.gsvc} {
+		inv, err := p.n.client.Invite(ctx, "alice", time.Hour)
+		require.NoError(t, err)
+		s.push(chatUpdate(1, 10+i, 4242, "/register "+inv.Secret))
+		lineWith(t, s, 4242, "registered.")
+	}
+	require.NoError(t, p.n.client.SetOperator(ctx, "alice", true))
+	return p
 }

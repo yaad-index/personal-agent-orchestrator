@@ -13,15 +13,19 @@ import (
 // groups.
 //
 // An agent's output goes where its route says (routed). Anything else is shown as
-// wide says.
+// wide says. Either way it is shown only in the channel's one conversation
+// (inScope).
 func (l *Layer) Destinations(channel string, m core.Message) []string {
 	if l.identity == nil {
 		return nil
 	}
+	var out []string
 	if r, ok := l.routes.Load(m.ID); ok {
-		return l.routed(channel, m, r.(outRoute))
+		out = l.routed(channel, m, r.(outRoute))
+	} else {
+		out = l.wide(channel, m)
 	}
-	out := l.wide(channel, m)
+	out = l.inScope(channel, m, out)
 	if len(out) == 0 {
 		l.warnUnshown(channel, m)
 	}

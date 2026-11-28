@@ -17,6 +17,8 @@ type ChannelConfigJSON struct {
 	CredentialEnv    string            `json:"credential_env,omitempty"`
 	CredentialSecret string            `json:"credential_secret,omitempty"`
 	Options          map[string]any    `json:"options,omitempty"`
+	Owner            string            `json:"owner"`
+	Target           string            `json:"target"`
 	Groups           []GroupConfigJSON `json:"groups,omitempty"`
 }
 

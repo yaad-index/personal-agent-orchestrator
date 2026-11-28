@@ -283,6 +283,12 @@ func (l *Layer) ReceiveFromChannel(ctx context.Context, in ChannelInbound) (Chan
 		return ChannelResult{}, ErrNoIdentity
 	}
 
+	// Nothing from outside the channel's one conversation, or from anyone but
+	// its owner, is acted on or answered: it is recorded, whoever sent it.
+	if reason := l.outOfScope(in); reason != "" {
+		return ChannelResult{}, l.reject(in, RecordMessage, reason, in.Raw)
+	}
+
 	if in.Group {
 		return l.receiveFromGroup(ctx, in)
 	}

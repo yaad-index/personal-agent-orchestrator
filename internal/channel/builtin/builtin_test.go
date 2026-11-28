@@ -57,7 +57,7 @@ func managedNode(t *testing.T, managed string) (pao, mf string) {
 	pao, mf = filepath.Join(dir, "pao.yaml"), filepath.Join(dir, "managed.yaml")
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "profiles"), 0o755))
 	require.NoError(t, os.WriteFile(pao, []byte("node: n1\nprofiles_dir: profiles\nstate_dir: state\ntoken_env: PAO_TOKEN\nmanaged: managed.yaml\n"+
-		"channels:\n  - id: 1\n    name: mine\n    kind: bot\n    credential_env: PAO_BOT\n    options:\n      endpoint: \"https://bot.example/bot{token}/{method}\"\n"), 0o600))
+		"channels:\n  - id: 1\n    name: mine\n    kind: bot\n    credential_env: PAO_BOT\n    owner: alice\n    target: private\n    options:\n      endpoint: \"https://bot.example/bot{token}/{method}\"\n"), 0o600))
 	if managed != "" {
 		require.NoError(t, os.WriteFile(mf, []byte(managed), 0o600))
 	}
@@ -65,7 +65,7 @@ func managedNode(t *testing.T, managed string) (pao, mf string) {
 }
 
 func TestAManagedChannelsAdapterErrorNamesTheManagedFile(t *testing.T) {
-	pao, mf := managedNode(t, "channels:\n  - id: 2\n    name: ui-made\n    kind: bot\n    credential_env: PAO_UI\n    options:\n      nonsense: 1\n")
+	pao, mf := managedNode(t, "channels:\n  - id: 2\n    name: ui-made\n    kind: bot\n    credential_env: PAO_UI\n    owner: alice\n    target: private\n    options:\n      nonsense: 1\n")
 	cfg, err := config.Load(pao)
 	require.NoError(t, err, "the options are the adapter's to judge, not the loader's")
 	err = CheckChannels(pao, cfg.Orchestrator)
@@ -77,15 +77,15 @@ func TestAManagedChannelsAdapterErrorNamesTheManagedFile(t *testing.T) {
 func TestAWriteTheAdaptersWouldRefuseIsNotWritten(t *testing.T) {
 	pao, mf := managedNode(t, "")
 	check := func(cfg *config.Config) error { return CheckChannels(pao, cfg.Orchestrator) }
-	bad := config.Managed{Channels: []config.Channel{{ID: 2, Name: "ui-made", Kind: "bot", CredentialEnv: "PAO_UI", Options: map[string]any{"nonsense": 1}}}}
+	bad := config.Managed{Channels: []config.Channel{{ID: 2, Name: "ui-made", Kind: "bot", CredentialEnv: "PAO_UI", Owner: "alice", Target: config.TargetPrivate, Options: map[string]any{"nonsense": 1}}}}
 	require.Error(t, config.WriteManaged(pao, bad, check))
 	_, err := os.Stat(mf)
 	assert.True(t, os.IsNotExist(err), "nothing was written")
 
-	unknownKind := config.Managed{Channels: []config.Channel{{ID: 2, Name: "ui-made", Kind: "carrier-pigeon", CredentialEnv: "PAO_UI"}}}
+	unknownKind := config.Managed{Channels: []config.Channel{{ID: 2, Name: "ui-made", Kind: "carrier-pigeon", CredentialEnv: "PAO_UI", Owner: "alice", Target: config.TargetPrivate}}}
 	require.Error(t, config.WriteManaged(pao, unknownKind, check), "a kind this build does not have")
 
-	good := config.Managed{Channels: []config.Channel{{ID: 2, Name: "ui-made", Kind: "bot", CredentialEnv: "PAO_UI", Options: map[string]any{"endpoint": "https://bot.example/bot{token}/{method}"}}}}
+	good := config.Managed{Channels: []config.Channel{{ID: 2, Name: "ui-made", Kind: "bot", CredentialEnv: "PAO_UI", Owner: "alice", Target: config.TargetPrivate, Options: map[string]any{"endpoint": "https://bot.example/bot{token}/{method}"}}}}
 	require.NoError(t, config.WriteManaged(pao, good, check))
 	cfg, err := config.Load(pao)
 	require.NoError(t, err)

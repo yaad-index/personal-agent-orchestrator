@@ -34,7 +34,7 @@ func channelNode(t *testing.T, managed bool) (pao, mf string) {
 	}
 	require.NoError(t, os.WriteFile(pao, []byte("node: n1\nprofiles_dir: profiles\nstate_dir: state\ntoken_env: PAO_TOKEN\n"+m+
 		"secrets:\n  - name: in-file\n    file: secret.txt\n  - name: in-var\n    env: S_VAR\n  - name: blank\n    file: empty.txt\n"+
-		"channels:\n  - id: 1\n    name: mine\n    kind: bot\n    credential_env: MINE_VAR\n    options:\n      endpoint: \""+okEndpoint+"\"\n"), 0o600))
+		"channels:\n  - id: 1\n    name: mine\n    kind: bot\n    credential_env: MINE_VAR\n    owner: alice\n    target: private\n    options:\n      endpoint: \""+okEndpoint+"\"\n"), 0o600))
 	return pao, mf
 }
 
@@ -49,7 +49,7 @@ func channelAPI(t *testing.T, pao string, env map[string]string) *channelConfigA
 }
 
 func uiChannel(id int, name string) local.ChannelConfigJSON {
-	return local.ChannelConfigJSON{ID: id, Name: name, Kind: "bot", CredentialSecret: "in-file", Options: map[string]any{"endpoint": okEndpoint}}
+	return local.ChannelConfigJSON{ID: id, Name: name, Kind: "bot", CredentialSecret: "in-file", Owner: "alice", Target: config.TargetPrivate, Options: map[string]any{"endpoint": okEndpoint}}
 }
 
 func TestTheChannelsAreListedAsTheNextStartWouldHaveThem(t *testing.T) {
@@ -69,9 +69,9 @@ func TestTheChannelsAreListedAsTheNextStartWouldHaveThem(t *testing.T) {
 	assert.True(t, l.Channels[0].Credential.Resolves)
 	assert.False(t, l.RestartNeeded)
 
-	for _, c := range []local.ChannelConfigJSON{uiChannel(2, "via-file"), {ID: 3, Name: "via-var", Kind: "bot", CredentialSecret: "in-var", Options: map[string]any{"endpoint": okEndpoint}},
-		{ID: 4, Name: "via-blank", Kind: "bot", CredentialSecret: "blank", Options: map[string]any{"endpoint": okEndpoint}},
-		{ID: 5, Name: "unset", Kind: "bot", CredentialEnv: "NOT_SET_VAR", Options: map[string]any{"endpoint": okEndpoint}}} {
+	for _, c := range []local.ChannelConfigJSON{uiChannel(2, "via-file"), {ID: 3, Name: "via-var", Kind: "bot", CredentialSecret: "in-var", Owner: "alice", Target: config.TargetPrivate, Options: map[string]any{"endpoint": okEndpoint}},
+		{ID: 4, Name: "via-blank", Kind: "bot", CredentialSecret: "blank", Owner: "alice", Target: config.TargetPrivate, Options: map[string]any{"endpoint": okEndpoint}},
+		{ID: 5, Name: "unset", Kind: "bot", CredentialEnv: "NOT_SET_VAR", Owner: "alice", Target: config.TargetPrivate, Options: map[string]any{"endpoint": okEndpoint}}} {
 		require.NoError(t, a.Put(ctx, c), c.Name)
 	}
 	l, err = a.List(ctx)
@@ -103,7 +103,7 @@ func TestOnlyTheManagedFilesChannelsAreChanged(t *testing.T) {
 	paoBefore, err := os.ReadFile(pao)
 	require.NoError(t, err)
 
-	err = a.Put(ctx, local.ChannelConfigJSON{ID: 1, Name: "mine", Kind: "bot", CredentialEnv: "OTHER", Options: map[string]any{"endpoint": okEndpoint}})
+	err = a.Put(ctx, local.ChannelConfigJSON{ID: 1, Name: "mine", Kind: "bot", CredentialEnv: "OTHER", Owner: "alice", Target: config.TargetPrivate, Options: map[string]any{"endpoint": okEndpoint}})
 	assert.ErrorIs(t, err, local.ErrConflict)
 	assert.Contains(t, err.Error(), "change it there")
 	assert.ErrorIs(t, a.Delete(ctx, "mine"), local.ErrConflict)
@@ -129,11 +129,11 @@ func TestAChangeThatWouldNotStartIsRefusedAndChangesNothing(t *testing.T) {
 	before, err := os.ReadFile(mf)
 	require.NoError(t, err)
 	for name, c := range map[string]local.ChannelConfigJSON{
-		"unknown option":  {ID: 3, Name: "x", Kind: "bot", CredentialEnv: "X_VAR", Options: map[string]any{"nonsense": 1}},
-		"unknown kind":    {ID: 3, Name: "x", Kind: "carrier-pigeon", CredentialEnv: "X_VAR"},
-		"same id":         {ID: 1, Name: "x", Kind: "bot", CredentialEnv: "X_VAR", Options: map[string]any{"endpoint": okEndpoint}},
-		"shared variable": {ID: 3, Name: "x", Kind: "bot", CredentialEnv: "MINE_VAR", Options: map[string]any{"endpoint": okEndpoint}},
-		"taken secret":    {ID: 3, Name: "x", Kind: "bot", CredentialSecret: "in-file", Options: map[string]any{"endpoint": okEndpoint}},
+		"unknown option":  {ID: 3, Name: "x", Kind: "bot", CredentialEnv: "X_VAR", Owner: "alice", Target: config.TargetPrivate, Options: map[string]any{"nonsense": 1}},
+		"unknown kind":    {ID: 3, Name: "x", Kind: "carrier-pigeon", CredentialEnv: "X_VAR", Owner: "alice", Target: config.TargetPrivate},
+		"same id":         {ID: 1, Name: "x", Kind: "bot", CredentialEnv: "X_VAR", Owner: "alice", Target: config.TargetPrivate, Options: map[string]any{"endpoint": okEndpoint}},
+		"shared variable": {ID: 3, Name: "x", Kind: "bot", CredentialEnv: "MINE_VAR", Owner: "alice", Target: config.TargetPrivate, Options: map[string]any{"endpoint": okEndpoint}},
+		"taken secret":    {ID: 3, Name: "x", Kind: "bot", CredentialSecret: "in-file", Owner: "alice", Target: config.TargetPrivate, Options: map[string]any{"endpoint": okEndpoint}},
 		"no credential":   {ID: 3, Name: "x", Kind: "bot", Options: map[string]any{"endpoint": okEndpoint}},
 	} {
 		err := a.Put(ctx, c)
@@ -146,19 +146,20 @@ func TestAChangeThatWouldNotStartIsRefusedAndChangesNothing(t *testing.T) {
 
 func TestRedefiningAChannelKeepsItsGroupsTopics(t *testing.T) {
 	pao, mf := channelNode(t, true)
-	require.NoError(t, os.WriteFile(mf, []byte("channels:\n  - id: 2\n    name: ui\n    kind: bot\n    credential_env: UI_VAR\n    options:\n      endpoint: \""+okEndpoint+
+	require.NoError(t, os.WriteFile(mf, []byte("channels:\n  - id: 2\n    name: ui\n    kind: bot\n    credential_env: UI_VAR\n    owner: alice\n    target: \"-5/7\"\n    options:\n      endpoint: \""+okEndpoint+
 		"\"\n    groups:\n      - id: \"-5\"\n        name: crew\n        members: operators\n        topics:\n          - id: \"7\"\n            name: crew-news\n"), 0o600))
 	a := channelAPI(t, pao, nil)
-	c := local.ChannelConfigJSON{ID: 2, Name: "ui", Kind: "bot", CredentialEnv: "UI_VAR2", Options: map[string]any{"endpoint": okEndpoint},
-		Groups: []local.GroupConfigJSON{{ID: "-5", Name: "crew"}, {ID: "-6", Name: "new-crew"}}}
+	c := local.ChannelConfigJSON{ID: 2, Name: "ui", Kind: "bot", CredentialEnv: "UI_VAR2", Owner: "alice", Target: "-5/7", Options: map[string]any{"endpoint": okEndpoint},
+		Groups: []local.GroupConfigJSON{{ID: "-5", Name: "crew"}}}
 	require.NoError(t, a.Put(context.Background(), c))
 	cfg, err := config.Load(pao)
 	require.NoError(t, err)
 	got := cfg.Orchestrator.Channels[1]
 	assert.Equal(t, "UI_VAR2", got.CredentialEnv)
-	require.Len(t, got.Groups, 2)
+	assert.Equal(t, "-5/7", got.Target)
+	require.Len(t, got.Groups, 1)
 	assert.Equal(t, []config.Topic{{ID: "7", Name: "crew-news"}}, got.Groups[0].Topics, "the form does not show topics, so it does not drop them")
-	assert.Equal(t, config.MembersOperators, got.Groups[1].Members)
+	assert.Equal(t, config.MembersOperators, got.Groups[0].Members)
 }
 
 func TestWithoutAManagedFileNothingChanges(t *testing.T) {
@@ -182,7 +183,7 @@ func TestConcurrentChangesAreNotLost(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			c := local.ChannelConfigJSON{ID: 10 + i, Name: fmt.Sprintf("c%d", i), Kind: "bot", CredentialEnv: fmt.Sprintf("C%d_VAR", i), Options: map[string]any{"endpoint": okEndpoint}}
+			c := local.ChannelConfigJSON{ID: 10 + i, Name: fmt.Sprintf("c%d", i), Kind: "bot", CredentialEnv: fmt.Sprintf("C%d_VAR", i), Owner: "alice", Target: config.TargetPrivate, Options: map[string]any{"endpoint": okEndpoint}}
 			assert.NoError(t, a.Put(context.Background(), c))
 		}()
 	}
@@ -218,7 +219,7 @@ func TestANewChannelIsGivenAnIdNeverUsed(t *testing.T) {
 	assert.Equal(t, 8, ids["fresh"], "above every id served, retired ones included")
 	assert.Equal(t, 4, ids["comeback"], "a name served before gets its id back")
 
-	reuse := local.ChannelConfigJSON{ID: 7, Name: "squatter", Kind: "bot", CredentialEnv: "SQ_VAR", Options: map[string]any{"endpoint": okEndpoint}}
+	reuse := local.ChannelConfigJSON{ID: 7, Name: "squatter", Kind: "bot", CredentialEnv: "SQ_VAR", Owner: "alice", Target: config.TargetPrivate, Options: map[string]any{"endpoint": okEndpoint}}
 	err = a.Put(ctx, reuse)
 	assert.ErrorIs(t, err, local.ErrBadRequest)
 	assert.Contains(t, err.Error(), "never reused")
@@ -230,7 +231,7 @@ func TestARestartIsRefusedWhenPaoWouldNotStart(t *testing.T) {
 	a := channelAPI(t, pao, env)
 	require.NoError(t, a.RestartCheck(), "a node that would start")
 
-	require.NoError(t, a.Put(context.Background(), local.ChannelConfigJSON{ID: 2, Name: "unset", Kind: "bot", CredentialEnv: "UNSET_VAR", Options: map[string]any{"endpoint": okEndpoint}}))
+	require.NoError(t, a.Put(context.Background(), local.ChannelConfigJSON{ID: 2, Name: "unset", Kind: "bot", CredentialEnv: "UNSET_VAR", Owner: "alice", Target: config.TargetPrivate, Options: map[string]any{"endpoint": okEndpoint}}))
 	err := a.RestartCheck()
 	require.Error(t, err, "saved, but its credential is not there to read")
 	assert.Contains(t, err.Error(), `channel "unset": variable UNSET_VAR is not set`)

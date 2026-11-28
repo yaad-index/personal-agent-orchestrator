@@ -14,25 +14,26 @@ var (
 	question = core.Message{Sender: "pao", Kind: core.MessageSystemEvent, Text: "allow?", Actions: []core.Action{{Label: "Allow", Command: "/pao allow q1"}}}
 )
 
-func TestWithAnAdmittedGroupOutputGoesToTheGroupAndAQuestionToEachOperatorOnly(t *testing.T) {
+func TestOnAGroupChannelOutputGoesToTheGroupAndAQuestionToTheOwnerOnly(t *testing.T) {
 	l, _, id, _ := groupSetup(t)
 	id.bound["chat\x00op2"] = "carol"
 	id.operators["carol"] = true
 
 	assert.Equal(t, []string{"-5"}, l.Destinations("chat", output), "an agent's output: the group only")
 	assert.Equal(t, []string{"-5"}, l.Destinations("chat", notice), "pao's other notices are output too")
-	assert.ElementsMatch(t, []string{"op", "op2"}, l.Destinations("chat", question), "a question: each operator privately, not the group")
+	assert.Equal(t, []string{"op"}, l.Destinations("chat", question), "a question: the owner privately, not the group, and no other operator")
 }
 
-func TestEveryAdmittedGroupOfTheChannelGetsItInOrder(t *testing.T) {
+func TestOnlyTheChannelsOwnGroupGetsItNotAnotherAdmittedOne(t *testing.T) {
 	l, _, _, _ := chanSetup(t)
 	l.SetGroups(map[string]map[string]Group{"chat": {"-7": {Name: "b", Policy: PolicyOperators}, "-5": {Name: "a", Policy: PolicyOperators}}, "other": {"-9": {Name: "c", Policy: PolicyOperators}}})
-	assert.Equal(t, []string{"-5", "-7"}, l.Destinations("chat", output))
+	l.SetScopes(map[string]Scope{"chat": {Owner: "alice", Conversation: "-7"}})
+	assert.Equal(t, []string{"-7"}, l.Destinations("chat", output))
 	assert.Equal(t, []string{"op"}, l.Destinations("chat", question), "a question is not shown in a group")
 }
 
 func TestAChannelWithNoAdmittedGroupSendsPrivatelyAsBefore(t *testing.T) {
-	l, _, _, _ := groupSetup(t)
+	l, _, _, _ := chanSetup(t)
 	l.SetGroups(map[string]map[string]Group{"other": {"-9": {Name: "c", Policy: PolicyOperators}}})
 	for _, m := range []core.Message{output, notice, question} {
 		assert.Equal(t, []string{"op"}, l.Destinations("chat", m), m.Text)

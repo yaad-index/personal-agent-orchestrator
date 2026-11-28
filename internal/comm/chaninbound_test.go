@@ -70,6 +70,7 @@ func chanSetup(t *testing.T) (*Layer, *fakeRouter, *fakeIdentity, *fakeRecorder)
 	id := &fakeIdentity{bound: map[string]string{"chat\x00op": "alice", "chat\x00plain": "bob"}, operators: map[string]bool{"alice": true}, secret: "SEC"}
 	rc := &fakeRecorder{}
 	l.SetIdentity(id, rc)
+	l.SetScopes(map[string]Scope{"chat": {Owner: "alice"}})
 	return l, r, id, rc
 }
 
@@ -84,8 +85,18 @@ func TestAnOperatorSubjectIsRoutedAsItselfAndAttributedUnderItsName(t *testing.T
 	assert.Empty(t, rc.got, "nothing rejected")
 }
 
-func TestASubjectThatIsNotFlaggedIsRecordedAndNeverRouted(t *testing.T) {
+func TestASubjectThatIsNotTheOwnerIsRecordedNotAnsweredAndNeverRouted(t *testing.T) {
 	l, r, _, rc := chanSetup(t)
+	res, err := l.ReceiveFromChannel(context.Background(), ChannelInbound{Channel: "chat", Sender: "plain", Text: "hi", Target: byName("a"), Raw: "RAW"})
+	require.NoError(t, err)
+	assert.Equal(t, ChannelResult{}, res, "a bound subject who is not the owner is told nothing")
+	assert.Empty(t, r.routed)
+	assert.Equal(t, []rec{{"chat", "plain", RecordMessage, "not the channel's owner", "RAW"}}, rc.got)
+}
+
+func TestAnOwnerThatIsNotFlaggedIsRecordedAndNeverRouted(t *testing.T) {
+	l, r, _, rc := chanSetup(t)
+	l.SetScopes(map[string]Scope{"chat": {Owner: "bob"}})
 	res, err := l.ReceiveFromChannel(context.Background(), ChannelInbound{Channel: "chat", Sender: "plain", Text: "hi", Target: byName("a"), Raw: "RAW"})
 	require.NoError(t, err)
 	assert.Nil(t, res.Delivery)
@@ -102,7 +113,8 @@ func TestAGroupMessageIsRecordedAndNeverRoutedWhoeverSendsIt(t *testing.T) {
 		assert.Equal(t, ChannelResult{}, res, sender)
 	}
 	assert.Empty(t, r.routed, "a flagged subject's group message is not routed")
-	assert.Equal(t, []rec{{"chat", "op", RecordMessage, "group", "RAW"}, {"chat", "plain", RecordMessage, "group", "RAW"}, {"chat", "stranger", RecordMessage, "group", "RAW"}}, rc.got)
+	why := "not the channel's conversation: unknown"
+	assert.Equal(t, []rec{{"chat", "op", RecordMessage, why, "RAW"}, {"chat", "plain", RecordMessage, why, "RAW"}, {"chat", "stranger", RecordMessage, why, "RAW"}}, rc.got)
 
 	// A group never registers, even with the right secret.
 	res, err := l.ReceiveFromChannel(context.Background(), ChannelInbound{Channel: "chat", Sender: "new", Text: "SEC", Registration: true, Group: true})
@@ -123,6 +135,7 @@ func TestAnUnboundSenderIsRecordedAnsweredWithNothingAndNeverRouted(t *testing.T
 
 func TestTheSameIdOnAnotherChannelIsUnbound(t *testing.T) {
 	l, r, _, rc := chanSetup(t)
+	l.SetScopes(map[string]Scope{"chat": {Owner: "alice"}, "other": {Owner: "alice"}})
 	_, err := l.ReceiveFromChannel(context.Background(), ChannelInbound{Channel: "other", Sender: "op", Text: "hi", Target: byName("a")})
 	require.NoError(t, err)
 	assert.Empty(t, r.routed)
@@ -233,13 +246,18 @@ func TestARejectionWithNoRecorderIsStillSilentAndSafe(t *testing.T) {
 	assert.Empty(t, r.routed)
 }
 
-func TestWithNoGroupTheDestinationsAreTheOperatorFlaggedSendersOnTheChannel(t *testing.T) {
+func TestOnAPrivateChannelTheDestinationsAreTheOwnersSendersOnTheChannel(t *testing.T) {
 	l, _, id, _ := chanSetup(t)
 	id.bound["other\x00op2"] = "alice"
+	id.bound["chat\x00op3"] = "carol"
+	id.operators["carol"] = true
+	l.SetScopes(map[string]Scope{"chat": {Owner: "alice"}, "other": {Owner: "alice"}})
 	notice := core.Message{Sender: "pao", Kind: core.MessageSystemEvent, Text: "hello"}
-	assert.Equal(t, []string{"op"}, l.Destinations("chat", notice), "bob is bound but not flagged: nothing is sent him")
+	assert.Equal(t, []string{"op"}, l.Destinations("chat", notice), "bob is not flagged and carol, flagged, is not the owner: nothing is sent either")
 	assert.Equal(t, []string{"op2"}, l.Destinations("other", notice))
 	assert.Empty(t, l.Destinations("none", notice))
+	l.SetScopes(map[string]Scope{"chat": {Owner: "alice"}})
+	assert.Empty(t, l.Destinations("other", notice), "a channel with no owner and conversation shows nothing")
 
 	bare, _, _ := setup(t)
 	assert.Empty(t, bare.Destinations("chat", notice), "no identity store, no destinations")
@@ -310,6 +328,7 @@ func TestAMessageNamingNoAgentGoesToTheChannelsDefaultLast(t *testing.T) {
 func TestADefaultIsPerChannelAndOneThatIsGoneIsAnErrorNotAGuess(t *testing.T) {
 	l, r, id, _ := chanSetup(t)
 	id.bound["other\x00op"] = "alice"
+	l.SetScopes(map[string]Scope{"chat": {Owner: "alice"}, "other": {Owner: "alice"}})
 	l.SetDefaults(mapDefaults{"chat": "gone"})
 
 	_, err := l.ReceiveFromChannel(context.Background(), ChannelInbound{Channel: "other", Sender: "op", Text: "hi"})
