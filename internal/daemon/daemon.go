@@ -182,6 +182,9 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		return err
 	}
 	defer func() { _ = ids.Close() }()
+	if err := rekeyIdentity(ids, cfg.Orchestrator); err != nil {
+		return err
+	}
 	warnUnknownOwners(ids, cfg.Orchestrator.Channels)
 	defaults, err := defaultagent.Open(filepath.Join(cfg.Orchestrator.StateDir, defaultsFile))
 	if err != nil {
@@ -574,7 +577,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		go func() {
 			defer adaptersWG.Done()
 			if err := a.Run(adaptersCtx); err != nil && adaptersCtx.Err() == nil {
-				slog.Error("channel stopped", "channel", a.Name(), "error", err)
+				slog.Error("provider stopped", "error", err)
 			}
 		}()
 	}

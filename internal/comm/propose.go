@@ -62,7 +62,7 @@ func (l *Layer) subjectTargets(channel string, one bool, subject, agent string) 
 		return nil
 	}
 	var out []target
-	for _, s := range l.identity.Senders(subject, channel) {
+	for _, s := range l.identity.Senders(subject, l.providerOf(channel)) {
 		out = append(out, target{kind: toSubject, at: origin{channel: channel, conversation: s}, agent: agent})
 	}
 	return out

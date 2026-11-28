@@ -90,6 +90,6 @@ func TestAChannelThatIsATopicServesThatTopicAlone(t *testing.T) {
 	rej, err := n.client.Rejected(ctx)
 	require.NoError(t, err)
 	require.Len(t, rej, 1, "one sender, recorded once with its latest")
-	assert.Equal(t, "not the channel's conversation: private", rej[0].Reason)
+	assert.Equal(t, "no channel is this conversation: private", rej[0].Reason, "the provider carries no channel there")
 	assert.Equal(t, 5, rej[0].Count, "the registration is recorded, and each of the four after it")
 }

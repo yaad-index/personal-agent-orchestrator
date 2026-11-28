@@ -191,3 +191,103 @@ func TestAChannelShowsItsOwnAgentsOutputAndNoOthers(t *testing.T) {
 	say(t, l, "from a")
 	assert.Equal(t, map[string][]string{"-5": {"from a"}}, chat.take(), "b's words never reach a's channel, though b is bound there")
 }
+
+// providerSetup is a layer whose provider tg carries alice's and bob's private
+// channels, alice's group -5 and her topic -6/42, each with an agent of its own.
+// alice is op, bob is op3, both on tg.
+func providerSetup(t *testing.T) (*Layer, *fakeRouter, *fakeIdentity, *fakeRecorder) {
+	t.Helper()
+	l, r, id, rc := chanSetup(t)
+	id.bound = map[string]string{"tg\x00op": "alice", "tg\x00op3": "bob"}
+	id.operators["bob"] = true
+	for _, a := range []string{"b", "c", "d"} {
+		r.agents[a] = []string{a}
+	}
+	l.SetScopes(map[string]Scope{
+		"dm-alice": {Owner: "alice"}, "dm-bob": {Owner: "bob"},
+		"team": {Owner: "alice", Conversation: "-5"}, "games": {Owner: "alice", Conversation: "-6/42"},
+	})
+	l.SetProviders(map[string]string{"dm-alice": "tg", "dm-bob": "tg", "team": "tg", "games": "tg"})
+	l.SetGroups(map[string]map[string]Group{
+		"team":  {"-5": {Name: "team", Policy: PolicyOperators}},
+		"games": {"-6": {Name: "games-group", Policy: PolicyOperators}},
+	})
+	l.SetDefaults(mapDefaults{"dm-alice": "a", "dm-bob": "b", "team": "c", "games": "d"})
+	l.SetChannelIDs(map[string]int{"dm-alice": 1, "dm-bob": 2, "team": 3, "games": 4})
+	return l, r, id, rc
+}
+
+func viaProvider(sender, conv, text string) ChannelInbound {
+	in := from(sender, conv, text)
+	in.Channel, in.Provider, in.Target = "", "tg", core.Target{}
+	return in
+}
+
+func TestAProvidersInboundIsPlacedInTheChannelThatIsItsConversation(t *testing.T) {
+	l, r, _, rc := providerSetup(t)
+	for _, c := range []struct{ sender, conv, agent string }{
+		{"op", "", "a"},      // alice, privately: her private channel
+		{"op3", "", "b"},     // bob, privately: his
+		{"op", "-5", "c"},    // alice in the group
+		{"op", "-6/42", "d"}, // alice in the topic
+	} {
+		res := receive(t, l, viaProvider(c.sender, c.conv, "hi"))
+		require.NotNil(t, res.Delivery, c)
+		assert.Equal(t, []string{c.agent}, r.to[len(r.to)-1], c)
+	}
+	assert.Empty(t, rc.got)
+
+	for _, in := range []ChannelInbound{
+		viaProvider("stranger", "", "who are you"),
+		viaProvider("op", "-6/7", "another topic"),
+		viaProvider("op", "-9", "another group"),
+		viaProvider("op3", "-5", "bob in alice's group"),
+	} {
+		assert.Equal(t, ChannelResult{}, receive(t, l, in), in.Text)
+	}
+	assert.Equal(t, []rec{
+		{"tg", "stranger", RecordMessage, "no channel is this conversation: private", "who are you"},
+		{"tg", "op", RecordMessage, "no channel is this conversation: -6/7", "another topic"},
+		{"tg", "op", RecordMessage, "no channel is this conversation: -9", "another group"},
+		{"team", "op3", RecordMessage, "not the channel's owner", "bob in alice's group"},
+	}, rc.got, "what is no channel's is recorded under the provider's name; a stranger in a channel under the channel's")
+}
+
+func TestAnInboundIsPlacedOnlyAmongItsOwnProvidersChannels(t *testing.T) {
+	l, r, _, _ := providerSetup(t)
+	// another provider's channel, sorting first, in the same group
+	l.SetScopes(map[string]Scope{"elsewhere": {Owner: "alice", Conversation: "-5"}, "team": {Owner: "alice", Conversation: "-5"}})
+	l.SetProviders(map[string]string{"elsewhere": "tg2", "team": "tg"})
+	l.SetGroups(map[string]map[string]Group{"elsewhere": {"-5": {Name: "x", Policy: PolicyOperators}}, "team": {"-5": {Name: "team", Policy: PolicyOperators}}})
+	l.SetDefaults(mapDefaults{"elsewhere": "b", "team": "c"})
+	require.NotNil(t, receive(t, l, viaProvider("op", "-5", "hi")).Delivery)
+	assert.Equal(t, []string{"c"}, r.to[len(r.to)-1], "tg's channel, not tg2's")
+}
+
+func TestARegistrationOnAProviderBindsTheSenderThere(t *testing.T) {
+	l, _, id, _ := providerSetup(t)
+	in := viaProvider("new", "", "SEC")
+	in.Registration = true
+	assert.Equal(t, ReplyRegistered, receive(t, l, in).Reply)
+	assert.Equal(t, "alice", id.bound["tg\x00new"], "bound on the provider, whichever channel the sender writes in")
+}
+
+func TestAPrivatePressOnAProviderIsTheOwnersChannelThatShowedIt(t *testing.T) {
+	l, _, id, rc := providerSetup(t)
+	l.SetScopes(map[string]Scope{"team": {Owner: "alice", Conversation: "-5"}, "games": {Owner: "alice", Conversation: "-6/42"}})
+	id.bound["tg\x00op"] = "alice"
+	l.SetCompositeWindow(10)
+	l.noteComposite("team", "900:7", "m1")
+	press := viaProvider("op", "", "not a command")
+	press.Press, press.Pressed = true, "900:7"
+	assert.Equal(t, ReplyNotACommand, receive(t, l, press).Reply, "alice has no private channel: her press is the channel that asked")
+	assert.Equal(t, "team", rc.got[0].channel, "the channel whose message was pressed, not merely the first of hers")
+
+	unknown := viaProvider("op", "", "not a command")
+	unknown.Press, unknown.Pressed = true, "900:99"
+	receive(t, l, unknown)
+	assert.Equal(t, "games", rc.got[1].channel, "a message that can't be told is placed in her first channel, by name")
+
+	text := viaProvider("op", "", "hello")
+	assert.Equal(t, ChannelResult{}, receive(t, l, text), "only a press is placed so")
+}

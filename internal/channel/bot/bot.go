@@ -63,12 +63,14 @@ const endpointSuffix = "/bot{token}/{method}"
 
 // Bot is the adapter.
 type Bot struct {
-	name  string
-	token string
-	h     adapter.Handler
-	poll  time.Duration
-	limit int
-	api   *api.Bot
+	// name is the provider's name; channels are the channels it carries.
+	name     string
+	channels []string
+	token    string
+	h        adapter.Handler
+	poll     time.Duration
+	limit    int
+	api      *api.Bot
 
 	self int64 // the bot's own user id, read from its credential; 0 if unknown
 
@@ -148,10 +150,10 @@ func newBot(spec adapter.Spec, h adapter.Handler) (*Bot, error) {
 		return nil, err
 	}
 	if strings.TrimSpace(spec.Credential) == "" {
-		return nil, errors.New("the channel has no credential")
+		return nil, errors.New("the provider has no credential")
 	}
 	b := &Bot{
-		name: spec.Name, token: spec.Credential, h: h,
+		name: spec.Name, channels: spec.Channels, token: spec.Credential, h: h,
 		poll: set.poll, limit: set.limit, last: map[string]core.Target{},
 		shown: map[string][]shown{}, self: selfID(spec.Credential),
 	}
@@ -199,8 +201,46 @@ func intOption(o map[string]any, key string, def int) (int, error) {
 	return 0, fmt.Errorf("option %q must be a whole number", key)
 }
 
+// Channels are the channels the provider carries, each the layer's channel.
+func (b *Bot) Channels() []comm.Channel {
+	out := make([]comm.Channel, 0, len(b.channels))
+	for _, c := range b.channels {
+		out = append(out, b.For(c))
+	}
+	return out
+}
+
+// For is the provider's channel named channel: what it sends goes to the
+// conversations the layer names for that channel.
+func (b *Bot) For(channel string) *Face { return &Face{b: b, name: channel} }
+
+// Face is one channel the provider carries (ADR-0058 point 1): it sends the
+// channel's messages through the provider's one connection.
+type Face struct {
+	b    *Bot
+	name string
+}
+
 // Name is the channel's name.
-func (b *Bot) Name() string { return b.name }
+func (f *Face) Name() string { return f.name }
+
+// Send hands a message to the conversations the layer names for the channel.
+func (f *Face) Send(ctx context.Context, m core.Message) error {
+	_, err := f.SendNative(ctx, m)
+	return err
+}
+
+// SendNative is Send, returning the native id of the first piece sent to each
+// conversation, so a reply to it can be found again.
+func (f *Face) SendNative(ctx context.Context, m core.Message) ([]string, error) {
+	return f.b.sendNative(ctx, f.name, m)
+}
+
+// CloseActions removes the buttons from every copy of message id the provider
+// showed, on any of its channels; a second call for the same id does nothing.
+func (f *Face) CloseActions(ctx context.Context, id, outcome string) error {
+	return f.b.CloseActions(ctx, id, outcome)
+}
 
 // errTooLarge is a response past maxResponse.
 var errTooLarge = errors.New("response too large")
@@ -285,7 +325,7 @@ func (b *Bot) pollFailed(err error) {
 	if ctx != nil && ctx.Err() != nil {
 		return
 	}
-	slog.Warn("channel poll failed", "channel", b.name, "error", b.describe(err))
+	slog.Warn("channel poll failed", "provider", b.name, "error", b.describe(err))
 }
 
 func truncate(s string, n int) string {
@@ -423,7 +463,7 @@ func (b *Bot) handle(ctx context.Context, u *models.Update) {
 	}
 	sender := strconv.FormatInt(m.From.ID, 10)
 	at := addrOf(m)
-	in := comm.ChannelInbound{Channel: b.name, Sender: sender, SenderName: nameOf(m.From), Native: native(m.Chat.ID, m.ID), Raw: truncate(m.Text, 4096)}
+	in := comm.ChannelInbound{Provider: b.name, Sender: sender, SenderName: nameOf(m.From), Native: native(m.Chat.ID, m.ID), Raw: truncate(m.Text, 4096)}
 	if group {
 		in.Group, in.Conversation = true, at.String()
 	}
@@ -452,7 +492,7 @@ func (b *Bot) handle(ctx context.Context, u *models.Update) {
 	res, err := b.h.ReceiveFromChannel(ctx, in)
 	switch {
 	case errors.Is(err, comm.ErrRecord):
-		slog.Error("channel could not record a rejected inbound", "channel", b.name, "error", err)
+		slog.Error("channel could not record a rejected inbound", "provider", b.name, "error", err)
 	case errors.Is(err, core.ErrNoTarget):
 		b.reply(ctx, at, usage)
 	case err != nil:
@@ -482,7 +522,7 @@ func (b *Bot) deliverFile(ctx context.Context, at addr, group bool, from int64, 
 		to = addr{chat: from}
 	}
 	if err := b.sendFile(ctx, to, res.File, res.Reply); err != nil {
-		slog.Warn("channel could not send a file", "channel", b.name, "error", err)
+		slog.Warn("channel could not send a file", "provider", b.name, "error", err)
 		if group {
 			b.reply(ctx, at, fileNotSentPrivately)
 			return
@@ -515,9 +555,9 @@ func (b *Bot) notice(ctx context.Context, m *models.Message) bool {
 		return false
 	}
 	for _, in := range ins {
-		in.Channel, in.Group = b.name, true
+		in.Provider, in.Group = b.name, true
 		if _, err := b.h.ReceiveFromChannel(ctx, in); err != nil {
-			slog.Error("channel could not record a rejected inbound", "channel", b.name, "error", err)
+			slog.Error("channel could not record a rejected inbound", "provider", b.name, "error", err)
 		}
 	}
 	return true
@@ -542,7 +582,7 @@ func fitsPressAnswer(s string) bool {
 
 func (b *Bot) reply(ctx context.Context, at addr, text string) {
 	if _, err := b.send(ctx, at, piece{text: text}, nil); err != nil {
-		slog.Warn("channel could not reply", "channel", b.name, "error", err)
+		slog.Warn("channel could not reply", "provider", b.name, "error", err)
 	}
 }
 
@@ -555,7 +595,7 @@ func (b *Bot) send(ctx context.Context, at addr, p piece, keys models.ReplyMarku
 	params := &api.SendMessageParams{ChatID: at.chat, MessageThreadID: at.topic, Text: p.text, Entities: p.ents, ReplyMarkup: keys}
 	m, err := b.api.SendMessage(ctx, params)
 	if err != nil && len(p.ents) > 0 && errors.Is(err, api.ErrorBadRequest) {
-		slog.Warn("channel's formatting was refused, sending the message as plain text", "channel", b.name, "error", b.describe(err))
+		slog.Warn("channel's formatting was refused, sending the message as plain text", "provider", b.name, "error", b.describe(err))
 		params.Entities = nil
 		m, err = b.api.SendMessage(ctx, params)
 	}
@@ -565,26 +605,21 @@ func (b *Bot) send(ctx context.Context, at addr, p piece, keys models.ReplyMarku
 	return m.ID, nil
 }
 
-// Send hands a message to the conversations the layer names.
-func (b *Bot) Send(ctx context.Context, m core.Message) error {
-	_, err := b.SendNative(ctx, m)
-	return err
-}
-
-// SendNative is Send, returning the native id of the first piece sent to each
-// conversation, so a reply to it can be found again. The message's actions are
-// buttons under its last piece, in a group as in a private conversation.
-func (b *Bot) SendNative(ctx context.Context, m core.Message) ([]string, error) {
+// sendNative sends a channel's message to the conversations the layer names for
+// it, returning the native id of the first piece sent to each. The message's
+// actions are buttons under its last piece, in a group as in a private
+// conversation.
+func (b *Bot) sendNative(ctx context.Context, channel string, m core.Message) ([]string, error) {
 	var natives []string
 	var errs []error
 	keys := keyboard(m.Actions)
-	for _, to := range b.h.Destinations(b.name, m) {
+	for _, to := range b.h.Destinations(channel, m) {
 		at, err := parseAddr(to)
 		if err != nil {
 			errs = append(errs, err)
 			continue
 		}
-		pieces := pieces(b.compose(m, to), b.limit)
+		pieces := pieces(b.compose(channel, m, to), b.limit)
 		for i, p := range pieces {
 			var markup models.ReplyMarkup
 			if keys != nil && i == len(pieces)-1 {
@@ -609,8 +644,8 @@ func (b *Bot) SendNative(ctx context.Context, m core.Message) ([]string, error) 
 // line is the text a message is shown as in a conversation: its sender's name
 // before it, except for that conversation's default agent, which speaks as the
 // channel's own voice (ADR-0023 point 5, ADR-0038 point 5).
-func (b *Bot) line(m core.Message, conversation string) string {
-	if agent, ok := b.h.DefaultAgentIn(b.name, conversation); ok && agent == m.Sender && m.Label == "" {
+func (b *Bot) line(channel string, m core.Message, conversation string) string {
+	if agent, ok := b.h.DefaultAgentIn(channel, conversation); ok && agent == m.Sender && m.Label == "" {
 		return m.Text
 	}
 	return m.Shown()
@@ -776,7 +811,7 @@ func (b *Bot) press(ctx context.Context, q *models.CallbackQuery) {
 	defer func() {
 		if !fitsPressAnswer(answer) {
 			if _, err := b.send(ctx, addr{chat: q.From.ID}, piece{text: answer}, nil); err != nil {
-				slog.Warn("channel could not send a press's answer to the presser's private chat", "channel", b.name, "error", err)
+				slog.Warn("channel could not send a press's answer to the presser's private chat", "provider", b.name, "error", err)
 			} else {
 				answer = pressAnsweredPrivately
 			}
@@ -784,14 +819,14 @@ func (b *Bot) press(ctx context.Context, q *models.CallbackQuery) {
 		if _, err := b.api.AnswerCallbackQuery(ctx, &api.AnswerCallbackQueryParams{
 			CallbackQueryID: q.ID, Text: truncate(answer, maxPressAnswer),
 		}); err != nil {
-			slog.Warn("channel could not answer a press", "channel", b.name, "error", b.describe(err))
+			slog.Warn("channel could not answer a press", "provider", b.name, "error", b.describe(err))
 		}
 	}()
 	if q.From.IsBot || q.From.ID == 0 || q.Data == "" {
 		return
 	}
 	in := comm.ChannelInbound{
-		Channel: b.name, Sender: strconv.FormatInt(q.From.ID, 10), SenderName: nameOf(&q.From),
+		Provider: b.name, Sender: strconv.FormatInt(q.From.ID, 10), SenderName: nameOf(&q.From),
 		Text: q.Data, Raw: truncate(q.Data, 4096), Press: true,
 	}
 	var where *models.Chat
@@ -821,14 +856,14 @@ func (b *Bot) press(ctx context.Context, q *models.CallbackQuery) {
 	res, err := b.h.ReceiveFromChannel(ctx, in)
 	switch {
 	case errors.Is(err, comm.ErrRecord):
-		slog.Error("channel could not record a rejected inbound", "channel", b.name, "error", err)
+		slog.Error("channel could not record a rejected inbound", "provider", b.name, "error", err)
 	case err != nil:
 		answer = err.Error()
 	case res.File != nil:
 		// A file goes to the presser's private chat, whoever else saw the
 		// button (ADR-0052 point 4).
 		if err := b.sendFile(ctx, addr{chat: q.From.ID}, res.File, res.Reply); err != nil {
-			slog.Warn("channel could not send a file", "channel", b.name, "error", err)
+			slog.Warn("channel could not send a file", "provider", b.name, "error", err)
 			answer = "the file could not be sent to your private chat with the bot: " + err.Error()
 		} else {
 			answer = pressAnsweredPrivately

@@ -77,7 +77,7 @@ func TestWhatIsNotATopicsIsTheConversationItWasBefore(t *testing.T) {
 func TestOutputIsSentIntoATopicOnlyWhereTheLayerNamesOne(t *testing.T) {
 	s, h := newServer(t), &handler{recipients: []string{"-500/42", "-500", "900", "-500/x"}}
 	b, _ := start(t, s, h, nil)
-	err := b.Send(context.Background(), core.Message{Sender: "pao", Text: "hello"})
+	err := b.For("chat").Send(context.Background(), core.Message{Sender: "pao", Text: "hello"})
 	require.Error(t, err, "a destination that names no topic by its id")
 	assert.Contains(t, err.Error(), `"-500/x"`)
 	assert.Equal(t, [][3]string{{"-500", "42", "[pao]: hello"}, {"-500", "", "[pao]: hello"}, {"900", "", "[pao]: hello"}}, s.sends())
@@ -116,7 +116,7 @@ func TestAConversationsDefaultSpeaksUnprefixedThereAndNamedElsewhere(t *testing.
 	s := newServer(t)
 	h := &handler{recipients: []string{"-500/42", "-500"}, defaults: map[string]string{"chat/-500/42": "rules", "chat": "other"}}
 	b, _ := start(t, s, h, nil)
-	require.NoError(t, b.Send(context.Background(), core.Message{Sender: "rules", Text: "answer"}))
+	require.NoError(t, b.For("chat").Send(context.Background(), core.Message{Sender: "rules", Text: "answer"}))
 	assert.Equal(t, [][3]string{{"-500", "42", "answer"}, {"-500", "", "[rules]: answer"}}, s.sends())
 }
 

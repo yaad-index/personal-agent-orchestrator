@@ -83,7 +83,7 @@ func (l *Layer) originMay(o origin, m core.Message) bool {
 	if g, ok := l.group(o.channel, o.conversation); ok {
 		return l.readersMay(g.Policy, m)
 	}
-	return slices.Contains(l.identity.Operators(o.channel), o.conversation) && l.readersMay(PolicyOperators, m)
+	return slices.Contains(l.identity.Operators(l.providerOf(o.channel)), o.conversation) && l.readersMay(PolicyOperators, m)
 }
 
 // conversationName names a conversation the way the operator does (ADR-0029
@@ -93,7 +93,7 @@ func (l *Layer) conversationName(o origin) string {
 	if g, ok := l.group(o.channel, o.conversation); ok {
 		return "group:" + g.Name
 	}
-	if subject, ok := l.identity.Resolve(o.channel, o.conversation); ok {
+	if subject, ok := l.identity.Resolve(l.providerOf(o.channel), o.conversation); ok {
 		return "private:" + subject + "@" + o.channel
 	}
 	return o.conversation

@@ -372,16 +372,18 @@ func TestChannelsRejects(t *testing.T) {
 	ok := "    provider: tg\n    owner: alice\n    target: private\n"
 	ok2 := "    provider: tg2\n    owner: alice\n    target: private\n"
 	for name, c := range map[string]struct{ body, want string }{
-		"no id":              {"channels:\n  - name: chat\n" + ok, "id must be a positive integer"},
-		"zero id":            {"channels:\n  - id: 0\n    name: chat\n" + ok, "id must be a positive integer"},
-		"negative id":        {"channels:\n  - id: -3\n    name: chat\n" + ok, "id must be a positive integer"},
-		"no name":            {"channels:\n  - id: 1\n" + ok, "name"},
-		"bad name":           {"channels:\n  - id: 1\n    name: Chat Room\n" + ok, "name"},
-		"long name":          {"channels:\n  - id: 1\n    name: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n" + ok, "name"},
-		"reserved name":      {"channels:\n  - id: 1\n    name: local\n" + ok, "reserved"},
-		"no provider":        {"channels:\n  - id: 1\n    name: chat\n    owner: alice\n    target: private\n", `provider "" is not configured`},
-		"unknown provider":   {"channels:\n  - id: 1\n    name: chat\n    provider: nope\n    owner: alice\n    target: private\n", `provider "nope" is not configured`},
-		"shared provider":    {"channels:\n  - id: 1\n    name: a\n" + ok + "  - id: 2\n    name: b\n" + ok, `provider "tg" already carries channel "a"`},
+		"no id":            {"channels:\n  - name: chat\n" + ok, "id must be a positive integer"},
+		"zero id":          {"channels:\n  - id: 0\n    name: chat\n" + ok, "id must be a positive integer"},
+		"negative id":      {"channels:\n  - id: -3\n    name: chat\n" + ok, "id must be a positive integer"},
+		"no name":          {"channels:\n  - id: 1\n" + ok, "name"},
+		"bad name":         {"channels:\n  - id: 1\n    name: Chat Room\n" + ok, "name"},
+		"long name":        {"channels:\n  - id: 1\n    name: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n" + ok, "name"},
+		"reserved name":    {"channels:\n  - id: 1\n    name: local\n" + ok, "reserved"},
+		"no provider":      {"channels:\n  - id: 1\n    name: chat\n    owner: alice\n    target: private\n", `provider "" is not configured`},
+		"unknown provider": {"channels:\n  - id: 1\n    name: chat\n    provider: nope\n    owner: alice\n    target: private\n", `provider "nope" is not configured`},
+		"two private":      {"channels:\n  - id: 1\n    name: a\n" + ok + "  - id: 2\n    name: b\n" + ok, `alice's private conversation on provider "tg" is already channel "a"`},
+		"one group twice": {"channels:\n  - id: 1\n    name: a\n    provider: tg\n    owner: alice\n    target: \"-5\"\n    groups:\n      - id: \"-5\"\n        name: g1\n        members: operators\n" +
+			"  - id: 2\n    name: b\n    provider: tg\n    owner: bob\n    target: \"-5\"\n    groups:\n      - id: \"-5\"\n        name: g2\n        members: operators\n", `target "-5" on provider "tg" is already channel "a"`},
 		"its own kind":       {"channels:\n  - id: 1\n    name: chat\n    kind: bot\n" + ok, "kind"},
 		"its own credential": {"channels:\n  - id: 1\n    name: chat\n    credential_env: PAO_BOT\n" + ok, "credential_env"},
 		"duplicate id":       {"channels:\n  - id: 1\n    name: a\n" + ok + "  - id: 1\n    name: b\n" + ok2, "id 1 is already channel"},
@@ -392,6 +394,20 @@ func TestChannelsRejects(t *testing.T) {
 		require.Error(t, err, name)
 		assert.Contains(t, err.Error(), c.want, name)
 	}
+}
+
+func TestAProviderCarriesManyChannelsEachItsOwnConversation(t *testing.T) {
+	provs := "providers:\n  - name: tg\n    kind: bot\n    credential_env: PAO_BOT\n"
+	group := func(id, name, target string) string {
+		return "    target: \"" + target + "\"\n    groups:\n      - id: \"" + id + "\"\n        name: " + name + "\n        members: operators\n"
+	}
+	_, err := channelsConfig(t, provs+"channels:\n"+
+		"  - id: 1\n    name: dm-alice\n    provider: tg\n    owner: alice\n    target: private\n"+
+		"  - id: 2\n    name: dm-bob\n    provider: tg\n    owner: bob\n    target: private\n"+
+		"  - id: 3\n    name: team\n    provider: tg\n    owner: alice\n"+group("-5", "team", "-5")+
+		"  - id: 4\n    name: games\n    provider: tg\n    owner: alice\n"+group("-6", "games-group", "-6/42")+
+		"  - id: 5\n    name: news\n    provider: tg\n    owner: bob\n"+group("-6", "news-group", "-6/7"))
+	require.NoError(t, err, "one private channel per owner, and each group or topic once, on one provider")
 }
 
 func TestProvidersRejects(t *testing.T) {
