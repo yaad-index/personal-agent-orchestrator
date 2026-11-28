@@ -321,7 +321,7 @@ func spec(s *server, opts map[string]any) adapter.Spec {
 	for k, v := range opts {
 		o[k] = v
 	}
-	return adapter.Spec{ID: 1, Name: "chat", Kind: "bot", Credential: tok, Options: o}
+	return adapter.Spec{Name: "chat", Kind: "bot", Credential: tok, Options: o, Channels: []string{"chat"}}
 }
 
 func start(t *testing.T, s *server, h *handler, opts map[string]any) (*Bot, context.CancelFunc) {
@@ -376,9 +376,11 @@ func TestNewNeedsAnEndpointWithTokenAndMethodAndKnowsItsOptions(t *testing.T) {
 	assert.NoError(t, CheckOptions(good))
 	_, err := New(adapter.Spec{Name: "chat", Options: good}, &handler{})
 	require.ErrorContains(t, err, "credential", "no credential")
-	a, err := New(adapter.Spec{Name: "chat", Credential: tok, Options: map[string]any{"endpoint": good["endpoint"], "poll_timeout": 5.0, "message_limit": uint64(500)}}, &handler{})
+	a, err := New(adapter.Spec{Name: "tg", Credential: tok, Options: map[string]any{"endpoint": good["endpoint"], "poll_timeout": 5.0, "message_limit": uint64(500)}, Channels: []string{"chat", "team"}}, &handler{})
 	require.NoError(t, err)
-	assert.Equal(t, "chat", a.Name())
+	require.Len(t, a.Channels(), 2)
+	assert.Equal(t, "chat", a.Channels()[0].Name())
+	assert.Equal(t, "team", a.Channels()[1].Name())
 	assert.Equal(t, 500, a.(*Bot).limit)
 	assert.Equal(t, 5*time.Second, a.(*Bot).poll)
 }
@@ -390,7 +392,7 @@ func TestAPrivateMessageReachesTheLayerWithTheServicesSenderIdAndNativeIds(t *te
 	waitFor(t, func() bool { return len(h.inbound()) == 1 }, "inbound")
 
 	in := h.inbound()[0]
-	assert.Equal(t, comm.ChannelInbound{Channel: "chat", Sender: "900", Native: "900:55", Text: "/pao bee hello there", Raw: "/pao bee hello there"}, in,
+	assert.Equal(t, comm.ChannelInbound{Provider: "chat", Sender: "900", Native: "900:55", Text: "/pao bee hello there", Raw: "/pao bee hello there"}, in,
 		"a command goes to the layer whole: the layer reads it")
 }
 
@@ -411,9 +413,9 @@ func TestAGroupTextGoesToTheLayerWithItsConversationAndASecretIsNeverPassedOn(t 
 	start(t, s, h, nil)
 	waitFor(t, func() bool { return len(h.inbound()) == 3 }, "all three")
 	got := h.inbound()
-	assert.Equal(t, comm.ChannelInbound{Channel: "chat", Sender: "900", Native: "-500:1", Text: "@bee hi", Raw: "@bee hi", Group: true, Conversation: "-500"}, got[0],
+	assert.Equal(t, comm.ChannelInbound{Provider: "chat", Sender: "900", Native: "-500:1", Text: "@bee hi", Raw: "@bee hi", Group: true, Conversation: "-500"}, got[0],
 		"the sender is the person, the conversation the group")
-	assert.Equal(t, comm.ChannelInbound{Channel: "chat", Sender: "901", Native: "-500:2", Registration: true, Group: true, Conversation: "-500"}, got[1],
+	assert.Equal(t, comm.ChannelInbound{Provider: "chat", Sender: "901", Native: "-500:2", Registration: true, Group: true, Conversation: "-500"}, got[1],
 		"a registration from a group carries no secret: the layer refuses it, and it is not kept")
 	assert.Equal(t, "-500:1", got[2].ReplyNative)
 	s.mu.Lock()
@@ -467,7 +469,7 @@ func TestAGroupsMoveIsHandedToTheLayerWithBothIds(t *testing.T) {
 	s.queue(to, from)
 	start(t, s, h, nil)
 	waitFor(t, func() bool { return len(h.inbound()) == 2 }, "both reports")
-	want := comm.ChannelInbound{Channel: "chat", Sender: "-500", Group: true, Conversation: "-500", MovedTo: "-1009"}
+	want := comm.ChannelInbound{Provider: "chat", Sender: "-500", Group: true, Conversation: "-500", MovedTo: "-1009"}
 	assert.Equal(t, []comm.ChannelInbound{want, want}, h.inbound(), "the old group's report and the new one's say the same")
 }
 
@@ -479,8 +481,8 @@ func TestAJoinIsHandedToTheLayerForEachMemberButTheBotItself(t *testing.T) {
 	start(t, s, h, nil)
 	waitFor(t, func() bool { return len(h.inbound()) == 3 }, "two joins and the private message")
 	in := h.inbound()
-	assert.Equal(t, comm.ChannelInbound{Channel: "chat", Sender: "777", Group: true, Conversation: "-500", Join: true}, in[0])
-	assert.Equal(t, comm.ChannelInbound{Channel: "chat", Sender: "888", Group: true, Conversation: "-500", Join: true}, in[1],
+	assert.Equal(t, comm.ChannelInbound{Provider: "chat", Sender: "777", Group: true, Conversation: "-500", Join: true}, in[0])
+	assert.Equal(t, comm.ChannelInbound{Provider: "chat", Sender: "888", Group: true, Conversation: "-500", Join: true}, in[1],
 		"another bot is a reader too; only this bot, whose id the credential carries, is left out")
 	assert.Equal(t, "900", in[2].Sender)
 }
@@ -654,21 +656,21 @@ func TestPaoOutputGoesToEachRecipientAsALineAndIsNamedByTheFirstPiece(t *testing
 	s, h := newServer(t), &handler{recipients: []string{"900", "901"}}
 	b, err := newBot(spec(s, nil), h)
 	require.NoError(t, err)
-	natives, err := b.SendNative(context.Background(), core.Message{Sender: "bee", Text: "done"})
+	natives, err := b.For("chat").SendNative(context.Background(), core.Message{Sender: "bee", Text: "done"})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"[bee]: done"}, s.sentTo(900))
 	assert.Equal(t, []string{"[bee]: done"}, s.sentTo(901))
 	assert.Equal(t, []string{"900:101", "901:102"}, natives)
-	require.NoError(t, b.Send(context.Background(), core.Message{Sender: "bee", Text: "again"}))
+	require.NoError(t, b.For("chat").Send(context.Background(), core.Message{Sender: "bee", Text: "again"}))
 }
 
 func TestTheChannelsDefaultAgentSpeaksUnprefixedAndAnyOtherIsNamed(t *testing.T) {
 	s, h := newServer(t), &handler{recipients: []string{"900"}, defaults: map[string]string{"chat": "bee", "other": "wasp"}}
 	b, err := newBot(spec(s, nil), h)
 	require.NoError(t, err)
-	require.NoError(t, b.Send(context.Background(), core.Message{Sender: "bee", Text: "from the default"}))
-	require.NoError(t, b.Send(context.Background(), core.Message{Sender: "wasp", Text: "from another"}))
-	require.NoError(t, b.Send(context.Background(), core.Message{Sender: "beetle", Text: "a longer name"}))
+	require.NoError(t, b.For("chat").Send(context.Background(), core.Message{Sender: "bee", Text: "from the default"}))
+	require.NoError(t, b.For("chat").Send(context.Background(), core.Message{Sender: "wasp", Text: "from another"}))
+	require.NoError(t, b.For("chat").Send(context.Background(), core.Message{Sender: "beetle", Text: "a longer name"}))
 	assert.Equal(t, []string{"from the default", "[wasp]: from another", "[beetle]: a longer name"}, s.sentTo(900),
 		"only this channel's default drops the prefix; another channel's default is named here")
 }
@@ -677,8 +679,8 @@ func TestALabelReplacesTheNameEvenForTheDefaultAgent(t *testing.T) {
 	s, h := newServer(t), &handler{recipients: []string{"900"}, defaults: map[string]string{"chat": "bee"}}
 	b, err := newBot(spec(s, nil), h)
 	require.NoError(t, err)
-	require.NoError(t, b.Send(context.Background(), core.Message{Sender: "bee", Text: "one", Label: "TA:"}))
-	require.NoError(t, b.Send(context.Background(), core.Message{Sender: "wasp", Text: "two", Label: "W"}))
+	require.NoError(t, b.For("chat").Send(context.Background(), core.Message{Sender: "bee", Text: "one", Label: "TA:"}))
+	require.NoError(t, b.For("chat").Send(context.Background(), core.Message{Sender: "wasp", Text: "two", Label: "W"}))
 	assert.Equal(t, []string{"TA: one", "W two"}, s.sentTo(900))
 }
 
@@ -687,7 +689,7 @@ func TestALongMessageIsSplitAtTheConfiguredLimitAndNamedByItsFirstPiece(t *testi
 	b, err := newBot(spec(s, map[string]any{"message_limit": 100}), h)
 	require.NoError(t, err)
 	text := strings.Repeat("word ", 50)
-	natives, err := b.SendNative(context.Background(), core.Message{Sender: "bee", Text: text})
+	natives, err := b.For("chat").SendNative(context.Background(), core.Message{Sender: "bee", Text: text})
 	require.NoError(t, err)
 	parts := s.sentTo(900)
 	require.Greater(t, len(parts), 2)
@@ -703,13 +705,13 @@ func TestOneRecipientBlockingTheBotDoesNotStopTheRest(t *testing.T) {
 	s.failSend[900] = true
 	b, err := newBot(spec(s, nil), h)
 	require.NoError(t, err)
-	natives, err := b.SendNative(context.Background(), core.Message{Sender: "bee", Text: "x"})
+	natives, err := b.For("chat").SendNative(context.Background(), core.Message{Sender: "bee", Text: "x"})
 	require.Error(t, err)
 	assert.Equal(t, []string{"[bee]: x"}, s.sentTo(901))
 	assert.Equal(t, []string{"901:101"}, natives, "what went out is still named")
 
 	h.recipients = []string{"not-a-chat"}
-	_, err = b.SendNative(context.Background(), core.Message{Sender: "bee", Text: "x"})
+	_, err = b.For("chat").SendNative(context.Background(), core.Message{Sender: "bee", Text: "x"})
 	require.Error(t, err)
 }
 
@@ -839,7 +841,7 @@ func TestAMessagesActionsAreButtonsUnderItsLastPieceCarryingTheirCommands(t *tes
 	s, h := newServer(t), &handler{recipients: []string{"900", "901"}}
 	b, err := newBot(spec(s, map[string]any{"message_limit": 100}), h)
 	require.NoError(t, err)
-	_, err = b.SendNative(context.Background(), core.Message{ID: "m7", Sender: "pao", Text: strings.Repeat("word ", 30), Actions: gateActions})
+	_, err = b.For("chat").SendNative(context.Background(), core.Message{ID: "m7", Sender: "pao", Text: strings.Repeat("word ", 30), Actions: gateActions})
 	require.NoError(t, err)
 	sent := s.snapshot(&s.sent)
 	require.Len(t, sent, 4, "two pieces to each of two recipients")
@@ -852,7 +854,7 @@ func TestAMessagesActionsAreButtonsUnderItsLastPieceCarryingTheirCommands(t *tes
 		}
 	}
 
-	require.NoError(t, b.Send(context.Background(), core.Message{ID: "m8", Sender: "pao", Text: "plain"}))
+	require.NoError(t, b.For("chat").Send(context.Background(), core.Message{ID: "m8", Sender: "pao", Text: "plain"}))
 	assert.Nil(t, buttons(t, s.snapshot(&s.sent)[4]), "a message with no actions has no buttons")
 }
 
@@ -861,7 +863,7 @@ func TestAnActionThatDoesNotFitAButtonGetsNone(t *testing.T) {
 	b, err := newBot(spec(s, nil), h)
 	require.NoError(t, err)
 	fits := "/pao allow " + strings.Repeat("x", maxPayload-len("/pao allow "))
-	require.NoError(t, b.Send(context.Background(), core.Message{ID: "m1", Sender: "pao", Text: "q", Actions: []core.Action{
+	require.NoError(t, b.For("chat").Send(context.Background(), core.Message{ID: "m1", Sender: "pao", Text: "q", Actions: []core.Action{
 		{Label: "FITS", Command: fits},
 		{Label: "LONG", Command: fits + "x"},
 		{Label: "", Command: "/pao deny q1"},
@@ -869,7 +871,7 @@ func TestAnActionThatDoesNotFitAButtonGetsNone(t *testing.T) {
 	}}))
 	assert.Equal(t, [][2]string{{"FITS", fits}}, buttons(t, s.snapshot(&s.sent)[0]))
 
-	require.NoError(t, b.Send(context.Background(), core.Message{ID: "m2", Sender: "pao", Text: "q", Actions: []core.Action{{Label: "LONG", Command: fits + "x"}}}))
+	require.NoError(t, b.For("chat").Send(context.Background(), core.Message{ID: "m2", Sender: "pao", Text: "q", Actions: []core.Action{{Label: "LONG", Command: fits + "x"}}}))
 	assert.Nil(t, buttons(t, s.snapshot(&s.sent)[1]), "no button at all when none fits")
 	require.NoError(t, b.CloseActions(context.Background(), "m2", "denied"))
 	assert.Empty(t, s.snapshot(&s.edits), "nothing was shown with buttons, so nothing is closed")
@@ -879,8 +881,8 @@ func TestClosingRemovesTheButtonsFromEveryCopyAndShowsTheOutcomeOnce(t *testing.
 	s, h := newServer(t), &handler{recipients: []string{"900", "901"}}
 	b, err := newBot(spec(s, nil), h)
 	require.NoError(t, err)
-	require.NoError(t, b.Send(context.Background(), core.Message{ID: "m7", Sender: "pao", Text: "may I?", Actions: gateActions}))
-	require.NoError(t, b.Send(context.Background(), core.Message{ID: "m8", Sender: "pao", Text: "and this?", Actions: gateActions}))
+	require.NoError(t, b.For("chat").Send(context.Background(), core.Message{ID: "m7", Sender: "pao", Text: "may I?", Actions: gateActions}))
+	require.NoError(t, b.For("chat").Send(context.Background(), core.Message{ID: "m8", Sender: "pao", Text: "and this?", Actions: gateActions}))
 
 	require.NoError(t, b.CloseActions(context.Background(), "m7", "allowed"))
 	edits := s.snapshot(&s.edits)
@@ -901,7 +903,7 @@ func TestAFailedCloseIsReportedInTheAdaptersWords(t *testing.T) {
 	s, h := newServer(t), &handler{recipients: []string{"900"}}
 	b, err := newBot(spec(s, nil), h)
 	require.NoError(t, err)
-	require.NoError(t, b.Send(context.Background(), core.Message{ID: "m7", Sender: "pao", Text: "may I?", Actions: gateActions}))
+	require.NoError(t, b.For("chat").Send(context.Background(), core.Message{ID: "m7", Sender: "pao", Text: "may I?", Actions: gateActions}))
 	s.mu.Lock()
 	s.failEdit = true
 	s.mu.Unlock()
@@ -925,7 +927,7 @@ func TestOnlyTheNewestMessagesButtonsAreKeptForClosing(t *testing.T) {
 	b, err := newBot(spec(s, nil), h)
 	require.NoError(t, err)
 	for i := 0; i <= maxShown; i++ {
-		require.NoError(t, b.Send(context.Background(), core.Message{ID: "m" + strconv.Itoa(i), Sender: "pao", Text: "q", Actions: gateActions}))
+		require.NoError(t, b.For("chat").Send(context.Background(), core.Message{ID: "m" + strconv.Itoa(i), Sender: "pao", Text: "q", Actions: gateActions}))
 	}
 	require.NoError(t, b.CloseActions(context.Background(), "m0", "expired"))
 	assert.Empty(t, s.snapshot(&s.edits), "the oldest was forgotten")
@@ -940,7 +942,7 @@ func TestAPressReachesTheLayerAsTheCommandFromThePresserAndIsAnsweredToThemAlone
 	waitFor(t, func() bool { return len(s.snapshot(&s.answers)) == 1 }, "the press is answered")
 	in := h.inbound()
 	require.Len(t, in, 1)
-	assert.Equal(t, comm.ChannelInbound{Channel: "chat", Sender: "42", Text: "/pao allow q1", Raw: "/pao allow q1", Press: true, Pressed: native(42, 101)}, in[0],
+	assert.Equal(t, comm.ChannelInbound{Provider: "chat", Sender: "42", Text: "/pao allow q1", Raw: "/pao allow q1", Press: true, Pressed: native(42, 101)}, in[0],
 		"the press is the command, from the service's sender of the press, with no target and no sticky address, naming the message pressed")
 	a := s.snapshot(&s.answers)[0]
 	assert.Equal(t, "cb1", a["callback_query_id"])

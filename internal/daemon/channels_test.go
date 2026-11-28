@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -16,6 +17,7 @@ import (
 	"github.com/yaad-index/personal-agent-orchestrator/internal/comm"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/config"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/identity"
 )
 
 // botFake is an adapter that does nothing but expose the handler it was given.
@@ -28,11 +30,25 @@ type botFake struct {
 	sent    []core.Message
 }
 
-func (b *botFake) Name() string { return b.spec.Name }
-func (b *botFake) Send(_ context.Context, m core.Message) error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.sent = append(b.sent, m)
+// Channels are the provider's channels, each sending into the fake's record.
+func (b *botFake) Channels() []comm.Channel {
+	var out []comm.Channel
+	for _, c := range b.spec.Channels {
+		out = append(out, fakeFace{b, c})
+	}
+	return out
+}
+
+type fakeFace struct {
+	b    *botFake
+	name string
+}
+
+func (f fakeFace) Name() string { return f.name }
+func (f fakeFace) Send(_ context.Context, m core.Message) error {
+	f.b.mu.Lock()
+	defer f.b.mu.Unlock()
+	f.b.sent = append(f.b.sent, m)
 	return nil
 }
 func (b *botFake) Run(ctx context.Context) error {
@@ -81,7 +97,7 @@ func TestAConfiguredChannelIsBuiltRunStoppedAndItsCredentialIsKeptFromAgents(t *
 	case <-time.After(5 * time.Second):
 		t.Fatal("the adapter was never run")
 	}
-	assert.Equal(t, adapter.Spec{ID: 1, Name: "chat", Kind: "bot", Credential: "s3cret"}, bot.spec)
+	assert.Equal(t, adapter.Spec{Name: "chat", Kind: "bot", Credential: "s3cret", Channels: []string{"chat"}}, bot.spec)
 	assert.Empty(t, os.Getenv("PAO_TEST_BOT_CRED"), "taken out of the environment, so an agent cannot read it")
 
 	ledger, err := os.ReadFile(filepath.Join(n.stateDir, "channels.json"))
@@ -219,4 +235,27 @@ func TestAGroupsNamedTopicsAreAdmittedWithTheGroupsPolicy(t *testing.T) {
 		"-5":    {Name: "team", Policy: comm.PolicyOperators},
 		"-5/42": {Name: "games", Policy: comm.PolicyOperators, Topic: true},
 	}}, got, "a topic of a group left out is left out with it")
+}
+
+type rekeyStub struct {
+	to  map[string]string
+	err error
+}
+
+func (r *rekeyStub) Rekey(to map[string]string, _ string) (int, error) {
+	r.to = to
+	return 0, r.err
+}
+
+func TestBindingsMoveOntoEachChannelsProviderAndAConflictSaysHowOut(t *testing.T) {
+	o := config.Orchestrator{StateDir: t.TempDir(), Channels: []config.Channel{{Name: "me", Provider: "tg"}, {Name: "team", Provider: "tg"}}}
+	r := &rekeyStub{}
+	require.NoError(t, rekeyIdentity(r, o))
+	assert.Equal(t, map[string]string{"me": "tg", "team": "tg"}, r.to)
+
+	r.err = fmt.Errorf("%w: sender \"7\" would be both alice and bob on tg", identity.ErrRekeyConflict)
+	err := rekeyIdentity(r, o)
+	require.ErrorIs(t, err, identity.ErrRekeyConflict)
+	assert.Contains(t, err.Error(), "nothing was changed")
+	assert.Contains(t, err.Error(), "providers of their own again")
 }

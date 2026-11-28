@@ -45,9 +45,9 @@ func (a *channelConfigAPI) List(context.Context) (local.ChannelConfigListJSON, e
 		Channels:    []local.ChannelConfigEntryJSON{},
 		Providers:   []local.ProviderJSON{},
 	}
-	carries := map[string]string{}
+	carries := map[string][]string{}
 	for _, c := range o.Channels {
-		carries[c.Provider] = c.Name
+		carries[c.Provider] = append(carries[c.Provider], c.Name)
 		i := slices.IndexFunc(a.running, func(r config.Channel) bool { return r.Name == c.Name })
 		applied := i >= 0 && reflect.DeepEqual(a.running[i], c)
 		out.RestartNeeded = out.RestartNeeded || !applied
@@ -63,7 +63,7 @@ func (a *channelConfigAPI) List(context.Context) (local.ChannelConfigListJSON, e
 		}
 	}
 	for _, p := range o.Providers {
-		out.Providers = append(out.Providers, local.ProviderJSON{Name: p.Name, Kind: p.Kind, Credential: a.credentialStatus(o, p), Channel: carries[p.Name]})
+		out.Providers = append(out.Providers, local.ProviderJSON{Name: p.Name, Kind: p.Kind, Credential: a.credentialStatus(o, p), Channels: carries[p.Name]})
 	}
 	return out, nil
 }

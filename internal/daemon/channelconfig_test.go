@@ -96,14 +96,14 @@ func TestTheChannelsAndProvidersAreListedAsTheNextStartWouldHaveThem(t *testing.
 		prov[p.Name] = p
 	}
 	assert.Len(t, l.Providers, 14)
-	assert.Equal(t, local.ProviderJSON{Name: "mine", Kind: "bot", Credential: local.CredentialStatusJSON{Resolves: true}, Channel: "mine"}, prov["mine"])
+	assert.Equal(t, local.ProviderJSON{Name: "mine", Kind: "bot", Credential: local.CredentialStatusJSON{Resolves: true}, Channels: []string{"mine"}}, prov["mine"])
 	assert.True(t, prov["via-file"].Credential.Resolves)
-	assert.Equal(t, "a", prov["via-file"].Channel)
+	assert.Equal(t, []string{"a"}, prov["via-file"].Channels)
 	assert.False(t, prov["via-var"].Credential.Resolves, "a variable set after start is not one pao starts with")
 	assert.Contains(t, prov["via-var"].Credential.Problem, "S_VAR is not set in the environment pao was started with")
 	assert.Contains(t, prov["via-blank"].Credential.Problem, "is empty")
 	assert.Contains(t, prov["unset"].Credential.Problem, "NOT_SET_VAR")
-	assert.Empty(t, prov["free1"].Channel)
+	assert.Empty(t, prov["free1"].Channels)
 
 	b, err := json.Marshal(l)
 	require.NoError(t, err)

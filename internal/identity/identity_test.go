@@ -1,6 +1,7 @@
 package identity
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -226,4 +227,94 @@ func TestOperatorsAreTheFlaggedSubjectsSendersOnThatChannelOnly(t *testing.T) {
 
 	require.NoError(t, s.SetOperator("alice", false))
 	assert.Empty(t, s.Operators("chat"), "cleared, it is read afresh")
+}
+
+func rekeySetup(t *testing.T) (*Store, string) {
+	t.Helper()
+	s := open(t)
+	for _, n := range []string{"alice", "bob"} {
+		require.NoError(t, s.AddSubject(n))
+	}
+	require.NoError(t, s.Bind("chat", "100", "alice"))
+	require.NoError(t, s.Bind("team", "100", "alice"))
+	require.NoError(t, s.Bind("team", "200", "bob"))
+	require.NoError(t, s.Bind("elsewhere", "300", "bob"))
+	return s, filepath.Join(t.TempDir(), "backup.db")
+}
+
+func TestRekeyMovesAChannelsSendersOntoItsProviderAndKeepsACopy(t *testing.T) {
+	s, backup := rekeySetup(t)
+	n, err := s.Rekey(map[string]string{"chat": "tg", "team": "tg", "same": "same"}, backup)
+	require.NoError(t, err)
+	assert.Equal(t, 3, n)
+	for sender, want := range map[string]string{"100": "alice", "200": "bob"} {
+		got, ok := s.Resolve("tg", sender)
+		assert.True(t, ok, sender)
+		assert.Equal(t, want, got, sender)
+	}
+	_, ok := s.Resolve("chat", "100")
+	assert.False(t, ok, "moved, not copied")
+	got, ok := s.Resolve("elsewhere", "300")
+	assert.True(t, ok, "a name not mapped is left alone")
+	assert.Equal(t, "bob", got)
+
+	old, err := Open(backup)
+	require.NoError(t, err)
+	defer func() { _ = old.Close() }()
+	got, ok = old.Resolve("chat", "100")
+	assert.True(t, ok, "the copy holds the store from before")
+	assert.Equal(t, "alice", got)
+
+	n, err = s.Rekey(map[string]string{"chat": "tg", "team": "tg"}, filepath.Join(t.TempDir(), "again.db"))
+	require.NoError(t, err)
+	assert.Zero(t, n, "run again, nothing moves")
+	_, err = os.Stat(filepath.Join(filepath.Dir(backup), "again.db"))
+	assert.True(t, os.IsNotExist(err), "and with nothing to move, no copy is written")
+}
+
+func TestRekeyThatWouldBindOneSenderTwiceChangesNothing(t *testing.T) {
+	s, backup := rekeySetup(t)
+	require.NoError(t, s.Bind("chat", "200", "alice")) // bob on team, alice on chat
+	_, err := s.Rekey(map[string]string{"chat": "tg", "team": "tg"}, backup)
+	require.ErrorIs(t, err, ErrRekeyConflict)
+	assert.Contains(t, err.Error(), `"200"`)
+	assert.Contains(t, err.Error(), "alice")
+	assert.Contains(t, err.Error(), "bob")
+	got, ok := s.Resolve("chat", "200")
+	assert.True(t, ok, "nothing moved")
+	assert.Equal(t, "alice", got)
+	_, ok = s.Resolve("tg", "100")
+	assert.False(t, ok)
+
+	require.NoError(t, s.Bind("tg", "100", "bob"))
+	require.NoError(t, s.Revoke("chat", "200"))
+	_, err = s.Rekey(map[string]string{"chat": "tg"}, backup)
+	require.ErrorIs(t, err, ErrRekeyConflict, "one already bound otherwise on the provider")
+}
+
+func TestRekeyNeverOverwritesACopy(t *testing.T) {
+	s, backup := rekeySetup(t)
+	require.NoError(t, os.WriteFile(backup, []byte("an earlier copy"), 0o600))
+	_, err := s.Rekey(map[string]string{"chat": "tg"}, backup)
+	require.Error(t, err)
+	b, rerr := os.ReadFile(backup)
+	require.NoError(t, rerr)
+	assert.Equal(t, "an earlier copy", string(b))
+	_, ok := s.Resolve("chat", "100")
+	assert.True(t, ok, "and nothing moved")
+}
+
+func TestRekeyOntoANameThatIsItselfMovedChangesNothing(t *testing.T) {
+	s, backup := rekeySetup(t)
+	// channel chat is carried on team, and channel team on tg: a second run
+	// would take what landed on team on to tg
+	_, err := s.Rekey(map[string]string{"chat": "team", "team": "tg"}, backup)
+	require.ErrorIs(t, err, ErrRekeyChain)
+	assert.Contains(t, err.Error(), "chat moves onto team, which itself moves onto tg")
+	for name, sender := range map[string]string{"chat": "100", "team": "200"} {
+		_, ok := s.Resolve(name, sender)
+		assert.True(t, ok, "nothing moved: %s", name)
+	}
+	_, err = os.Stat(backup)
+	assert.True(t, os.IsNotExist(err), "and no copy was written")
 }

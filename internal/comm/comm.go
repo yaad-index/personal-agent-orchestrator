@@ -142,6 +142,9 @@ type Layer struct {
 	groups map[string]map[string]Group
 	// scopes are each channel's owner and one conversation, by channel name.
 	scopes map[string]Scope
+	// providers are each chat channel's provider, by channel name: identity is
+	// the provider's, since a sender's id is the platform connection's.
+	providers map[string]string
 	// unscoped lifts the scopes, for this package's tests of the routing under
 	// them alone. Nothing outside the package can set it.
 	unscoped bool

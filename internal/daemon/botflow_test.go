@@ -22,6 +22,7 @@ import (
 	"github.com/yaad-index/personal-agent-orchestrator/internal/config"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/gate"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/identity"
 )
 
 // service is a stand-in for the chat service the bot adapter talks to.
@@ -428,7 +429,7 @@ func TestAnAdmittedGroupServesTheOperatorAndNoOneElse(t *testing.T) {
 	svc.push(groupUpdate(6, 23, person, unlisted, "/pao agent bee from elsewhere"))
 	svc.push(groupUpdate(7, 24, stranger, group, "/register "+inv.Secret))
 	// The record keeps each sender's latest rejection.
-	want := map[string]string{strconv.Itoa(other): "message/not the channel's owner", strconv.Itoa(person): "message/not the channel's conversation: " + strconv.Itoa(unlisted), strconv.Itoa(stranger): "registration/from a group"}
+	want := map[string]string{strconv.Itoa(other): "message/not the channel's owner", strconv.Itoa(person): "message/no channel is this conversation: " + strconv.Itoa(unlisted), strconv.Itoa(stranger): "registration/from a group"}
 	require.Eventually(t, func() bool {
 		rej, err := n.client.Rejected(ctx)
 		if err != nil {
@@ -882,4 +883,58 @@ func channelIs(t *testing.T, n *node, channel, agent string) {
 func botProvider(name, credentialEnv, url string) config.Provider {
 	return config.Provider{Name: name, Kind: "bot", CredentialEnv: credentialEnv,
 		Options: map[string]any{"endpoint": url + "/bot{token}/{method}", "poll_timeout": 0}}
+}
+
+// TestOneBotCarriesAPrivateChannelAndAGroupChannel runs ADR-0058 points 1 and 2
+// on a real node: one provider, one bot and one poller, carries alice's private
+// channel, whose agent is bee, and her group's channel, whose agent is wasp.
+// Each conversation reaches its own channel's agent and is answered there.
+// alice's binding, made under the channel's name before providers, was moved
+// onto the provider at start, with a copy of the store kept.
+func TestOneBotCarriesAPrivateChannelAndAGroupChannel(t *testing.T) {
+	svc := &service{}
+	ts := httptest.NewServer(http.HandlerFunc(svc.handler))
+	t.Cleanup(ts.Close)
+	t.Setenv("PAO_TEST_BOT_TOKEN", "tok-1")
+	const person, group = 4242, -700
+
+	var state string
+	n := startNodeWith(t, map[string]string{"bee": "", "wasp": ""}, func(_, _ string, cfg *config.Config) {
+		state = cfg.Orchestrator.StateDir
+		// What a node from before providers left: alice bound on the channel.
+		require.NoError(t, os.MkdirAll(state, 0o700))
+		ids, err := identity.Open(filepath.Join(state, "identity.db"))
+		require.NoError(t, err)
+		require.NoError(t, ids.AddSubject("alice"))
+		require.NoError(t, ids.SetOperator("alice", true))
+		require.NoError(t, ids.Bind("dm", strconv.Itoa(person), "alice"))
+		require.NoError(t, ids.Close())
+
+		cfg.Orchestrator.Providers = []config.Provider{botProvider("tg", "PAO_TEST_BOT_TOKEN", ts.URL)}
+		cfg.Orchestrator.Channels = []config.Channel{
+			{ID: 1, Name: "dm", Provider: "tg", Owner: "alice", Target: config.TargetPrivate},
+			{ID: 2, Name: "team", Provider: "tg", Owner: "alice", Target: strconv.Itoa(group),
+				Groups: []config.Group{{ID: strconv.Itoa(group), Name: "team", Members: config.MembersOperators}}},
+		}
+	}, func(o *Options) { o.Adapters = builtin.Table() })
+	ctx := context.Background()
+	channelIs(t, n, "dm", "bee")
+	channelIs(t, n, "team", "wasp")
+
+	bs, err := n.client.Bindings(ctx, "alice")
+	require.NoError(t, err)
+	assert.Equal(t, []local.BindingJSON{{Channel: "tg", Sender: strconv.Itoa(person), Subject: "alice"}}, bs, "her binding is the provider's now")
+	copies, err := filepath.Glob(filepath.Join(state, "identity.db.pre-provider-*"))
+	require.NoError(t, err)
+	assert.Len(t, copies, 1, "the store from before is kept")
+
+	svc.push(chatUpdate(1, 10, person, "privately"))
+	svc.push(groupUpdate(2, 11, person, group, "in the group"))
+	assert.Equal(t, "echo: [alice]: privately", lineWith(t, svc, person, "privately"), "bee, the private channel's agent")
+	assert.Equal(t, "echo: [alice]: in the group", lineWith(t, svc, group, "in the group"), "wasp, the group channel's agent")
+	assert.Nil(t, svc.sentWith(group, "privately"))
+	assert.Nil(t, svc.sentWith(person, "in the group"))
+
+	svc.push(chatUpdate(3, 12, person, "/pao agent wasp from my private chat"))
+	assert.Equal(t, "only bee is reached from this channel.", lineWith(t, svc, person, "is reached"))
 }

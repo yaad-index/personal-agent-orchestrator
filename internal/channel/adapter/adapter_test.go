@@ -15,17 +15,27 @@ import (
 )
 
 type fake struct {
-	name string
-	spec Spec
-	h    Handler
+	channels []string
+	spec     Spec
+	h        Handler
 }
 
-func (f *fake) Name() string                             { return f.name }
-func (f *fake) Send(context.Context, core.Message) error { return nil }
-func (f *fake) Run(context.Context) error                { return nil }
+type face struct{ name string }
+
+func (f face) Name() string                             { return f.name }
+func (f face) Send(context.Context, core.Message) error { return nil }
+
+func (f *fake) Run(context.Context) error { return nil }
+func (f *fake) Channels() []comm.Channel {
+	var out []comm.Channel
+	for _, c := range f.channels {
+		out = append(out, face{c})
+	}
+	return out
+}
 
 func okFactory(spec Spec, h Handler) (Adapter, error) {
-	return &fake{name: spec.Name, spec: spec, h: h}, nil
+	return &fake{channels: spec.Channels, spec: spec, h: h}, nil
 }
 
 type nilHandler struct{}
@@ -42,44 +52,45 @@ func TestTheTableListsKindsSorted(t *testing.T) {
 	assert.Equal(t, []string{"a", "b"}, Table{"b": {New: okFactory}, "a": {New: okFactory}}.Kinds())
 }
 
-func TestBuildMakesOneAdapterPerSpecWithItsSpecAndHandler(t *testing.T) {
+func TestBuildMakesOneAdapterPerProviderWithItsSpecAndHandler(t *testing.T) {
 	h := nilHandler{}
 	got, err := Table{"bot": {New: okFactory}}.Build([]Spec{
-		{ID: 1, Name: "chat", Kind: "bot", Credential: "tok", Options: map[string]any{"x": 1}},
-		{ID: 2, Name: "alt", Kind: "bot", Credential: "tok2"},
+		{Name: "tg", Kind: "bot", Credential: "tok", Options: map[string]any{"x": 1}, Channels: []string{"chat", "team"}},
+		{Name: "tg2", Kind: "bot", Credential: "tok2", Channels: []string{"alt"}},
 	}, h)
 	require.NoError(t, err)
 	require.Len(t, got, 2)
 	f := got[0].(*fake)
-	assert.Equal(t, Spec{ID: 1, Name: "chat", Kind: "bot", Credential: "tok", Options: map[string]any{"x": 1}}, f.spec)
+	assert.Equal(t, Spec{Name: "tg", Kind: "bot", Credential: "tok", Options: map[string]any{"x": 1}, Channels: []string{"chat", "team"}}, f.spec)
 	assert.Equal(t, h, f.h)
-	assert.Equal(t, "alt", got[1].Name())
+	assert.Equal(t, []comm.Channel{face{"chat"}, face{"team"}}, got[0].Channels(), "one channel for each it carries")
+	assert.Equal(t, []comm.Channel{face{"alt"}}, got[1].Channels())
 }
 
 func TestAKindNotCompiledInIsAStartupErrorThatNamesWhatIs(t *testing.T) {
-	_, err := Table{"bot": {New: okFactory}}.Build([]Spec{{ID: 1, Name: "chat", Kind: "nope", Credential: "x"}}, nilHandler{})
+	_, err := Table{"bot": {New: okFactory}}.Build([]Spec{{Name: "tg", Kind: "nope", Credential: "x", Channels: []string{"chat"}}}, nilHandler{})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), `"nope" is not compiled into this build`)
+	assert.Contains(t, err.Error(), `provider "tg": kind "nope" is not compiled into this build`)
 	assert.Contains(t, err.Error(), "bot")
 }
 
 func TestAnEmptyCredentialStopsTheNodeAndTheErrorNeverHoldsIt(t *testing.T) {
-	_, err := Table{"bot": {New: okFactory}}.Build([]Spec{{ID: 1, Name: "chat", Kind: "bot", Credential: ""}}, nilHandler{})
+	_, err := Table{"bot": {New: okFactory}}.Build([]Spec{{Name: "tg", Kind: "bot", Credential: "", Channels: []string{"chat"}}}, nilHandler{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "credential")
 
 	_, err = Table{"bot": {New: func(s Spec, _ Handler) (Adapter, error) { return nil, errors.New("rejected") }}}.Build(
-		[]Spec{{ID: 1, Name: "chat", Kind: "bot", Credential: "SECRET-TOKEN"}}, nilHandler{})
+		[]Spec{{Name: "tg", Kind: "bot", Credential: "SECRET-TOKEN", Channels: []string{"chat"}}}, nilHandler{})
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "SECRET-TOKEN")
-	assert.Contains(t, err.Error(), `channel "chat"`)
+	assert.Contains(t, err.Error(), `provider "tg"`)
 }
 
-func TestAnAdapterThatRenamesItselfIsRefused(t *testing.T) {
-	_, err := Table{"bot": {New: func(s Spec, h Handler) (Adapter, error) { return &fake{name: "other"}, nil }}}.Build(
-		[]Spec{{ID: 1, Name: "chat", Kind: "bot", Credential: "x"}}, nilHandler{})
+func TestAnAdapterThatCarriesOtherChannelsIsRefused(t *testing.T) {
+	_, err := Table{"bot": {New: func(s Spec, h Handler) (Adapter, error) { return &fake{channels: []string{"other"}}, nil }}}.Build(
+		[]Spec{{Name: "tg", Kind: "bot", Credential: "x", Channels: []string{"chat"}}}, nilHandler{})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "named itself")
+	assert.Contains(t, err.Error(), `carries channels ["other"], not ["chat"]`)
 }
 
 func TestCheckReportsEveryFailingProviderWithoutACredential(t *testing.T) {

@@ -505,6 +505,8 @@ type channelSource struct {
 // one file or in two (ADR-0055 point 3), and the error names where each is.
 func checkChannels(providers []Provider, sources ...channelSource) error {
 	ids, names, groupNames := map[int]string{}, map[string]string{}, map[string]string{}
+	// carried holds each provider by name, and each conversation on one with
+	// the channel that is it.
 	carried := map[string]string{}
 	for _, p := range providers {
 		carried[p.Name] = ""
@@ -561,7 +563,6 @@ func (o Orchestrator) Provider(name string) (Provider, bool) {
 	return Provider{}, false
 }
 
-// carried holds each provider by name, with the channel it carries, if any.
 func checkChannelsOf(src channelSource, carried map[string]string, ids map[int]string, names, groupNames map[string]string) error {
 	for i, c := range src.channels {
 		at := fmt.Sprintf("%s: channels[%d]", src.path, i)
@@ -580,14 +581,30 @@ func checkChannelsOf(src channelSource, carried map[string]string, ids map[int]s
 			return fmt.Errorf("%s: name %q is already used at %s", at, c.Name, prev)
 		}
 		ids[c.ID], names[c.Name] = fmt.Sprintf("%q at %s", c.Name, at), at
-		// One channel per provider until a provider serves several.
-		switch was, ok := carried[c.Provider]; {
-		case !ok:
+		// On one provider, a conversation is one channel's, and an owner has at
+		// most one private channel, so an inbound is placed in one channel
+		// (ADR-0058 point 2).
+		if _, ok := carried[c.Provider]; !ok {
 			return fmt.Errorf("%s: provider %q is not configured", at, c.Provider)
-		case was != "":
-			return fmt.Errorf("%s: provider %q already carries channel %q, and carries one channel for now", at, c.Provider, was)
 		}
-		carried[c.Provider] = c.Name
+		// A sender was bound under a channel's name before it was bound under
+		// its provider's; a channel with another provider's name would make
+		// the one name mean both.
+		if _, ok := carried[c.Name]; ok && c.Name != c.Provider {
+			return fmt.Errorf("%s: name %q is a provider's, and the channel is carried on %q; a channel may share a name only with its own provider", at, c.Name, c.Provider)
+		}
+		key := c.Provider + "\x00" + c.Target
+		if c.Target == TargetPrivate {
+			key += "\x00" + c.Owner
+		}
+		if was, dup := carried[key]; dup {
+			what := fmt.Sprintf("target %q", c.Target)
+			if c.Target == TargetPrivate {
+				what = fmt.Sprintf("%s's private conversation", c.Owner)
+			}
+			return fmt.Errorf("%s: %s on provider %q is already channel %q", at, what, c.Provider, was)
+		}
+		carried[key] = c.Name
 		if err := checkGroups(at, c.Groups, groupNames); err != nil {
 			return err
 		}

@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 	"sync/atomic"
@@ -310,4 +311,80 @@ func (s *Store) Operators(channel string) []string {
 		})
 	})
 	return out
+}
+
+// ErrRekeyConflict means a re-key would bind one sender to two subjects in the
+// same namespace.
+var ErrRekeyConflict = errors.New("re-keying would bind one sender to two subjects")
+
+// ErrRekeyChain means a name a re-key moves bindings onto is itself moved: the
+// one name would mean both, and a re-key run again would move bindings twice.
+var ErrRekeyChain = errors.New("re-keying onto a name that is itself re-keyed")
+
+// Rekey moves every binding made under a name in to onto the name it maps to,
+// in one transaction: a sender's id belongs to the platform connection, so a
+// channel's bindings become its provider's (ADR-0058 point 1). Nothing is
+// changed if a sender would end up bound to two subjects under one name; the
+// error names both. A name that maps to itself, or that no binding uses, is
+// left alone, so Rekey run again changes nothing. A name moved onto may not be
+// moved itself, or a second run would move its bindings on again.
+//
+// Before it changes anything, it writes a copy of the whole store to backup,
+// which must not exist yet, so a re-key can be undone by hand. It returns the
+// number of bindings moved; with none to move, it writes no copy.
+func (s *Store) Rekey(to map[string]string, backup string) (int, error) {
+	for from, onto := range to {
+		if next, ok := to[onto]; ok && next != onto && onto != from {
+			return 0, fmt.Errorf("%w: %s moves onto %s, which itself moves onto %s", ErrRekeyChain, from, onto, next)
+		}
+	}
+	type move struct{ from, onto, v []byte }
+	var moves []move
+	err := s.db.View(func(tx *bolt.Tx) error {
+		bb := tx.Bucket(bindings)
+		landing := map[string]string{}
+		return bb.ForEach(func(k, v []byte) error {
+			channel, sender, ok := strings.Cut(string(k), "\x00")
+			target, mapped := to[channel]
+			if !ok || !mapped || target == channel {
+				return nil
+			}
+			onto, err := bindingKey(target, sender)
+			if err != nil {
+				return err
+			}
+			if have := bb.Get(onto); have != nil && string(have) != string(v) {
+				return fmt.Errorf("%w: sender %q on %s is %s, and on %s it is %s", ErrRekeyConflict, sender, target, have, channel, v)
+			}
+			if was, seen := landing[string(onto)]; seen && was != string(v) {
+				return fmt.Errorf("%w: sender %q would be both %s and %s on %s", ErrRekeyConflict, sender, was, v, target)
+			}
+			landing[string(onto)] = string(v)
+			moves = append(moves, move{append([]byte(nil), k...), onto, append([]byte(nil), v...)})
+			return nil
+		})
+	})
+	if err != nil || len(moves) == 0 {
+		return 0, err
+	}
+	if _, err := os.Lstat(backup); !errors.Is(err, os.ErrNotExist) {
+		return 0, fmt.Errorf("could not keep a copy before re-keying: %s is already there", backup)
+	}
+	if err := s.db.View(func(tx *bolt.Tx) error { return tx.CopyFile(backup, 0o600) }); err != nil {
+		return 0, fmt.Errorf("could not keep a copy before re-keying: %w", err)
+	}
+	return len(moves), s.db.Update(func(tx *bolt.Tx) error {
+		bb := tx.Bucket(bindings)
+		for _, m := range moves {
+			if err := bb.Delete(m.from); err != nil {
+				return err
+			}
+		}
+		for _, m := range moves {
+			if err := bb.Put(m.onto, m.v); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }

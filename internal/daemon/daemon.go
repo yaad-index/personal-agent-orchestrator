@@ -182,6 +182,9 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		return err
 	}
 	defer func() { _ = ids.Close() }()
+	if err := rekeyIdentity(ids, cfg.Orchestrator); err != nil {
+		return err
+	}
 	warnUnknownOwners(ids, cfg.Orchestrator.Channels)
 	defaults, err := defaultagent.Open(filepath.Join(cfg.Orchestrator.StateDir, defaultsFile))
 	if err != nil {
@@ -527,7 +530,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	if profiles != nil {
 		localOpts = append(localOpts, local.WithProfiles(profiles))
 	}
-	srv, err := local.New(layer, token, append([]local.Option{local.WithDecider(decider), local.WithTemp(tempOps), local.WithStream(streamOps), local.WithStanding(standingOps), local.WithWatch(streamOps), local.WithLifecycle(lifeOps), local.WithRejected(rejectedAPI{rejects}), local.WithTasks(taskAPI{tasks}), local.WithIdentity(identityAPI{ids}),
+	srv, err := local.New(layer, token, append([]local.Option{local.WithDecider(decider), local.WithTemp(tempOps), local.WithStream(streamOps), local.WithStanding(standingOps), local.WithWatch(streamOps), local.WithLifecycle(lifeOps), local.WithRejected(rejectedAPI{rejects}), local.WithTasks(taskAPI{tasks}), local.WithIdentity(identityAPI{s: ids, providers: providerNames(cfg.Orchestrator.Providers)}),
 		local.WithDefaults(defaultsCtl), local.WithGrants(grantsAPI{store: grantStore, changed: mcpServer.Refresh}),
 		local.WithMount("/mcp", mcpHandler),
 		// The management UI (ADR-0047), on this same listener: its session is the
@@ -574,7 +577,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		go func() {
 			defer adaptersWG.Done()
 			if err := a.Run(adaptersCtx); err != nil && adaptersCtx.Err() == nil {
-				slog.Error("channel stopped", "channel", a.Name(), "error", err)
+				slog.Error("provider stopped", "error", err)
 			}
 		}()
 	}

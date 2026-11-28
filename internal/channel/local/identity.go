@@ -19,8 +19,11 @@ type operatorRequest struct {
 	Operator bool `json:"operator"`
 }
 
-// BindingJSON ties one (channel, per-sender id) pair to a subject.
+// BindingJSON ties one (provider, per-sender id) pair to a subject. A sender
+// id is the platform connection's, so it is bound on the provider whichever of
+// its channels it writes in (ADR-0058 point 1).
 type BindingJSON struct {
+	// Channel is the provider's name; the field keeps its wire name.
 	Channel string `json:"channel"`
 	Sender  string `json:"sender"`
 	Subject string `json:"subject"`

@@ -3,15 +3,24 @@ package daemon
 import (
 	"context"
 	"errors"
+	"fmt"
+	"slices"
 	"time"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/local"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/config"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/identity"
 )
 
 // identityAPI is the operator's view of subjects and bindings
 // (local.IdentityAPI), over this node's identity store.
-type identityAPI struct{ s *identity.Store }
+type identityAPI struct {
+	s *identity.Store
+	// providers are the providers the node was started with. A sender is
+	// bound on its provider, so a binding under any other name would never be
+	// read.
+	providers []string
+}
 
 func identityErr(err error) error {
 	switch {
@@ -49,6 +58,9 @@ func (a identityAPI) Subjects(context.Context) ([]local.SubjectJSON, error) {
 }
 
 func (a identityAPI) Bind(_ context.Context, b local.BindingJSON) error {
+	if !slices.Contains(a.providers, b.Channel) {
+		return translated{local.ErrBadRequest, fmt.Errorf("no provider %q: a sender is bound on the provider it writes through, not on a channel (have: %q)", b.Channel, a.providers)}
+	}
 	return identityErr(a.s.Bind(b.Channel, b.Sender, b.Subject))
 }
 
@@ -84,4 +96,13 @@ func (a identityAPI) Invitations(context.Context) ([]local.InvitationJSON, error
 
 func (a identityAPI) RevokeInvitation(_ context.Context, id string) error {
 	return identityErr(a.s.RevokeInvitation(id))
+}
+
+// providerNames lists the configured providers by name.
+func providerNames(ps []config.Provider) []string {
+	out := make([]string, 0, len(ps))
+	for _, p := range ps {
+		out = append(out, p.Name)
+	}
+	return out
 }

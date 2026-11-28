@@ -24,8 +24,8 @@ type piece struct {
 // before it where line puts one) and, for an agent's Markdown, the formatting
 // of its words. Only the words are read as Markdown, never the name before them
 // or a plain message (ADR-0050 point 2).
-func (b *Bot) compose(m core.Message, conversation string) markdown.Doc {
-	line := b.line(m, conversation)
+func (b *Bot) compose(channel string, m core.Message, conversation string) markdown.Doc {
+	line := b.line(channel, m, conversation)
 	if m.Format != core.FormatMarkdown {
 		return markdown.Doc{Text: line}
 	}

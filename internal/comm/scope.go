@@ -2,7 +2,9 @@ package comm
 
 import (
 	"log/slog"
+	"maps"
 	"slices"
+	"strings"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
 )
@@ -48,7 +50,7 @@ func (l *Layer) outOfScope(in ChannelInbound) string {
 	case s.Conversation != "" && !privatePress && (!in.Group || in.Conversation != s.Conversation):
 		return "not the channel's conversation: " + conversationOf(in)
 	}
-	subject, ok := l.identity.Resolve(in.Channel, in.Sender)
+	subject, ok := l.identity.Resolve(l.providerOf(in.Channel), in.Sender)
 	switch {
 	case !ok:
 		return "no subject"
@@ -88,7 +90,7 @@ func (l *Layer) inScope(channel string, m core.Message, out []string) []string {
 	}
 	var own []string
 	if s.Conversation == "" || m.Kind == core.MessageSystemEvent {
-		own = l.identity.Senders(s.Owner, channel)
+		own = l.identity.Senders(s.Owner, l.providerOf(channel))
 	}
 	group, _, topic := SplitTopic(s.Conversation)
 	var kept []string
@@ -159,4 +161,62 @@ func (l *Layer) othersOutput(channel string, m core.Message) bool {
 		slog.Warn("an agent's output was held back from a channel that is another agent's", "channel", channel, "agent", m.Sender)
 	}
 	return true
+}
+
+// SetProviders gives the layer the provider each chat channel is carried on,
+// by channel name (ADR-0058 point 1). A sender's id belongs to the platform
+// connection, so a channel's senders are bound to subjects by its provider. A
+// channel given no provider is its own. Call it before the layer starts
+// receiving.
+func (l *Layer) SetProviders(providers map[string]string) { l.providers = providers }
+
+// providerOf is the namespace a channel's senders are bound in: its provider's
+// name, or its own where it has none.
+func (l *Layer) providerOf(channel string) string {
+	if p, ok := l.providers[channel]; ok {
+		return p
+	}
+	return channel
+}
+
+// place puts an inbound a provider handed over without a channel into the
+// provider's channel it belongs to (ADR-0058 point 2): the channel whose group
+// or topic it was written in, or, in a private conversation, the private
+// channel of the subject the sender is bound to. It reports false where none
+// is, and the inbound is then the provider's own, recorded under its name.
+func (l *Layer) place(in ChannelInbound) (string, bool) {
+	var subject string
+	if !in.Group {
+		subject, _ = l.identity.Resolve(in.Provider, in.Sender)
+	}
+	group, _, _ := strings.Cut(in.Conversation, "/")
+	var near string
+	for _, ch := range slices.Sorted(maps.Keys(l.scopes)) {
+		s := l.scopes[ch]
+		if l.providerOf(ch) != in.Provider {
+			continue
+		}
+		switch {
+		case !in.Group && s.Conversation == "" && subject != "" && s.Owner == subject:
+			return ch, true
+		case in.Press && !in.Group && subject != "" && s.Owner == subject:
+			// pao asks its owner privately, whatever the channel's conversation:
+			// a press there is the owner's channel's, the one that showed the
+			// message if it can be told, and otherwise the first of them
+			if n, ok := l.channelIDs[ch]; ok && in.Pressed != "" {
+				if _, shown := l.composites.id(FormatComposite(n, in.Pressed)); shown {
+					return ch, true
+				}
+			}
+			if near == "" {
+				near = ch
+			}
+		case in.Group && s.Conversation == in.Conversation:
+			return ch, true
+		case in.Group && (in.Join || in.MovedTo != "") && strings.HasPrefix(s.Conversation, group+"/"):
+			// the platform reports a move or a join for the group as a whole
+			near = ch
+		}
+	}
+	return near, near != ""
 }

@@ -29,14 +29,16 @@ func (noHandler) DefaultAgentIn(string, string) (string, bool) { return "", fals
 func TestTheBuildContainsTheBotAdapterAndCanBuildOne(t *testing.T) {
 	tb := Table()
 	assert.Equal(t, []string{"bot"}, tb.Kinds())
-	as, err := tb.Build([]adapter.Spec{{ID: 1, Name: "chat", Kind: "bot", Credential: "x", Options: map[string]any{"endpoint": "https://api.example/bot{token}/{method}"}}}, noHandler{})
+	as, err := tb.Build([]adapter.Spec{{Name: "tg", Kind: "bot", Credential: "x", Options: map[string]any{"endpoint": "https://api.example/bot{token}/{method}"}, Channels: []string{"chat", "team"}}}, noHandler{})
 	require.NoError(t, err)
 	require.Len(t, as, 1)
-	assert.Equal(t, "chat", as[0].Name())
+	require.Len(t, as[0].Channels(), 2)
+	assert.Equal(t, "chat", as[0].Channels()[0].Name())
+	assert.Equal(t, "team", as[0].Channels()[1].Name())
 }
 
 func TestABotWithoutItsEndpointStopsTheBuild(t *testing.T) {
-	_, err := Table().Build([]adapter.Spec{{ID: 1, Name: "chat", Kind: "bot", Credential: "x"}}, noHandler{})
+	_, err := Table().Build([]adapter.Spec{{Name: "tg", Kind: "bot", Credential: "x", Channels: []string{"chat"}}}, noHandler{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "endpoint")
 }

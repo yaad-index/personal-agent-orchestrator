@@ -69,7 +69,11 @@ type Recorder interface {
 // message (ADR-0020 point 5).
 type ChannelInbound struct {
 	// Channel is the configured channel's name, the namespace of its bindings.
+	// An adapter that carries several channels leaves it empty and names its
+	// Provider; the layer places the inbound in one of the provider's channels.
 	Channel string
+	// Provider is the provider the inbound came through, when Channel is empty.
+	Provider string
 	// Sender is the platform's authenticated per-sender id (ADR-0019 point 2),
 	// never a value read from the message text.
 	Sender string
@@ -287,6 +291,20 @@ func (l *Layer) ReceiveFromChannel(ctx context.Context, in ChannelInbound) (Chan
 		return ChannelResult{}, ErrNoIdentity
 	}
 
+	// An inbound a provider hands over is placed in one of its channels. One
+	// that is none of them is the provider's own, recorded under its name; only
+	// a registration goes on from there, as it binds a sender on the provider.
+	if in.Channel == "" && in.Provider != "" {
+		ch, ok := l.place(in)
+		if !ok {
+			ch = in.Provider
+		}
+		in.Channel = ch
+		if !ok && !in.Registration && !in.Join && in.MovedTo == "" {
+			return ChannelResult{}, l.reject(in, RecordMessage, "no channel is this conversation: "+conversationOf(in), in.Raw)
+		}
+	}
+
 	// Nothing from outside the channel's one conversation, or from anyone but
 	// its owner, is acted on or answered: it is recorded, whoever sent it.
 	if reason := l.outOfScope(in); reason != "" {
@@ -298,13 +316,13 @@ func (l *Layer) ReceiveFromChannel(ctx context.Context, in ChannelInbound) (Chan
 	}
 
 	if in.Registration {
-		if _, ok := l.identity.Register(in.Channel, in.Sender, in.Text); ok {
+		if _, ok := l.identity.Register(l.providerOf(in.Channel), in.Sender, in.Text); ok {
 			return ChannelResult{Reply: ReplyRegistered}, l.reject(in, RecordRegistration, "registered", "")
 		}
 		return ChannelResult{Reply: ReplyRefused}, l.reject(in, RecordRegistration, "not accepted", "")
 	}
 
-	subject, ok := l.identity.Resolve(in.Channel, in.Sender)
+	subject, ok := l.identity.Resolve(l.providerOf(in.Channel), in.Sender)
 	if !ok {
 		return ChannelResult{}, l.reject(in, RecordMessage, "no subject", in.Raw)
 	}
@@ -343,7 +361,7 @@ func (l *Layer) receiveFromGroup(ctx context.Context, in ChannelInbound) (Channe
 		}
 		return ChannelResult{}, l.reject(in, RecordMessage, reason, in.Raw)
 	}
-	subject, bound := l.identity.Resolve(in.Channel, in.Sender)
+	subject, bound := l.identity.Resolve(l.providerOf(in.Channel), in.Sender)
 	admitted := bound && l.admits(g.Policy, subject)
 	// A refusal in an admitted group is recorded under the group's name, the
 	// handle the operator gave it.

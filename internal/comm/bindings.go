@@ -99,7 +99,7 @@ func (l *Layer) resolve(d Dest) []origin {
 		}
 		on := 0
 		for _, ch := range channels {
-			senders := l.identity.Senders(d.Name, ch)
+			senders := l.identity.Senders(d.Name, l.providerOf(ch))
 			if len(senders) > 0 {
 				on++
 			}

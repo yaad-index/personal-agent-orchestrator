@@ -65,7 +65,7 @@ func (l *Layer) privately(channel string, m core.Message) []string {
 	if !l.readersMay(PolicyOperators, m) {
 		return nil
 	}
-	return l.identity.Operators(channel)
+	return l.identity.Operators(l.providerOf(channel))
 }
 
 // isQuestion reports whether m is a gate question: pao's own message offering

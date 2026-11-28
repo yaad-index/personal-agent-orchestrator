@@ -17,7 +17,7 @@ type IdentityCmd struct {
 	Operator OperatorCmd      `cmd:"" help:"Flag a subject as acting as the operator, or clear the flag."`
 	Remove   SubjectRemoveCmd `cmd:"" help:"Delete a subject and every binding that resolves to it."`
 	Bindings BindingsCmd      `cmd:"" help:"List the bindings, of one subject or of all."`
-	Bind     BindCmd          `cmd:"" help:"Tie a channel's sender id to a subject."`
+	Bind     BindCmd          `cmd:"" help:"Tie a provider's sender id to a subject."`
 	Revoke   RevokeCmd        `cmd:"" help:"Remove a binding; the sender id is unbound again."`
 	Invite   InviteCmd        `cmd:"" help:"Issue an invitation that registers its holder as the given subject."`
 	Invites  InvitesCmd       `cmd:"" help:"List the invitations."`
@@ -126,8 +126,8 @@ func (c BindingsCmd) run(w io.Writer) error {
 // BindCmd binds a sender id to a subject.
 type BindCmd struct {
 	NodeFlags
-	Channel string `arg:"" help:"Channel name."`
-	Sender  string `arg:"" help:"The platform's own id for the sender on that channel."`
+	Channel string `arg:"" help:"Provider name: a sender id is the provider's, whichever of its channels it writes in."`
+	Sender  string `arg:"" help:"The platform's own id for the sender on that provider."`
 	Subject string `arg:"" help:"Subject the sender resolves to."`
 }
 
@@ -151,7 +151,7 @@ func (c BindCmd) run(w io.Writer) error {
 // RevokeCmd removes a binding.
 type RevokeCmd struct {
 	NodeFlags
-	Channel string `arg:"" help:"Channel name."`
+	Channel string `arg:"" help:"Provider name."`
 	Sender  string `arg:"" help:"The sender id to unbind."`
 }
 

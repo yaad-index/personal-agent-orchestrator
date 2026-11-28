@@ -9,10 +9,13 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/local"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/config"
 )
 
 func TestTheOperatorManagesSubjectsAndBindingsOverTheLocalChannel(t *testing.T) {
-	n := startNode(t, map[string]string{"bee": ""})
+	n := startNodeWith(t, map[string]string{"bee": ""}, func(_, _ string, cfg *config.Config) {
+		cfg.Orchestrator.Providers = []config.Provider{{Name: "chat", Kind: "bot", CredentialEnv: "UNUSED"}}
+	})
 	ctx := context.Background()
 	c := n.client
 
@@ -23,6 +26,9 @@ func TestTheOperatorManagesSubjectsAndBindingsOverTheLocalChannel(t *testing.T) 
 	require.NoError(t, c.Bind(ctx, local.BindingJSON{Channel: "chat", Sender: "1001", Subject: "alice"}))
 	assert.ErrorContains(t, c.Bind(ctx, local.BindingJSON{Channel: "chat", Sender: "1001", Subject: "alice"}), "409")
 	assert.ErrorContains(t, c.Bind(ctx, local.BindingJSON{Channel: "chat", Sender: "1", Subject: "ghost"}), "404")
+	err := c.Bind(ctx, local.BindingJSON{Channel: "other", Sender: "1002", Subject: "alice"})
+	assert.ErrorContains(t, err, "400", "a binding under a name that is no provider would never be read")
+	assert.ErrorContains(t, err, `no provider "other"`)
 
 	bs, err := c.Bindings(ctx, "alice")
 	require.NoError(t, err)

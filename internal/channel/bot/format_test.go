@@ -37,7 +37,7 @@ func sendOne(t *testing.T, h *handler, m core.Message, opts map[string]any) (*se
 	s := newServer(t)
 	b, err := newBot(spec(s, opts), h)
 	require.NoError(t, err)
-	require.NoError(t, b.Send(context.Background(), m))
+	require.NoError(t, b.For("chat").Send(context.Background(), m))
 	return s, s.snapshot(&s.sent)
 }
 
@@ -127,7 +127,7 @@ func TestARefusedFormattedMessageIsSentAgainAsPlainText(t *testing.T) {
 	s.refuseEntities = true
 	b, err := newBot(spec(s, nil), &handler{recipients: []string{"900"}})
 	require.NoError(t, err)
-	require.NoError(t, b.Send(context.Background(), core.Message{Sender: "vault", Text: "**x** y", Format: core.FormatMarkdown}), "the message still goes out")
+	require.NoError(t, b.For("chat").Send(context.Background(), core.Message{Sender: "vault", Text: "**x** y", Format: core.FormatMarkdown}), "the message still goes out")
 	require.Len(t, s.snapshot(&s.refused), 1)
 	sent := s.snapshot(&s.sent)
 	require.Len(t, sent, 1)
@@ -140,7 +140,7 @@ func TestAPlainSendThatFailsIsNotSentTwice(t *testing.T) {
 	s.mode, s.describe = "okfalse", "Bad Request: chat not found"
 	b, err := newBot(spec(s, nil), &handler{recipients: []string{"900"}})
 	require.NoError(t, err)
-	assert.Error(t, b.Send(context.Background(), core.Message{Sender: "pao", Text: "**x**"}))
+	assert.Error(t, b.For("chat").Send(context.Background(), core.Message{Sender: "pao", Text: "**x**"}))
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	assert.Equal(t, 1, s.attempts, "a plain message that fails is not retried")
@@ -150,7 +150,7 @@ func TestClosingAFormattedMessageKeepsItsFormatting(t *testing.T) {
 	s := newServer(t)
 	b, err := newBot(spec(s, nil), &handler{recipients: []string{"900"}})
 	require.NoError(t, err)
-	require.NoError(t, b.Send(context.Background(), core.Message{ID: "m1", Sender: "vault", Text: "pick **one**", Format: core.FormatMarkdown, Actions: gateActions}))
+	require.NoError(t, b.For("chat").Send(context.Background(), core.Message{ID: "m1", Sender: "vault", Text: "pick **one**", Format: core.FormatMarkdown, Actions: gateActions}))
 	require.NoError(t, b.CloseActions(context.Background(), "m1", "allowed"))
 	edits := s.snapshot(&s.edits)
 	require.Len(t, edits, 1)
