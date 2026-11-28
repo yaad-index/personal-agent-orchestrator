@@ -303,3 +303,18 @@ func TestRekeyNeverOverwritesACopy(t *testing.T) {
 	_, ok := s.Resolve("chat", "100")
 	assert.True(t, ok, "and nothing moved")
 }
+
+func TestRekeyOntoANameThatIsItselfMovedChangesNothing(t *testing.T) {
+	s, backup := rekeySetup(t)
+	// channel chat is carried on team, and channel team on tg: a second run
+	// would take what landed on team on to tg
+	_, err := s.Rekey(map[string]string{"chat": "team", "team": "tg"}, backup)
+	require.ErrorIs(t, err, ErrRekeyChain)
+	assert.Contains(t, err.Error(), "chat moves onto team, which itself moves onto tg")
+	for name, sender := range map[string]string{"chat": "100", "team": "200"} {
+		_, ok := s.Resolve(name, sender)
+		assert.True(t, ok, "nothing moved: %s", name)
+	}
+	_, err = os.Stat(backup)
+	assert.True(t, os.IsNotExist(err), "and no copy was written")
+}

@@ -46,7 +46,7 @@
     // pao gives a new channel an id never used before
     id = 0;
     name = "";
-    provider = free(list)[0]?.name ?? "";
+    provider = list.providers[0]?.name ?? "";
     owner = "";
     convWay = "private";
     groupId = groupName = topicId = "";
@@ -122,8 +122,6 @@
     }
   }
 
-  // the providers a channel may be put on: those that carry no channel, and the one this channel is on
-  const free = (l: ChannelConfigList) => l.providers.filter((p) => !p.channel || p.channel === editing);
   function convLabel(c: ChannelConfig): string {
     if (!c.target) return "—";
     if (c.target === "private") return `${c.owner}, privately`;
@@ -194,7 +192,7 @@
       <p class="muted">No providers. Define one in <code>pao.yaml</code> to add a channel.</p>
     {:else}
       <table class="providers">
-        <thead><tr><th>Provider</th><th>Credential</th><th class="wide-only">Channel</th></tr></thead>
+        <thead><tr><th>Provider</th><th>Credential</th><th class="wide-only">Channels</th></tr></thead>
         <tbody>
           {#each list.providers as p (p.name)}
             <tr>
@@ -203,7 +201,7 @@
                 <span class="badge" class:warn={!p.credential.resolves}>{p.credential.resolves ? "set" : "not set"}</span>
                 {#if p.credential.problem}<div class="muted small">{p.credential.problem}</div>{/if}
               </td>
-              <td class="wide-only">{p.channel || "—"}</td>
+              <td class="wide-only">{p.channels?.join(", ") || "—"}</td>
             </tr>
           {/each}
         </tbody>
@@ -218,9 +216,8 @@
         {#if editing !== "new"}<p class="muted small">Id {id}: it names the channel in every message id, and never changes.</p>{/if}
         <label for="c-provider">Provider</label>
         <select id="c-provider" bind:value={provider} required>
-          {#each free(list) as p (p.name)}<option value={p.name}>{p.name} ({p.kind})</option>{/each}
+          {#each list.providers as p (p.name)}<option value={p.name}>{p.name} ({p.kind})</option>{/each}
         </select>
-        {#if free(list).length === 0}<p class="muted small">Every provider carries a channel already. Providers are defined in <code>pao.yaml</code>.</p>{/if}
 
         <label for="c-owner">Owner</label>
         <input id="c-owner" bind:value={owner} required placeholder="the subject the channel belongs to" autocomplete="off" />

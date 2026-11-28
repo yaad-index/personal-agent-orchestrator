@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -101,6 +102,9 @@ func rekeyIdentity(ids interface {
 	backup := filepath.Join(o.StateDir, "identity.db.pre-provider-"+time.Now().UTC().Format("20060102T150405Z"))
 	n, err := ids.Rekey(to, backup)
 	if err != nil {
+		if errors.Is(err, identity.ErrRekeyConflict) {
+			return fmt.Errorf("binding senders by provider: %w; nothing was changed. Put those channels on providers of their own again, start, revoke one of the two bindings, then put them back on one provider", err)
+		}
 		return fmt.Errorf("binding senders by provider: %w", err)
 	}
 	if n > 0 {

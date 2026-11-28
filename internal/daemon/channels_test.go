@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -16,6 +17,7 @@ import (
 	"github.com/yaad-index/personal-agent-orchestrator/internal/comm"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/config"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/identity"
 )
 
 // botFake is an adapter that does nothing but expose the handler it was given.
@@ -233,4 +235,27 @@ func TestAGroupsNamedTopicsAreAdmittedWithTheGroupsPolicy(t *testing.T) {
 		"-5":    {Name: "team", Policy: comm.PolicyOperators},
 		"-5/42": {Name: "games", Policy: comm.PolicyOperators, Topic: true},
 	}}, got, "a topic of a group left out is left out with it")
+}
+
+type rekeyStub struct {
+	to  map[string]string
+	err error
+}
+
+func (r *rekeyStub) Rekey(to map[string]string, _ string) (int, error) {
+	r.to = to
+	return 0, r.err
+}
+
+func TestBindingsMoveOntoEachChannelsProviderAndAConflictSaysHowOut(t *testing.T) {
+	o := config.Orchestrator{StateDir: t.TempDir(), Channels: []config.Channel{{Name: "me", Provider: "tg"}, {Name: "team", Provider: "tg"}}}
+	r := &rekeyStub{}
+	require.NoError(t, rekeyIdentity(r, o))
+	assert.Equal(t, map[string]string{"me": "tg", "team": "tg"}, r.to)
+
+	r.err = fmt.Errorf("%w: sender \"7\" would be both alice and bob on tg", identity.ErrRekeyConflict)
+	err := rekeyIdentity(r, o)
+	require.ErrorIs(t, err, identity.ErrRekeyConflict)
+	assert.Contains(t, err.Error(), "nothing was changed")
+	assert.Contains(t, err.Error(), "providers of their own again")
 }

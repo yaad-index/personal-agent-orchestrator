@@ -587,6 +587,12 @@ func checkChannelsOf(src channelSource, carried map[string]string, ids map[int]s
 		if _, ok := carried[c.Provider]; !ok {
 			return fmt.Errorf("%s: provider %q is not configured", at, c.Provider)
 		}
+		// A sender was bound under a channel's name before it was bound under
+		// its provider's; a channel with another provider's name would make
+		// the one name mean both.
+		if _, ok := carried[c.Name]; ok && c.Name != c.Provider {
+			return fmt.Errorf("%s: name %q is a provider's, and the channel is carried on %q; a channel may share a name only with its own provider", at, c.Name, c.Provider)
+		}
 		key := c.Provider + "\x00" + c.Target
 		if c.Target == TargetPrivate {
 			key += "\x00" + c.Owner

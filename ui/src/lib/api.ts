@@ -346,8 +346,8 @@ export interface Provider {
   name: string;
   kind: string;
   credential: CredentialStatus;
-  // the channel it carries, if any: a provider carries one channel for now
-  channel?: string;
+  // the channels it carries, by name
+  channels?: string[];
 }
 
 export interface ChannelConfigList {

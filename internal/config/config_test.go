@@ -845,3 +845,20 @@ func TestAChannelIsOneConversationOfOneOwner(t *testing.T) {
 		require.NoError(t, err, name)
 	}
 }
+
+func TestAChannelSharesANameOnlyWithItsOwnProvider(t *testing.T) {
+	cfg := func(name string) error {
+		dir := t.TempDir()
+		write(t, filepath.Join(dir, "pao.yaml"), "node: n1\nprofiles_dir: profiles\nstate_dir: state\ntoken_env: PAO_TOKEN\n"+
+			"providers:\n  - name: tg\n    kind: bot\n    credential_env: A\n  - name: other\n    kind: bot\n    credential_env: B\n"+
+			"channels:\n  - id: 1\n    name: "+name+"\n    provider: tg\n    owner: alice\n    target: private\n")
+		write(t, filepath.Join(dir, "profiles", "a.yaml"), "name: a\nbackend: claude-code\n"+startup)
+		_, err := Load(filepath.Join(dir, "pao.yaml"))
+		return err
+	}
+	require.NoError(t, cfg("tg"), "its own provider's name")
+	require.NoError(t, cfg("me"))
+	err := cfg("other")
+	require.Error(t, err, "a sender bound under the name would be the channel's and the provider's at once")
+	assert.Contains(t, err.Error(), `name "other" is a provider's, and the channel is carried on "tg"`)
+}

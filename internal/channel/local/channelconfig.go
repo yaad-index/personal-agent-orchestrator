@@ -26,9 +26,8 @@ type ProviderJSON struct {
 	Name       string               `json:"name"`
 	Kind       string               `json:"kind"`
 	Credential CredentialStatusJSON `json:"credential"`
-	// Channel is the channel it carries, empty if none: a provider carries
-	// one channel for now.
-	Channel string `json:"channel,omitempty"`
+	// Channels are the channels it carries, by name, none if it carries none.
+	Channels []string `json:"channels,omitempty"`
 }
 
 // GroupConfigJSON is a group a channel serves, as the configuration holds it.
