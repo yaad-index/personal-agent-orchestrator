@@ -897,3 +897,24 @@ func TestAProfileWithAnotherUsersLogChannelDoesNotLoad(t *testing.T) {
 	assert.Contains(t, err.Error(), filepath.Join(dir, "profiles", "a.yaml"))
 	assert.Contains(t, err.Error(), `log_channel "logs" is bob's`)
 }
+
+func TestTheMessagePrefixIsOffByDefaultAndOneOfThree(t *testing.T) {
+	load := func(node, profile string) (*Config, error) {
+		dir := t.TempDir()
+		write(t, filepath.Join(dir, "pao.yaml"), "node: n1\nprofiles_dir: profiles\nstate_dir: state\ntoken_env: PAO_TOKEN\n"+node)
+		write(t, filepath.Join(dir, "profiles", "a.yaml"), "name: a\nbackend: claude-code\n"+profile+startup)
+		return Load(filepath.Join(dir, "pao.yaml"))
+	}
+	cfg, err := load("", "")
+	require.NoError(t, err)
+	assert.Equal(t, core.PrefixOff, cfg.Orchestrator.MessagePrefix)
+	assert.Empty(t, cfg.Profiles[0].MessagePrefix, "an agent that says nothing takes the node's")
+	cfg, err = load("message_prefix: channel\n", "message_prefix: name\n")
+	require.NoError(t, err)
+	assert.Equal(t, core.PrefixChannel, cfg.Orchestrator.MessagePrefix)
+	assert.Equal(t, core.PrefixName, cfg.Profiles[0].MessagePrefix)
+	_, err = load("message_prefix: loud\n", "")
+	assert.ErrorContains(t, err, `message_prefix "loud" must be one of off, name, channel`)
+	_, err = load("", "message_prefix: loud\n")
+	assert.ErrorContains(t, err, `message_prefix "loud" must be one of off, name, channel`)
+}

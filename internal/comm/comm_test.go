@@ -100,6 +100,7 @@ func TestReceiveNormalizesStoresAndRoutes(t *testing.T) {
 	require.Len(t, r.routed, 1)
 	assert.Equal(t, d.Message, r.routed[0])
 	assert.Equal(t, "[h]: hi", r.routed[0].Line(), "the agent reads only sender and text")
+	assert.Equal(t, "chat", r.routed[0].Channel, "and the channel it came in on, for a prefix that names it")
 
 	got, err := st.GetScoped("a", d.Message.ID)
 	require.NoError(t, err)

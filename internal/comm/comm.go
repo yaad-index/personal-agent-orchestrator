@@ -303,6 +303,7 @@ func (l *Layer) Receive(ctx context.Context, in Inbound) (Delivery, error) {
 		Sender:      in.Sender,
 		Kind:        in.Kind,
 		Text:        in.Text,
+		Channel:     in.Source,
 		Format:      in.Format,
 		Reply:       reply,
 		Attachments: in.Attachments,

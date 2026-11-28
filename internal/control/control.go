@@ -78,6 +78,9 @@ type Plane struct {
 	settle time.Duration
 	// clock tells the time start-up questions are timed by.
 	clock func() time.Time
+	// prefix is the node's message prefix, for an agent whose profile sets
+	// none (ADR-0058 point 10).
+	prefix string
 }
 
 // WithSettle sets how long a start-up question must have been shown before it
@@ -88,6 +91,11 @@ func WithSettle(d time.Duration) Option { return func(p *Plane) { p.settle = d }
 // waiting for it to be ready. Each is answered at most once per start: one that
 // comes back is left, and the start times out as any other that is not ready.
 func WithPrompts(f func(core.Profile) []Prompt) Option { return func(p *Plane) { p.prompts = f } }
+
+// WithMessagePrefix sets how a message an agent reads carries its sender when
+// the agent's profile does not say: core.PrefixOff, the default, PrefixName or
+// PrefixChannel.
+func WithMessagePrefix(prefix string) Option { return func(p *Plane) { p.prefix = prefix } }
 
 // Option configures a Plane.
 type Option func(*Plane)
@@ -213,9 +221,14 @@ func (p *Plane) Launch(ctx context.Context, prof core.Profile) error {
 	}
 }
 
-// Deliver pastes the message into the agent's terminal as `[sender]: text`.
+// Deliver pastes the message into the agent's terminal, with its sender before
+// it as the agent's profile, or else the node, sets (ADR-0058 point 10).
 func (p *Plane) Deliver(ctx context.Context, prof core.Profile, m core.Message) error {
-	return p.term.Paste(ctx, prof.Name, m.Line())
+	prefix := prof.MessagePrefix
+	if prefix == "" {
+		prefix = p.prefix
+	}
+	return p.term.Paste(ctx, prof.Name, m.LineWith(prefix))
 }
 
 // Kill ends the agent's session. It is an explicit act, never automatic

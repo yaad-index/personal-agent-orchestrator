@@ -66,6 +66,10 @@ type Orchestrator struct {
 	// Level is the verbosity level agent output is mirrored to the human at
 	// (ADR-0008). Default 1.
 	Level int `yaml:"level"`
+	// MessagePrefix is how a message an agent reads carries its sender: off,
+	// the default, name or channel (ADR-0058 point 10). An agent's profile may
+	// say otherwise.
+	MessagePrefix string `yaml:"message_prefix"`
 	// MeshFile is the mesh document: the list of nodes in the mesh, the same on
 	// every node (ADR-0017 point 9). Empty means this node is not part of a mesh.
 	// A relative path is resolved against the directory of the orchestrator config.
@@ -884,6 +888,12 @@ func load(path string, withMesh bool, override *Managed) (*Config, error) {
 	if o.Level < 1 {
 		return nil, fmt.Errorf("%s: level must be at least 1", path)
 	}
+	if o.MessagePrefix == "" {
+		o.MessagePrefix = core.PrefixOff
+	}
+	if !slices.Contains(core.Prefixes, o.MessagePrefix) {
+		return nil, fmt.Errorf("%s: message_prefix %q must be one of %s", path, o.MessagePrefix, strings.Join(core.Prefixes, ", "))
+	}
 	if len(o.Gate.AutoAllow) == 0 {
 		o.Gate.AutoAllow = []string{"read"}
 	}
@@ -1226,6 +1236,9 @@ func validate(p core.Profile) error {
 		if p.User == "" {
 			return errors.New("log_channel is set but user is not: a log channel is one of the agent's user's channels")
 		}
+	}
+	if p.MessagePrefix != "" && !slices.Contains(core.Prefixes, p.MessagePrefix) {
+		return fmt.Errorf("message_prefix %q must be one of %s", p.MessagePrefix, strings.Join(core.Prefixes, ", "))
 	}
 	if p.Backend == "" {
 		return errors.New("backend is required")
