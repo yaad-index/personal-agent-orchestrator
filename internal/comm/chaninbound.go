@@ -228,7 +228,7 @@ func (l *Layer) DefaultAgent(channel string) (string, bool) {
 // 5). An admitted group and a named topic may have one of their own, stored under
 // their destination name; a topic that is not named has its group's.
 func (l *Layer) DefaultAgentIn(channel, conversation string) (string, bool) {
-	if l.defaults == nil {
+	if l.defaults == nil || l.isLog(channel) {
 		return "", false
 	}
 	if g, ok := l.group(channel, conversation); ok {
@@ -306,6 +306,12 @@ func (l *Layer) ReceiveFromChannel(ctx context.Context, in ChannelInbound) (Chan
 		if !ok && !in.Registration && !in.Join && in.MovedTo == "" {
 			return ChannelResult{}, l.reject(in, RecordMessage, "no channel is this conversation: "+conversationOf(in), in.Raw)
 		}
+	}
+
+	// A log channel is output only (ADR-0058 point 7): nothing written there
+	// is acted on, the owner's words and a press included.
+	if l.isLog(in.Channel) && !in.Registration && !in.Join && in.MovedTo == "" {
+		return ChannelResult{}, l.reject(in, RecordMessage, "a log channel takes no input", in.Raw)
 	}
 
 	// Nothing from outside the channel's one conversation, or from anyone but
@@ -481,6 +487,7 @@ type noCommands struct{}
 
 func (noCommands) SetStream(context.Context, string, string, int) error { return errNoCommands }
 func (noCommands) View(context.Context, string, string) error           { return errNoCommands }
+func (noCommands) Log(context.Context, string, string) error            { return errNoCommands }
 func (noCommands) Decide(context.Context, string, string, string) error { return errNoCommands }
 func (noCommands) Agents(context.Context) ([]command.Agent, error)      { return nil, errNoCommands }
 func (noCommands) Bind(context.Context, command.Binding) (command.Binding, error) {

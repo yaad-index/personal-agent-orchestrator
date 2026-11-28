@@ -80,6 +80,9 @@ func (l *Layer) operatorsPrivately(agent string) []target {
 	var out []target
 	reached := map[string]bool{}
 	for _, ch := range l.Channels() {
+		if l.isLog(ch) {
+			continue // a press there would not be taken
+		}
 		key := ch
 		if s, ok := l.scopes[ch]; ok {
 			key = l.providerOf(ch) + "\x00" + s.Owner
@@ -114,7 +117,7 @@ func (l *Layer) permissionTargets(agent, user string, m core.Message) ([]target,
 	if ch != "" {
 		s, ok := l.scopes[ch]
 		switch {
-		case !ok || s.Owner != user || !l.HasChannel(ch):
+		case !ok || s.Owner != user || !l.HasChannel(ch) || l.isLog(ch):
 			if _, seen := l.unshown.LoadOrStore("permission\x00"+user+"\x00"+ch, true); !seen {
 				slog.Warn("a user's permission channel is not a channel of theirs; their private conversation is used", "user", user, "channel", ch)
 			}
@@ -131,7 +134,7 @@ func (l *Layer) permissionTargets(agent, user string, m core.Message) ([]target,
 	if ch == "" {
 		names := make([]string, 0, len(l.scopes))
 		for name, s := range l.scopes {
-			if s.Owner == user && l.HasChannel(name) {
+			if s.Owner == user && l.HasChannel(name) && !l.isLog(name) {
 				names = append(names, name)
 			}
 		}
@@ -202,6 +205,9 @@ func (l *Layer) notifyOperators(ctx context.Context, m core.Message, channels []
 	m.Kind = core.MessageSystemEvent
 	var targets []target
 	for _, ch := range channels {
+		if l.isLog(ch) {
+			continue // a press there would not be taken
+		}
 		targets = append(targets, target{kind: toPrivate, at: origin{channel: ch}})
 	}
 	stored, err := l.store.Add(m)

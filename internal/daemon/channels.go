@@ -12,7 +12,9 @@ import (
 	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/adapter"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/comm"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/config"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/identity"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/registry"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/rejected"
 )
 
@@ -75,6 +77,42 @@ func wireChannels(cfg *config.Config, creds map[string]string, table adapter.Tab
 		out[specs[i].Name] = a
 	}
 	return out, nil
+}
+
+// logChannelsOf returns the agents' log channels as their profiles in reg name
+// them now (ADR-0058 point 7), by channel name, each with its agent. A profile
+// is checked against the channels before it is loaded or saved; one naming a
+// channel the node does not run has none.
+func logChannelsOf(reg *registry.Registry, chs []config.Channel) func() map[string]string {
+	running := make(map[string]bool, len(chs))
+	for _, c := range chs {
+		running[c.Name] = true
+	}
+	return func() map[string]string {
+		out := map[string]string{}
+		for _, a := range reg.All() {
+			if ch := a.Profile.LogChannel; ch != "" && running[ch] {
+				out[ch] = a.Profile.Name
+			}
+		}
+		return out
+	}
+}
+
+// savedProfileCheck is what a profile saved while the node runs must pass, as
+// one loaded at start does: a transcript format it can read, and a log channel,
+// if it names one, among the node's channels and no other agent's.
+func savedProfileCheck(reg *registry.Registry, chs []config.Channel) func(core.Profile) error {
+	return func(p core.Profile) error {
+		if err := checkProfile(p); err != nil {
+			return err
+		}
+		var others []core.Profile
+		for _, a := range reg.All() {
+			others = append(others, a.Profile)
+		}
+		return config.CheckLogChannel(p, chs, others)
+	}
 }
 
 // standingBindings is the configured standing bindings as the layer routes them

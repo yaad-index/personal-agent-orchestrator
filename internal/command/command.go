@@ -26,6 +26,9 @@ type Ops interface {
 	SetStream(ctx context.Context, agent, channel string, level int) error
 	// View pauses or resumes the agent's view.
 	View(ctx context.Context, agent, action string) error
+	// Log pauses or resumes the agent's log channel (ADR-0058 point 7): action
+	// is "pause" or "resume".
+	Log(ctx context.Context, agent, action string) error
 	// Decide answers a gate question: decision is "allow", "always" or "deny".
 	Decide(ctx context.Context, id, decision, reason string) error
 	// Agents lists the agents the operator may reach under the access matrix,
@@ -143,6 +146,7 @@ var table = []spec{
 	{word: "kill", args: "<agent>", about: "harvest a temporary agent's outputs, then remove it", operator: true, run: runKill},
 	{word: "file", args: "<agent> <path>", about: "send you a file from an agent's working directory", run: runFile},
 	{word: "view", args: "<agent> pause|resume", about: "hold an agent's output back, or send what was held and let it through again", operator: true, run: runView},
+	{word: "log", args: "<agent> pause|resume", about: "stop sending an agent's output to its log channel, or start again; what it says meanwhile is not sent later", operator: true, run: runLog},
 	{word: "allow", args: "<question>", about: "allow what a gate question asks, once", operator: true, run: decide("allow")},
 	{word: "always", args: "<question>", about: "allow what a gate question asks, and remember it", operator: true, run: decide("always")},
 	{word: "deny", args: "<question> [reason]", about: "deny what a gate question asks", operator: true, run: decide("deny")},
@@ -335,6 +339,19 @@ func runView(ctx context.Context, ops Ops, _ Caller, args []string, _ string) (R
 		return Result{Reply: fmt.Sprintf("%s's view is paused", args[0])}, true
 	}
 	return Result{Reply: fmt.Sprintf("%s's view is resumed", args[0])}, true
+}
+
+func runLog(ctx context.Context, ops Ops, _ Caller, args []string, _ string) (Result, bool) {
+	if len(args) != 2 || (args[1] != "pause" && args[1] != "resume") {
+		return Result{}, false
+	}
+	if err := ops.Log(ctx, args[0], args[1]); err != nil {
+		return Result{Reply: err.Error()}, true
+	}
+	if args[1] == "pause" {
+		return Result{Reply: fmt.Sprintf("%s's log channel is paused", args[0])}, true
+	}
+	return Result{Reply: fmt.Sprintf("%s's log channel is resumed", args[0])}, true
 }
 
 func decide(decision string) func(context.Context, Ops, Caller, []string, string) (Result, bool) {

@@ -74,9 +74,11 @@ type Server struct {
 	restart    func()
 	// restartCheck, when set, must pass before a restart is asked.
 	restartCheck func() error
-	questions    func() []QuestionJSON
-	recipes      func() ([]RecipeJSON, error)
-	channels     []ChannelJSON
+	// logs pauses and resumes the agents' log channels.
+	logs      LogPauser
+	questions func() []QuestionJSON
+	recipes   func() ([]RecipeJSON, error)
+	channels  []ChannelJSON
 	// channelConfig is the channel configuration's view and change.
 	channelConfig ChannelConfigAPI
 	token         []byte
@@ -182,6 +184,7 @@ func (s *Server) Handler() http.Handler {
 	s.registerProfiles(mux)
 	s.registerOperate(mux)
 	s.registerChannelConfig(mux)
+	s.registerLogs(mux)
 	if s.node != nil {
 		mux.HandleFunc("GET /v1/node", s.auth(func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, http.StatusOK, s.node()) }))
 	}

@@ -16,6 +16,7 @@ func permissionSetup(t *testing.T) (*Layer, *fakeIdentity, map[string]*convChann
 	t.Helper()
 	l, r, id, _ := chanSetup(t)
 	r.agents["b"] = []string{"b"}
+	r.agents["c"] = []string{"c"} // of no user
 	r.users = map[string]string{"a": "alice", "b": "bob"}
 	id.bound = map[string]string{"tg\x00op": "alice", "tg\x00pb": "bob"}
 	id.permission = map[string]string{}

@@ -319,8 +319,12 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	hook := &launchHook{plane: plane}
 	router := route.New(reg, hook, plane)
 	layer := comm.New(store, router)
+	// The agents' log channels, as their profiles name them now.
+	logChannels := logChannelsOf(reg, cfg.Orchestrator.Channels)
+	layer.SetLogChannels(logChannels)
 	// The layer routes by the defaults that belong to their channel's owner.
 	defaultsCtl := newDefaultsAPI(defaults, cfg.Orchestrator.Channels, router.Resolve)
+	defaultsCtl.logs = logChannels
 	layer.SetDefaults(defaultsCtl)
 	layer.SetOperatorAccess(func(p core.Profile) bool {
 		return access.Allowed(auth, access.Operator, access.Route, access.AgentResource(p.Name, p.Tags))
@@ -339,7 +343,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	// point 2); a profile saved while its agent runs is applied when it stops.
 	var profiles *profileFiles
 	if cfg.Orchestrator.ProfilesDir != "" {
-		profiles = newProfileFiles(cfg.Orchestrator.ProfilesDir, cfg.Orchestrator, reg, checkProfile)
+		profiles = newProfileFiles(cfg.Orchestrator.ProfilesDir, cfg.Orchestrator, reg, savedProfileCheck(reg, cfg.Orchestrator.Channels))
 	}
 	life := lifecycle{router: router, plane: plane, reg: reg, follow: hook.follow, profiles: profiles}
 	saved, err := loadSavedStreams(filepath.Join(cfg.Orchestrator.StateDir, "streams.json"))
@@ -475,7 +479,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		// request's delivery starts it again.
 		layer.SetGovernorReset(func(ctx context.Context) error { return life.Stop(ctx, g) })
 	}
-	layer.SetCommands(chatCommands{streams: streamOps, standing: standingOps, temps: tempOps, decider: decider, agents: ops, auth: auth, profiles: reg.Lookup})
+	layer.SetCommands(chatCommands{streams: streamOps, standing: standingOps, temps: tempOps, decider: decider, agents: ops, auth: auth, profiles: reg.Lookup, logs: layer})
 
 	budgetCtx, stopBudget := context.WithCancel(ctx)
 	defer stopBudget()
@@ -532,8 +536,8 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	if profiles != nil {
 		localOpts = append(localOpts, local.WithProfiles(profiles))
 	}
-	srv, err := local.New(layer, token, append([]local.Option{local.WithDecider(decider), local.WithTemp(tempOps), local.WithStream(streamOps), local.WithStanding(standingOps), local.WithWatch(streamOps), local.WithLifecycle(lifeOps), local.WithRejected(rejectedAPI{rejects}), local.WithTasks(taskAPI{tasks}), local.WithIdentity(identityAPI{s: ids, providers: providerNames(cfg.Orchestrator.Providers), owners: channelOwners(cfg.Orchestrator.Channels)}),
-		local.WithDefaults(defaultsCtl), local.WithGrants(grantsAPI{store: grantStore, changed: mcpServer.Refresh}),
+	srv, err := local.New(layer, token, append([]local.Option{local.WithDecider(decider), local.WithTemp(tempOps), local.WithStream(streamOps), local.WithStanding(standingOps), local.WithWatch(streamOps), local.WithLifecycle(lifeOps), local.WithRejected(rejectedAPI{rejects}), local.WithTasks(taskAPI{tasks}), local.WithIdentity(identityAPI{s: ids, providers: providerNames(cfg.Orchestrator.Providers), owners: channelOwners(cfg.Orchestrator.Channels), logs: logChannels}),
+		local.WithDefaults(defaultsCtl), local.WithLogs(layer), local.WithGrants(grantsAPI{store: grantStore, changed: mcpServer.Refresh}),
 		local.WithMount("/mcp", mcpHandler),
 		// The management UI (ADR-0047), on this same listener: its session is the
 		// operator's, opened with the operator token.

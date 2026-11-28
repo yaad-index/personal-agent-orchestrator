@@ -31,6 +31,7 @@ type CLI struct {
 	Bindings StandingCmd `cmd:"" help:"Standing bindings: which destinations follow an agent's output or stderr."`
 	Watch    WatchCmd    `cmd:"" help:"Follow an agent's output on demand, here or on another node."`
 	View     ViewCmd     `cmd:"" help:"Pause, resume or backtrack the view of an agent's output."`
+	Log      LogCmd      `cmd:"" help:"Pause or resume an agent's log channel."`
 	Agent    AgentCmd    `cmd:"" help:"Start, stop or restart a configured agent."`
 	Governor GovernorCmd `cmd:"" help:"The governor, which turns a request in plain words into one command to commit."`
 	Access   AccessCmd   `cmd:"" help:"The access matrix: which agents each subject may reach."`

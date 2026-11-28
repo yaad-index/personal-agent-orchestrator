@@ -61,11 +61,17 @@ func (l *Layer) SetBindings(bs []Binding) {
 	l.bindings = slices.Clone(bs)
 }
 
-// bindingsOf returns the agent's standing bindings of a stream.
+// bindingsOf returns the agent's standing bindings of a stream. Its stdout
+// includes its log channel, unless that is paused.
 func (l *Layer) bindingsOf(agent, stream string) []Binding {
+	var out []Binding
+	if stream == StreamStdout {
+		if b, ok := l.logBinding(agent); ok {
+			out = append(out, b)
+		}
+	}
 	l.mu.RLock()
 	defer l.mu.RUnlock()
-	var out []Binding
 	for _, b := range l.bindings {
 		s := b.Stream
 		if s == "" {
@@ -116,6 +122,11 @@ func (l *Layer) resolve(d Dest) []origin {
 		}
 	case DestChannel:
 		if l.HasChannel(d.Name) {
+			// A chat channel whose one conversation is a group or a topic is
+			// that conversation (ADR-0058 point 2).
+			if s, ok := l.scopes[d.Name]; ok && s.Conversation != "" {
+				return []origin{{channel: d.Name, conversation: s.Conversation}}
+			}
 			return []origin{{channel: d.Name}}
 		}
 	}

@@ -1038,7 +1038,38 @@ func load(path string, withMesh bool, override *Managed) (*Config, error) {
 	if err := checkBindings(path, &cfg.Orchestrator, seen); err != nil {
 		return nil, err
 	}
+	for _, p := range cfg.Profiles {
+		if err := CheckLogChannel(p, cfg.Orchestrator.Channels, cfg.Profiles); err != nil {
+			return nil, fmt.Errorf("%s: %w", seen[p.Name], err)
+		}
+	}
 	return cfg, nil
+}
+
+// CheckLogChannel checks p's log channel, if it has one, against the node's
+// channels and its other agents (ADR-0058 points 7 and 8): it is a channel of
+// p's user, a group or a topic, since the user's private conversation is where
+// pao asks its questions and an inbound on a log channel is never acted on,
+// and no other agent's log channel.
+func CheckLogChannel(p core.Profile, chs []Channel, others []core.Profile) error {
+	if p.LogChannel == "" {
+		return nil
+	}
+	i := slices.IndexFunc(chs, func(c Channel) bool { return c.Name == p.LogChannel })
+	switch {
+	case i < 0:
+		return fmt.Errorf("log_channel %q is not a configured channel", p.LogChannel)
+	case chs[i].Owner != p.User:
+		return fmt.Errorf("log_channel %q is %s's, and agent %q is %s's: a log channel is one of its user's channels", p.LogChannel, chs[i].Owner, p.Name, p.User)
+	case chs[i].Target == TargetPrivate:
+		return fmt.Errorf("log_channel %q is a private conversation, where pao asks its questions; a log channel is a group or a topic", p.LogChannel)
+	}
+	for _, o := range others {
+		if o.Name != p.Name && o.LogChannel == p.LogChannel {
+			return fmt.Errorf("log_channel %q is already agent %q's: a log channel is one agent's", p.LogChannel, o.Name)
+		}
+	}
+	return nil
 }
 
 // governorPrefix is the shape of a governor prefix: a slash and one word.
@@ -1187,6 +1218,14 @@ func validate(p core.Profile) error {
 	}
 	if p.User != "" && !channelNamePattern.MatchString(p.User) {
 		return fmt.Errorf("user %q must name a subject: lowercase letters, digits, '-' or '_', at most 32", p.User)
+	}
+	if p.LogChannel != "" {
+		if !channelNamePattern.MatchString(p.LogChannel) {
+			return fmt.Errorf("log_channel %q is not a channel name", p.LogChannel)
+		}
+		if p.User == "" {
+			return errors.New("log_channel is set but user is not: a log channel is one of the agent's user's channels")
+		}
 	}
 	if p.Backend == "" {
 		return errors.New("backend is required")

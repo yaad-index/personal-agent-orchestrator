@@ -17,7 +17,7 @@ var ReservedNames = []string{"pao", "operator"}
 // must not carry one as its name: "/pao <name> <message>" addresses an agent, so an
 // agent named like a command could never be reached that way. The command table
 // is checked against this list.
-var CommandWords = []string{"agent", "agents", "allow", "always", "bind", "bindings", "deny", "file", "help", "kill", "spawn", "stream", "tag", "unbind", "view"}
+var CommandWords = []string{"agent", "agents", "allow", "always", "bind", "bindings", "deny", "file", "help", "kill", "log", "spawn", "stream", "tag", "unbind", "view"}
 
 // Profile is the agent-intrinsic configuration of one agent (ADR-0001 point 4).
 // Only the fields the built milestones consume are present; later milestones
@@ -64,6 +64,10 @@ type Profile struct {
 	// owns may be the agent's (ADR-0058 point 9); an agent with no user has no
 	// channel.
 	User string `yaml:"user"`
+	// LogChannel is the agent's log channel, by name: one of its user's group
+	// or topic channels, shown all of the agent's output unfiltered and taking
+	// no input (ADR-0058 point 7). Empty, the default, is none.
+	LogChannel string `yaml:"log_channel"`
 	// Budget is how the agent's headroom is judged from its account's figure.
 	Budget BudgetRule `yaml:"budget"`
 }

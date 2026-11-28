@@ -28,6 +28,10 @@ type chatCommands struct {
 	auth   access.Authorizer
 	// profiles finds an agent of this node by name, for its working directory.
 	profiles func(name string) (core.Profile, core.State, bool)
+	// logs pauses and resumes the agents' log channels.
+	logs interface {
+		PauseLog(agent string, pause bool) error
+	}
 }
 
 // maxFile is the largest file a command reads from a working directory. A
@@ -42,6 +46,11 @@ func (c chatCommands) SetStream(ctx context.Context, agent, channel string, leve
 
 func (c chatCommands) View(ctx context.Context, agent, action string) error {
 	return c.streams.View(ctx, agent, action, 0, 0)
+}
+
+// Log pauses or resumes the agent's log channel.
+func (c chatCommands) Log(_ context.Context, agent, action string) error {
+	return c.logs.PauseLog(agent, action == "pause")
 }
 
 func (c chatCommands) Decide(_ context.Context, id, decision, reason string) error {

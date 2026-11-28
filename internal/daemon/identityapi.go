@@ -22,6 +22,8 @@ type identityAPI struct {
 	providers []string
 	// owners holds the owner of each channel the node runs, by name.
 	owners map[string]string
+	// logs returns the agents' log channels, by channel name; nil for none.
+	logs func() map[string]string
 }
 
 func identityErr(err error) error {
@@ -59,6 +61,11 @@ func (a identityAPI) SetPermission(_ context.Context, name, channel string) erro
 			return translated{local.ErrBadRequest, fmt.Errorf("no channel %q", channel)}
 		}
 		return translated{local.ErrBadRequest, fmt.Errorf("channel %q is %s's, not %s's: a permission channel is one of the user's own", channel, owner, name)}
+	}
+	if a.logs != nil {
+		if of, ok := a.logs()[channel]; ok {
+			return translated{local.ErrBadRequest, fmt.Errorf("channel %q is agent %q's log channel, which takes no input, so no question there could be answered", channel, of)}
+		}
 	}
 	return identityErr(a.s.SetPermission(name, channel))
 }
