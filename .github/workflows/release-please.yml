@@ -1,0 +1,30 @@
+name: release-please
+
+# On every push to main, release-please keeps one release pull request open
+# that carries the next version and its CHANGELOG entries, computed from the
+# conventional-commit subjects merged since the last release (RELEASING.md).
+# Merging that pull request tags the release and publishes a GitHub Release.
+#
+# A pull request opened with the built-in GITHUB_TOKEN does not trigger other
+# workflows, so CI does not run on the release pull request by itself. With a
+# RELEASE_PLEASE_TOKEN secret (contents and pull requests: write) it is opened
+# with that token and CI runs as on any other; without one, a maintainer closes
+# and reopens it once to start CI.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run release-please
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
