@@ -1,6 +1,6 @@
 # ADR 0058: A channel is one conversation of one owner, on a provider the configuration defines
 
-**Status:** Proposed
+**Status:** Accepted (2026-11-28)
 
 Supersedes ADR-0019, ADR-0029, ADR-0038, ADR-0045 and ADR-0057. Each is kept in full except the points named here, which this ADR changes:
 - ADR-0019 points 4 and 6;

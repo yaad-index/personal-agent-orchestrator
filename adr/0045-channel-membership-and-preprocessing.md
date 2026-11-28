@@ -2,6 +2,8 @@
 
 **Status:** Accepted (2026-11-25)
 
+**Superseded-by:** ADR-0058 (a channel is one conversation of one owner; changes point 2)
+
 ## Context
 
 The channel model is already rich: a channel is a communication endpoint with a per-source adapter (ADR-0009, ADR-0019); every inbound carries an authenticated per-sender id resolved to a subject (ADR-0019); a channel is a resource used for stdin and stdout (ADR-0038 point 8); a `/pao` command is pao's and never reaches an agent, with who may run one decided per command from the sender's subject (ADR-0026); and a group has a member policy whose only value today is "operators", a conversation's readers being its members under the narrowest-reader rule (ADR-0028 points 2 and 5, kept by ADR-0029).

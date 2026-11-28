@@ -2,6 +2,8 @@
 
 **Status:** Accepted
 
+**Superseded-by:** ADR-0058 (a channel is one conversation of one owner; the credential reference moves to the provider, points 2-3)
+
 Settles what ADR-0055 left open, where a channel's credential comes from when the UI defines the channel. Builds on ADR-0055 (the managed file), ADR-0047 points 2, 4 and 5 (the UI defines a channel, is a front and not a new authority, and stays private), ADR-0020 point 6 (a channel is configured with a reference to its credential, never the credential), ADR-0037 (the node's secrets, held in the daemon's environment or a file) and ADR-0053 point 1 (a secret bound to one consumer is that consumer's alone).
 
 ## Context

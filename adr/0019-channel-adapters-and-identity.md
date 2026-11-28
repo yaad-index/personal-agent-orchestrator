@@ -2,6 +2,8 @@
 
 **Status:** Proposed (2026-11-14)
 
+**Superseded-by:** ADR-0058 (a channel is one conversation of one owner; changes points 4 and 6)
+
 ## Context
 
 ADR-0009 fixed what a channel is (the human-facing subset of sources) and that every source is an adapter in one place, but left each adapter's implementation, and which platforms ship first, open. ADR-0012 made humans subjects in the access matrix but explicitly deferred how an inbound sender is resolved to a particular human subject. ADR-0011 fixed how a backend is made pluggable, a uniform contract with the profile declaring the specifics, without binding pao's core to any one backend. This ADR fills those two gaps for channels: how a channel adapter is added, and how an inbound sender on a channel becomes a known human subject.

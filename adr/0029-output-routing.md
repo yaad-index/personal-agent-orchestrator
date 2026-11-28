@@ -2,6 +2,8 @@
 
 **Status:** Accepted (2026-11-20)
 
+**Superseded-by:** ADR-0058 (a channel is one conversation of one owner; changes points 1, 4 and 7)
+
 Supersedes ADR-0028 (group conversations). Keeps its points 1 to 5, its prerequisite and its deferred list unchanged, and changes point 6. Extends ADR-0008 (verbosity), ADR-0012 (access), ADR-0023 (agent I/O and channel bindings), ADR-0026 (operator commands from chat).
 
 ## Context
