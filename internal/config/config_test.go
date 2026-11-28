@@ -862,3 +862,38 @@ func TestAChannelSharesANameOnlyWithItsOwnProvider(t *testing.T) {
 	require.Error(t, err, "a sender bound under the name would be the channel's and the provider's at once")
 	assert.Contains(t, err.Error(), `name "other" is a provider's, and the channel is carried on "tg"`)
 }
+
+func TestALogChannelIsAGroupOrTopicOfTheAgentsUserAndOneAgentsAlone(t *testing.T) {
+	chs := []Channel{
+		{Name: "dm", Owner: "alice", Target: TargetPrivate},
+		{Name: "logs", Owner: "alice", Target: "-5/42"},
+		{Name: "bobs", Owner: "bob", Target: "-6"},
+	}
+	agent := func(name, log string) core.Profile { return core.Profile{Name: name, User: "alice", LogChannel: log} }
+	require.NoError(t, CheckLogChannel(agent("a", ""), chs, nil), "none is fine")
+	require.NoError(t, CheckLogChannel(agent("a", "logs"), chs, []core.Profile{agent("a", "logs")}), "its own entry among the others")
+	for log, want := range map[string]string{
+		"nope": `log_channel "nope" is not a configured channel`,
+		"bobs": `log_channel "bobs" is bob's, and agent "a" is alice's`,
+		"dm":   `log_channel "dm" is a private conversation`,
+	} {
+		assert.ErrorContains(t, CheckLogChannel(agent("a", log), chs, nil), want, log)
+	}
+	assert.ErrorContains(t, CheckLogChannel(agent("a", "logs"), chs, []core.Profile{agent("b", "logs")}), `already agent "b"'s`)
+
+	err := ValidateProfile(core.Profile{Name: "a", LogChannel: "logs"})
+	assert.ErrorContains(t, err, "log_channel is set but user is not")
+	assert.ErrorContains(t, ValidateProfile(core.Profile{Name: "a", User: "alice", LogChannel: "Not Valid"}), "is not a channel name")
+}
+
+func TestAProfileWithAnotherUsersLogChannelDoesNotLoad(t *testing.T) {
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "pao.yaml"), "node: n1\nprofiles_dir: profiles\nstate_dir: state\ntoken_env: PAO_TOKEN\n"+
+		"providers:\n  - name: tg\n    kind: bot\n    credential_env: A\n"+
+		"channels:\n  - id: 1\n    name: logs\n    provider: tg\n    owner: bob\n    target: \"-5\"\n    groups:\n      - id: \"-5\"\n        name: logs\n        members: operators\n")
+	write(t, filepath.Join(dir, "profiles", "a.yaml"), "name: a\nbackend: claude-code\nuser: alice\nlog_channel: logs\n"+startup)
+	_, err := Load(filepath.Join(dir, "pao.yaml"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), filepath.Join(dir, "profiles", "a.yaml"))
+	assert.Contains(t, err.Error(), `log_channel "logs" is bob's`)
+}

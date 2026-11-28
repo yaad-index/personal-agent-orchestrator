@@ -48,6 +48,11 @@ func (f *fakeOps) View(_ context.Context, agent, action string) error {
 	return f.err
 }
 
+func (f *fakeOps) Log(_ context.Context, agent, action string) error {
+	f.calls = append(f.calls, "log|"+agent+"|"+action)
+	return f.err
+}
+
 func (f *fakeOps) Decide(_ context.Context, id, decision, reason string) error {
 	f.calls = append(f.calls, "decide|"+id+"|"+decision+"|"+reason)
 	return f.err
@@ -203,6 +208,8 @@ func TestViewAndDecide(t *testing.T) {
 	for text, want := range map[string]string{
 		"/pao view coder pause":            "view|coder|pause",
 		"/pao view coder resume":           "view|coder|resume",
+		"/pao log coder pause":             "log|coder|pause",
+		"/pao log coder resume":            "log|coder|resume",
 		"/pao allow q3":                    "decide|q3|allow|",
 		"/pao always s2.q3":                "decide|s2.q3|always|",
 		"/pao deny q3":                     "decide|q3|deny|",
@@ -213,7 +220,7 @@ func TestViewAndDecide(t *testing.T) {
 		assert.Equal(t, []string{want}, ops.calls, "%q", text)
 		assert.NotEmpty(t, res.Reply)
 	}
-	for _, text := range []string{"/pao view coder", "/pao view coder stop", "/pao allow", "/pao allow q3 because", "/pao deny"} {
+	for _, text := range []string{"/pao view coder", "/pao view coder stop", "/pao log coder", "/pao log coder stop", "/pao allow", "/pao allow q3 because", "/pao deny"} {
 		ops := &fakeOps{}
 		res := Run(context.Background(), ops, operator, text)
 		assert.Empty(t, ops.calls, "%q", text)
@@ -247,7 +254,7 @@ func TestAgents(t *testing.T) {
 // operator surface reports it.
 func TestFailureIsTheOperationsOwnWords(t *testing.T) {
 	ops := &fakeOps{err: errors.New(`no agent "coder"`)}
-	for _, text := range []string{"/pao stream coder", "/pao view coder pause", "/pao allow q1", "/pao agents"} {
+	for _, text := range []string{"/pao stream coder", "/pao view coder pause", "/pao log coder pause", "/pao allow q1", "/pao agents"} {
 		assert.Equal(t, `no agent "coder"`, Run(context.Background(), ops, operator, text).Reply, "%q", text)
 	}
 }

@@ -30,6 +30,8 @@ type defaultsAPI struct {
 	// and chanOf to the channel's name.
 	owners, chanOf map[string]string
 	resolve        func(core.Target) ([]core.Profile, error)
+	// logs returns the agents' log channels, by channel name; nil for none.
+	logs func() map[string]string
 }
 
 func newDefaultsAPI(store *defaultagent.Store, chs []config.Channel, resolve func(core.Target) ([]core.Profile, error)) defaultsAPI {
@@ -61,6 +63,11 @@ func newDefaultsAPI(store *defaultagent.Store, chs []config.Channel, resolve fun
 // notOwners says why agent may not be the agent of the channel at key, or nil
 // if it may: it must belong to the channel's owner.
 func (a defaultsAPI) notOwners(key, agent string) error {
+	if a.logs != nil {
+		if of, ok := a.logs()[a.chanOf[key]]; ok {
+			return translated{local.ErrBadRequest, fmt.Errorf("channel %q is agent %q's log channel, which takes no input, so it has no agent", a.chanOf[key], of)}
+		}
+	}
 	ps, err := a.resolve(core.Target{Kind: core.ByName, Value: agent})
 	if err != nil || len(ps) != 1 || ps[0].Name != agent {
 		return translated{local.ErrNotFound, fmt.Errorf("no agent %q", agent)}

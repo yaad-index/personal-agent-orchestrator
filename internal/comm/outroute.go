@@ -226,6 +226,9 @@ func (l *Layer) routed(channel string, m core.Message, r outRoute) []string {
 		}
 		switch t.kind {
 		case toWide:
+			if l.isLog(channel) {
+				continue // a log channel is shown its own agent's output, by its binding, and nothing else
+			}
 			for _, c := range l.wide(channel, m) {
 				if !r.covered[origin{channel: channel, conversation: c}] {
 					add(c)

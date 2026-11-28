@@ -145,6 +145,10 @@ type Layer struct {
 	// providers are each chat channel's provider, by channel name: identity is
 	// the provider's, since a sender's id is the platform connection's.
 	providers map[string]string
+	// logs returns the agents' log channels, by channel name.
+	logs func() map[string]string
+	// logPaused holds each agent whose log channel is paused.
+	logPaused sync.Map
 	// unscoped lifts the scopes, for this package's tests of the routing under
 	// them alone. Nothing outside the package can set it.
 	unscoped bool

@@ -37,6 +37,11 @@ func (c *cmdOps) View(_ context.Context, agent, action string) error {
 	return nil
 }
 
+func (c *cmdOps) Log(_ context.Context, agent, action string) error {
+	c.calls = append(c.calls, "log "+agent+" "+action)
+	return nil
+}
+
 func (c *cmdOps) Agents(context.Context) ([]command.Agent, error) {
 	c.calls = append(c.calls, "agents")
 	return []command.Agent{{Name: "a", State: "running"}}, nil
