@@ -55,13 +55,16 @@ func TestTheGovernorReadsUnderItsOwnGrantsAndActsOnNothing(t *testing.T) {
 }
 
 func TestTheGovernorIsToldTheChannelsByNameAndShapeAndNoSecret(t *testing.T) {
+	provs := []config.Provider{
+		{Name: "tg", Kind: "bot", CredentialEnv: "CHAT_SECRET_VAR", Options: map[string]any{"endpoint": "https://hidden.example", "token": "s3cr3t-value"}},
+		{Name: "tg2", Kind: "bot", CredentialEnv: "SIDE_SECRET_VAR"},
+	}
 	chans := []config.Channel{{
-		ID: 1, Name: "chat", Kind: "bot", CredentialEnv: "CHAT_SECRET_VAR",
-		Options: map[string]any{"endpoint": "https://hidden.example", "token": "s3cr3t-value"},
-		Groups:  []config.Group{{ID: "-100777", Name: "team", Members: config.MembersOperators}},
-	}, {ID: 2, Name: "side", Kind: "bot", CredentialEnv: "SIDE_SECRET_VAR", Owner: "alice", Target: config.TargetPrivate}}
+		ID: 1, Name: "chat", Provider: "tg",
+		Groups: []config.Group{{ID: "-100777", Name: "team", Members: config.MembersOperators}},
+	}, {ID: 2, Name: "side", Provider: "tg2", Owner: "alice", Target: config.TargetPrivate}}
 	serving := false
-	list := governorChannels(chans, func() bool { return serving })
+	list := governorChannels(provs, chans, func() bool { return serving })
 	assert.Empty(t, list(), "serving no request, it lists nothing")
 
 	serving = true

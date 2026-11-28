@@ -85,8 +85,11 @@ type Orchestrator struct {
 	// ProfileDefaults apply to every agent profile that does not say otherwise,
 	// a temporary agent's included (#179).
 	ProfileDefaults ProfileDefaults `yaml:"profile_defaults"`
+	// Providers are the platform connections channels are carried on, defined
+	// here only (ADR-0058 point 1).
+	Providers []Provider `yaml:"providers"`
 	// Channels are the human fronts to bring up beyond the local channel
-	// (ADR-0020 point 6).
+	// (ADR-0020 point 6), each one conversation on a provider (ADR-0058 point 2).
 	Channels []Channel `yaml:"channels"`
 	// MCPUpstreams are the MCP servers pao reaches as a client and offers tools of
 	// on its own MCP surface (ADR-0024).
@@ -381,26 +384,36 @@ const MaxToolName = 64
 // ToolName is the pao-side name of an upstream server's tool.
 func ToolName(upstream, tool string) string { return upstream + "__" + tool }
 
-// Channel configures one channel adapter (ADR-0020 point 6, ADR-0021 points 1
-// and 2).
+// Provider configures one platform connection, which carries channels
+// (ADR-0058 point 1). It is defined in the configuration only, never by the UI.
+type Provider struct {
+	// Name is the provider's name: lowercase letters, digits, '-' or '_',
+	// unique among the node's providers.
+	Name string `yaml:"name"`
+	// Kind selects an adapter compiled into this build.
+	Kind string `yaml:"kind"`
+	// CredentialEnv names the environment variable that holds the provider's
+	// credential. The credential itself never lives in a config file.
+	CredentialEnv string `yaml:"credential_env,omitempty"`
+	// CredentialSecret names one of the node's secrets as the provider's
+	// credential instead (ADR-0057 point 2, the provider's by ADR-0058 point
+	// 1). A provider names one or the other. Either way, where the value is
+	// read from is this provider's alone (ADR-0057 point 3).
+	CredentialSecret string `yaml:"credential_secret,omitempty"`
+	// Options are the adapter's own settings; only the adapter interprets them.
+	Options map[string]any `yaml:"options,omitempty"`
+}
+
+// Channel configures one channel: one conversation of one owner, carried on a
+// provider (ADR-0058 point 2, ADR-0021 points 1 and 2).
 type Channel struct {
 	// ID is the channel's numeric id, positive and unique, assigned once and never
 	// reused: it names the channel in every composite message id.
 	ID int `yaml:"id"`
 	// Name is the channel's name, the namespace of its bindings.
 	Name string `yaml:"name"`
-	// Kind selects an adapter compiled into this build.
-	Kind string `yaml:"kind"`
-	// CredentialEnv names the environment variable that holds the channel's
-	// credential. The credential itself never lives in a config file.
-	CredentialEnv string `yaml:"credential_env,omitempty"`
-	// CredentialSecret names one of the node's secrets as the channel's
-	// credential instead (ADR-0057 point 2). A channel names one or the other.
-	// Either way, where the value is read from is this channel's alone
-	// (ADR-0057 point 3).
-	CredentialSecret string `yaml:"credential_secret,omitempty"`
-	// Options are the adapter's own settings; only the adapter interprets them.
-	Options map[string]any `yaml:"options,omitempty"`
+	// Provider names the provider the channel is carried on.
+	Provider string `yaml:"provider"`
 	// Owner is the subject the channel belongs to. Only the owner's inbound is
 	// acted on; anyone else's is rejected and recorded.
 	Owner string `yaml:"owner"`
@@ -490,17 +503,66 @@ type channelSource struct {
 // checkChannels validates the channels of every file that defines some, as one
 // list: a name, id, group or topic used twice is an error whether the two are in
 // one file or in two (ADR-0055 point 3), and the error names where each is.
-func checkChannels(sources ...channelSource) error {
+func checkChannels(providers []Provider, sources ...channelSource) error {
 	ids, names, groupNames := map[int]string{}, map[string]string{}, map[string]string{}
+	carried := map[string]string{}
+	for _, p := range providers {
+		carried[p.Name] = ""
+	}
 	for _, src := range sources {
-		if err := checkChannelsOf(src, ids, names, groupNames); err != nil {
+		if err := checkChannelsOf(src, carried, ids, names, groupNames); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func checkChannelsOf(src channelSource, ids map[int]string, names, groupNames map[string]string) error {
+// checkProviders validates the node's providers (ADR-0058 point 1).
+func checkProviders(path string, ps []Provider) error {
+	names := map[string]int{}
+	for i, p := range ps {
+		at := fmt.Sprintf("%s: providers[%d]", path, i)
+		switch {
+		case !channelNamePattern.MatchString(p.Name):
+			return fmt.Errorf("%s: name %q must be lowercase letters, digits, '-' or '_', at most 32", at, p.Name)
+		case p.Kind == "":
+			return fmt.Errorf("%s: kind is required", at)
+		case (p.CredentialEnv == "") == (p.CredentialSecret == ""):
+			return fmt.Errorf("%s: name the credential with credential_env or credential_secret, one of them", at)
+		case p.CredentialEnv != "" && !envNamePattern.MatchString(p.CredentialEnv):
+			return fmt.Errorf("%s: credential_env must name an environment variable", at)
+		}
+		if prev, dup := names[p.Name]; dup {
+			return fmt.Errorf("%s: name %q is already providers[%d]", at, p.Name, prev)
+		}
+		names[p.Name] = i
+	}
+	return nil
+}
+
+// KindOf is the adapter kind of the provider a channel is carried on, empty if
+// it names none configured.
+func KindOf(providers []Provider, c Channel) string {
+	for _, p := range providers {
+		if p.Name == c.Provider {
+			return p.Kind
+		}
+	}
+	return ""
+}
+
+// Provider returns the provider named name.
+func (o Orchestrator) Provider(name string) (Provider, bool) {
+	for _, p := range o.Providers {
+		if p.Name == name {
+			return p, true
+		}
+	}
+	return Provider{}, false
+}
+
+// carried holds each provider by name, with the channel it carries, if any.
+func checkChannelsOf(src channelSource, carried map[string]string, ids map[int]string, names, groupNames map[string]string) error {
 	for i, c := range src.channels {
 		at := fmt.Sprintf("%s: channels[%d]", src.path, i)
 		switch {
@@ -510,12 +572,6 @@ func checkChannelsOf(src channelSource, ids map[int]string, names, groupNames ma
 			return fmt.Errorf("%s: name %q must be lowercase letters, digits, '-' or '_', at most 32", at, c.Name)
 		case reservedChannelNames[c.Name]:
 			return fmt.Errorf("%s: name %q is reserved", at, c.Name)
-		case c.Kind == "":
-			return fmt.Errorf("%s: kind is required", at)
-		case (c.CredentialEnv == "") == (c.CredentialSecret == ""):
-			return fmt.Errorf("%s: name the credential with credential_env or credential_secret, one of them", at)
-		case c.CredentialEnv != "" && !envNamePattern.MatchString(c.CredentialEnv):
-			return fmt.Errorf("%s: credential_env must name an environment variable", at)
 		}
 		if prev, dup := ids[c.ID]; dup {
 			return fmt.Errorf("%s: id %d is already channel %s", at, c.ID, prev)
@@ -524,6 +580,14 @@ func checkChannelsOf(src channelSource, ids map[int]string, names, groupNames ma
 			return fmt.Errorf("%s: name %q is already used at %s", at, c.Name, prev)
 		}
 		ids[c.ID], names[c.Name] = fmt.Sprintf("%q at %s", c.Name, at), at
+		// One channel per provider until a provider serves several.
+		switch was, ok := carried[c.Provider]; {
+		case !ok:
+			return fmt.Errorf("%s: provider %q is not configured", at, c.Provider)
+		case was != "":
+			return fmt.Errorf("%s: provider %q already carries channel %q, and carries one channel for now", at, c.Provider, was)
+		}
+		carried[c.Provider] = c.Name
 		if err := checkGroups(at, c.Groups, groupNames); err != nil {
 			return err
 		}
@@ -846,7 +910,10 @@ func load(path string, withMesh bool, override *Managed) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := checkChannels(channelSource{path, o.Channels}, channelSource{o.Managed, managed.Channels}); err != nil {
+	if err := checkProviders(path, o.Providers); err != nil {
+		return nil, err
+	}
+	if err := checkChannels(o.Providers, channelSource{path, o.Channels}, channelSource{o.Managed, managed.Channels}); err != nil {
 		return nil, err
 	}
 	o.managedChannels = map[string]bool{}
@@ -876,7 +943,7 @@ func load(path string, withMesh bool, override *Managed) (*Config, error) {
 			o.Secrets[i].File = filepath.Join(filepath.Dir(path), f)
 		}
 	}
-	if err := checkChannelCredentials(path, o); err != nil {
+	if err := checkProviderCredentials(path, o); err != nil {
 		return nil, err
 	}
 	if o.Budget.Poll == 0 {

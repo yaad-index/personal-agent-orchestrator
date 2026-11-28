@@ -116,5 +116,5 @@ p code { word-break: break-all; }
   table.channels .row-actions > * { display: block; margin: 0 0 6px 0; }
   table.channels .row-actions > * + * { margin-left: 0; }
 }
-table.channels td { overflow-wrap: anywhere; }
+table.channels td, table.providers td { overflow-wrap: anywhere; }
 table.channels td.row-actions { overflow-wrap: normal; }

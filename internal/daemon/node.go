@@ -98,10 +98,10 @@ func recipesOf(m *temp.Manager) func() ([]local.RecipeJSON, error) {
 // channelsOf is the node's channels for the UI: the local channel and each
 // configured one, by name and kind, with its groups and named topics by name. Each field is
 // copied by name, so nothing else of a channel's configuration reaches it.
-func channelsOf(chans []config.Channel) []local.ChannelJSON {
+func channelsOf(providers []config.Provider, chans []config.Channel) []local.ChannelJSON {
 	out := []local.ChannelJSON{{Name: local.Source, Kind: local.Source, Groups: []string{}}}
 	for _, c := range chans {
-		ch := local.ChannelJSON{Name: c.Name, Kind: c.Kind, Groups: []string{}}
+		ch := local.ChannelJSON{Name: c.Name, Kind: config.KindOf(providers, c), Groups: []string{}}
 		for _, g := range c.Groups {
 			// a group's named topics are destinations of their own
 			ch.Groups = append(ch.Groups, g.Names()...)

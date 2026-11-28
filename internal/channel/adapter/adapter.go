@@ -90,20 +90,21 @@ func (t Table) Kinds() []string {
 	return out
 }
 
-// Check validates each spec's kind and options and reports every channel that
-// fails, not only the first. It does not look at credentials.
+// Check validates each provider's kind and options, one spec per provider
+// (ADR-0058 point 1), and reports every one that fails, not only the first. It
+// does not look at credentials.
 func (t Table) Check(specs []Spec) error {
 	var errs []error
 	for _, s := range specs {
 		k, ok := t[s.Kind]
 		switch {
 		case !ok:
-			errs = append(errs, t.notCompiled(s))
+			errs = append(errs, fmt.Errorf("provider %w", t.notCompiled(s)))
 		case k.Check == nil:
-			errs = append(errs, fmt.Errorf("channel %q: kind %q has no option check", s.Name, s.Kind))
+			errs = append(errs, fmt.Errorf("provider %q: kind %q has no option check", s.Name, s.Kind))
 		default:
 			if err := k.Check(s.Options); err != nil {
-				errs = append(errs, fmt.Errorf("channel %q: %w", s.Name, err))
+				errs = append(errs, fmt.Errorf("provider %q: %w", s.Name, err))
 			}
 		}
 	}
@@ -111,7 +112,7 @@ func (t Table) Check(specs []Spec) error {
 }
 
 func (t Table) notCompiled(s Spec) error {
-	return fmt.Errorf("channel %q: kind %q is not compiled into this build (have: %s)", s.Name, s.Kind, strings.Join(t.Kinds(), ", "))
+	return fmt.Errorf("%q: kind %q is not compiled into this build (have: %s)", s.Name, s.Kind, strings.Join(t.Kinds(), ", "))
 }
 
 // Build brings up one adapter per spec. A kind that is not compiled in is an
@@ -139,25 +140,16 @@ func (t Table) Build(specs []Spec, h Handler) ([]Adapter, error) {
 	return out, nil
 }
 
-// CheckConfig checks every configured channel's kind and options against the
-// table, as starting the node would. An error names the file that defines the
-// channel: the orchestrator config at path, or the file pao manages beside it
-// (ADR-0055).
+// CheckConfig checks every configured provider's kind and options against the
+// table, as starting the node would. A provider is defined in the orchestrator
+// config at path only (ADR-0058 point 1), so an error names that file.
 func (t Table) CheckConfig(path string, o config.Orchestrator) error {
-	var own, managed []Spec
-	for _, ch := range o.Channels {
-		s := Spec{ID: ch.ID, Name: ch.Name, Kind: ch.Kind, Options: ch.Options}
-		if o.ManagedChannel(ch.Name) {
-			managed = append(managed, s)
-		} else {
-			own = append(own, s)
-		}
+	specs := make([]Spec, 0, len(o.Providers))
+	for _, p := range o.Providers {
+		specs = append(specs, Spec{Name: p.Name, Kind: p.Kind, Options: p.Options})
 	}
-	if err := t.Check(own); err != nil {
+	if err := t.Check(specs); err != nil {
 		return fmt.Errorf("%s: %w", path, err)
-	}
-	if err := t.Check(managed); err != nil {
-		return fmt.Errorf("%s: %w", o.ManagedPath(), err)
 	}
 	return nil
 }

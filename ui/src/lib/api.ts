@@ -322,10 +322,8 @@ export interface GroupConfig {
 export interface ChannelConfig {
   id: number;
   name: string;
-  kind: string;
-  credential_env?: string;
-  credential_secret?: string;
-  options?: Record<string, unknown>;
+  // the provider the channel is carried on, which holds its kind, credential and options
+  provider: string;
   // owner is the subject the channel belongs to; target is its one conversation:
   // "private", a group's id, or "<group id>/<topic id>"
   owner: string;
@@ -341,15 +339,22 @@ export interface CredentialStatus {
 export interface ChannelConfigEntry extends ChannelConfig {
   managed: boolean;
   applied: boolean;
+}
+
+// A provider is defined in pao.yaml only; the UI lists it and changes nothing of it.
+export interface Provider {
+  name: string;
+  kind: string;
   credential: CredentialStatus;
+  // the channel it carries, if any: a provider carries one channel for now
+  channel?: string;
 }
 
 export interface ChannelConfigList {
   managed_file: string;
   channels: ChannelConfigEntry[];
   restart_needed: boolean;
-  kinds: string[];
-  secrets: string[];
+  providers: Provider[];
 }
 
 export const channelConfig = () => call<ChannelConfigList>("GET", "/v1/config/channels");

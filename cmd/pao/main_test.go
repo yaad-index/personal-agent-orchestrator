@@ -39,19 +39,21 @@ func TestConfigCheckRunsAgainstALoadableConfig(t *testing.T) {
 	assert.Error(t, ConfigCheckCmd{Path: filepath.Join(dir, "pao.yaml")}.Run(), "a duplicate agent name fails the check")
 }
 
-func TestConfigCheckValidatesEachChannelsAdapterOptions(t *testing.T) {
+func TestConfigCheckValidatesEachProvidersAdapterOptions(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "profiles"), 0o755))
 	path := filepath.Join(dir, "pao.yaml")
-	base := "node: n1\nprofiles_dir: profiles\nstate_dir: state\ntoken_env: PAO_TOKEN\nchannels:\n  - id: 1\n    name: chat\n    kind: bot\n    credential_env: PAO_CHECK_UNSET_TOKEN\n    owner: alice\n    target: private\n    options:\n      endpoint: https://api.example/bot{token}/{method}\n"
+	conf := func(poll string) string {
+		return "node: n1\nprofiles_dir: profiles\nstate_dir: state\ntoken_env: PAO_TOKEN\nproviders:\n  - name: chat\n    kind: bot\n    credential_env: PAO_CHECK_UNSET_TOKEN\n    options:\n      endpoint: https://api.example/bot{token}/{method}\n      poll_timeout: " + poll + "\nchannels:\n  - id: 1\n    name: chat\n    provider: chat\n    owner: alice\n    target: private\n"
+	}
 
-	require.NoError(t, os.WriteFile(path, []byte(base+"      poll_timeout: 25\n"), 0o600))
+	require.NoError(t, os.WriteFile(path, []byte(conf("25")), 0o600))
 	assert.NoError(t, ConfigCheckCmd{Path: path}.Run(), "whole seconds pass, with the credential unset")
 
-	require.NoError(t, os.WriteFile(path, []byte(base+"      poll_timeout: 25s\n"), 0o600))
+	require.NoError(t, os.WriteFile(path, []byte(conf("25s")), 0o600))
 	err := ConfigCheckCmd{Path: path}.Run()
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), `channel "chat": option "poll_timeout" must be a whole number`)
+	assert.Contains(t, err.Error(), `provider "chat": option "poll_timeout" must be a whole number`)
 }
 
 // writeConfig writes a loadable orchestrator config naming PAO_RUN_TEST_TOKEN.

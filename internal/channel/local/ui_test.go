@@ -166,7 +166,7 @@ type fakeChannelConfig struct {
 }
 
 func (f *fakeChannelConfig) List(context.Context) (ChannelConfigListJSON, error) {
-	return ChannelConfigListJSON{ManagedFile: "/n/managed.yaml", Channels: []ChannelConfigEntryJSON{}, Kinds: []string{"bot"}, Secrets: []string{}}, nil
+	return ChannelConfigListJSON{ManagedFile: "/n/managed.yaml", Channels: []ChannelConfigEntryJSON{}, Providers: []ProviderJSON{{Name: "tg", Kind: "bot"}}}, nil
 }
 func (f *fakeChannelConfig) Put(_ context.Context, c ChannelConfigJSON) error {
 	f.put = append(f.put, c)
@@ -185,17 +185,18 @@ func TestTheChannelConfigurationIsTheOperatorsToChange(t *testing.T) {
 	l, err := c.ChannelConfig(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, "/n/managed.yaml", l.ManagedFile)
-	require.NoError(t, c.PutChannelConfig(ctx, ChannelConfigJSON{ID: 2, Name: "ui", Kind: "bot", CredentialSecret: "s"}))
+	assert.Equal(t, []ProviderJSON{{Name: "tg", Kind: "bot"}}, l.Providers)
+	require.NoError(t, c.PutChannelConfig(ctx, ChannelConfigJSON{ID: 2, Name: "ui", Provider: "tg"}))
 	require.NoError(t, c.DeleteChannelConfig(ctx, "ui"))
-	assert.Equal(t, "s", f.put[0].CredentialSecret)
+	assert.Equal(t, "tg", f.put[0].Provider)
 	assert.Equal(t, []string{"ui"}, f.deleted)
 
-	assert.Equal(t, http.StatusBadRequest, do(t, ts, "PUT", "/v1/config/channels/other", `{"id":2,"name":"ui","kind":"bot"}`, bearer()).StatusCode, "the name is the path's")
+	assert.Equal(t, http.StatusBadRequest, do(t, ts, "PUT", "/v1/config/channels/other", `{"id":2,"name":"ui","provider":"tg"}`, bearer()).StatusCode, "the name is the path's")
 	assert.Equal(t, http.StatusUnauthorized, send(t, "PUT", ts.URL+"/v1/config/channels/ui", `{"name":"ui"}`, nil, nil))
 	assert.Len(t, f.put, 1)
 
 	f.err = ErrConflict
-	assert.Equal(t, http.StatusConflict, do(t, ts, "PUT", "/v1/config/channels/ui", `{"id":2,"name":"ui","kind":"bot"}`, bearer()).StatusCode)
+	assert.Equal(t, http.StatusConflict, do(t, ts, "PUT", "/v1/config/channels/ui", `{"id":2,"name":"ui","provider":"tg"}`, bearer()).StatusCode)
 	f.err = ErrBadRequest
 	assert.Equal(t, http.StatusBadRequest, do(t, ts, "DELETE", "/v1/config/channels/ui", "", bearer()).StatusCode)
 }

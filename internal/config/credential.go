@@ -6,11 +6,11 @@ import (
 	"slices"
 )
 
-// BoundToChannel reports whether the secret named name is a channel's
-// credential, which no task may name and no other channel or server may
-// present (ADR-0057 point 3).
-func (o Orchestrator) BoundToChannel(name string) bool {
-	return name != "" && slices.ContainsFunc(o.Channels, func(c Channel) bool { return c.CredentialSecret == name })
+// BoundToProvider reports whether the secret named name is a provider's
+// credential, which no task may name and no other provider or server may
+// present (ADR-0057 point 3, the provider's by ADR-0058 point 1).
+func (o Orchestrator) BoundToProvider(name string) bool {
+	return name != "" && slices.ContainsFunc(o.Providers, func(p Provider) bool { return p.CredentialSecret == name })
 }
 
 // credentialPlace is where a credential's value is read from: an environment
@@ -42,24 +42,19 @@ func placeOfSecret(s Secret) credentialPlace {
 	return placeOfFile(s.File)
 }
 
-// checkChannelCredentials holds each channel's credential to ADR-0057 point 3:
-// a secret a channel names is that channel's alone, and the place the value is
-// read from, whether named directly or through a secret, holds nothing else
-// pao reads: no other secret, channel or server. Otherwise a task naming the
-// other secret, or a server given it, would be given the channel's credential.
-// It runs once the secrets' files are resolved.
-func checkChannelCredentials(path string, o Orchestrator) error {
-	where := func(i int) string {
-		file := path
-		if o.ManagedChannel(o.Channels[i].Name) {
-			file = o.Managed
-		}
-		return fmt.Sprintf("%s: channel %q", file, o.Channels[i].Name)
-	}
+// checkProviderCredentials holds each provider's credential to ADR-0057 point
+// 3, which ADR-0058 point 1 moved from the channel to the provider: a secret a
+// provider names is that provider's alone, and the place the value is read
+// from, whether named directly or through a secret, holds nothing else pao
+// reads: no other secret, provider or server. Otherwise a task naming the
+// other secret, or a server given it, would be given the provider's
+// credential. It runs once the secrets' files are resolved.
+func checkProviderCredentials(path string, o Orchestrator) error {
+	where := func(i int) string { return fmt.Sprintf("%s: provider %q", path, o.Providers[i].Name) }
 
-	// Where each channel's credential is read from, by name.
-	places := make([]credentialPlace, len(o.Channels))
-	for i, c := range o.Channels {
+	// Where each provider's credential is read from, by name.
+	places := make([]credentialPlace, len(o.Providers))
+	for i, c := range o.Providers {
 		if c.CredentialEnv != "" {
 			places[i] = credentialPlace{env: c.CredentialEnv}
 			continue
@@ -69,13 +64,13 @@ func checkChannelCredentials(path string, o Orchestrator) error {
 		case !ok:
 			return fmt.Errorf("%s: no secret named %q is configured", where(i), c.CredentialSecret)
 		case s.Inject != nil:
-			return fmt.Errorf("%s: secret %q is injected through the egress proxy; a channel's secret is its own", where(i), c.CredentialSecret)
+			return fmt.Errorf("%s: secret %q is injected through the egress proxy; a provider's secret is its own", where(i), c.CredentialSecret)
 		case o.BoundToUpstream(c.CredentialSecret):
 			return fmt.Errorf("%s: secret %q is already a server's credential", where(i), c.CredentialSecret)
 		}
 		for j := range i {
-			if o.Channels[j].CredentialSecret == c.CredentialSecret {
-				return fmt.Errorf("%s: secret %q is already the credential of channel %q", where(i), c.CredentialSecret, o.Channels[j].Name)
+			if o.Providers[j].CredentialSecret == c.CredentialSecret {
+				return fmt.Errorf("%s: secret %q is already the credential of provider %q", where(i), c.CredentialSecret, o.Providers[j].Name)
 			}
 		}
 		places[i] = placeOfSecret(s)
@@ -95,19 +90,19 @@ func checkChannelCredentials(path string, o Orchestrator) error {
 			others = append(others, reader{credentialPlace{env: u.CredentialEnv}, fmt.Sprintf("server %q's credential", u.Name)})
 		}
 	}
-	for i, c := range o.Channels {
-		others = append(others, reader{places[i], fmt.Sprintf("channel %q's credential", c.Name)})
+	for i, c := range o.Providers {
+		others = append(others, reader{places[i], fmt.Sprintf("provider %q's credential", c.Name)})
 	}
 
-	for i, c := range o.Channels {
+	for i, c := range o.Providers {
 		for _, r := range others {
 			if r.place != places[i] {
 				continue
 			}
-			if r.what == fmt.Sprintf("channel %q's credential", c.Name) || (c.CredentialSecret != "" && r.what == fmt.Sprintf("secret %q", c.CredentialSecret)) {
-				continue // the channel's own reference
+			if r.what == fmt.Sprintf("provider %q's credential", c.Name) || (c.CredentialSecret != "" && r.what == fmt.Sprintf("secret %q", c.CredentialSecret)) {
+				continue // the provider's own reference
 			}
-			return fmt.Errorf("%s: its credential is read from %s, which also holds %s; a channel's credential is its own (ADR-0057 point 3)", where(i), places[i], r.what)
+			return fmt.Errorf("%s: its credential is read from %s, which also holds %s; a provider's credential is its own (ADR-0057 point 3)", where(i), places[i], r.what)
 		}
 	}
 	return nil

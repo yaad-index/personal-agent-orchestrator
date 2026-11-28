@@ -21,11 +21,7 @@
   let editing = $state<"" | "new" | string>("");
   let id = $state(0);
   let name = $state("");
-  let kind = $state("");
-  let credWay = $state<"secret" | "env">("secret");
-  let credSecret = $state("");
-  let credEnv = $state("");
-  let optionsText = $state("{}");
+  let provider = $state("");
   let owner = $state("");
   // the channel's one conversation: the owner's private one, a group, or a topic of a group
   let convWay = $state<"private" | "group">("private");
@@ -50,11 +46,7 @@
     // pao gives a new channel an id never used before
     id = 0;
     name = "";
-    kind = list.kinds[0] ?? "";
-    credWay = list.secrets.length ? "secret" : "env";
-    credSecret = list.secrets[0] ?? "";
-    credEnv = "";
-    optionsText = "{}";
+    provider = free(list)[0]?.name ?? "";
     owner = "";
     convWay = "private";
     groupId = groupName = topicId = "";
@@ -66,11 +58,7 @@
     editing = c.name;
     id = c.id;
     name = c.name;
-    kind = c.kind;
-    credWay = c.credential_secret ? "secret" : "env";
-    credSecret = c.credential_secret ?? list?.secrets[0] ?? "";
-    credEnv = c.credential_env ?? "";
-    optionsText = JSON.stringify(c.options ?? {}, null, 2);
+    provider = c.provider;
     owner = c.owner ?? "";
     convWay = c.target && c.target !== "private" ? "group" : "private";
     const [gid, tid] = convWay === "group" ? c.target.split("/") : ["", ""];
@@ -83,22 +71,10 @@
 
   async function save(e: SubmitEvent) {
     e.preventDefault();
-    let options: Record<string, unknown>;
-    try {
-      const parsed = JSON.parse(optionsText || "{}");
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error();
-      options = parsed;
-    } catch {
-      error = "Options must be a JSON object, such as {}.";
-      return;
-    }
     const c: ChannelConfig = {
       id,
       name: name.trim(),
-      kind,
-      credential_secret: credWay === "secret" ? credSecret : undefined,
-      credential_env: credWay === "env" ? credEnv.trim() : undefined,
-      options,
+      provider,
       owner: owner.trim(),
       target: convWay === "private" ? "private" : groupId.trim() + (topicId.trim() ? "/" + topicId.trim() : ""),
       // a group's named topics are kept by pao; the form leaves them out
@@ -146,7 +122,8 @@
     }
   }
 
-  const credLabel = (c: ChannelConfig) => (c.credential_secret ? `secret ${c.credential_secret}` : `variable ${c.credential_env}`);
+  // the providers a channel may be put on: those that carry no channel, and the one this channel is on
+  const free = (l: ChannelConfigList) => l.providers.filter((p) => !p.channel || p.channel === editing);
   function convLabel(c: ChannelConfig): string {
     if (!c.target) return "—";
     if (c.target === "private") return `${c.owner}, privately`;
@@ -186,19 +163,15 @@
       <p class="muted">No channels yet. The local channel, this UI and the command line, is always there.</p>
     {:else}
       <table class="channels">
-        <thead><tr><th>Channel</th><th>Credential</th><th class="wide-only">Conversation</th><th></th></tr></thead>
+        <thead><tr><th>Channel</th><th>Provider</th><th class="wide-only">Conversation</th><th></th></tr></thead>
         <tbody>
           {#each list.channels as c (c.name)}
             <tr>
               <td>
                 {c.name}
-                <div class="muted small">{c.kind} · id {c.id} · {c.managed ? "pao manages" : "pao.yaml"}{c.applied ? "" : " · applies at next start"}</div>
+                <div class="muted small">id {c.id} · {c.managed ? "pao manages" : "pao.yaml"}{c.applied ? "" : " · applies at next start"}</div>
               </td>
-              <td>
-                {credLabel(c)}
-                <div><span class="badge" class:warn={!c.credential.resolves}>{c.credential.resolves ? "set" : "not set"}</span></div>
-                {#if c.credential.problem}<div class="muted small">{c.credential.problem}</div>{/if}
-              </td>
+              <td>{c.provider}</td>
               <td class="wide-only">{convLabel(c)}</td>
               <td class="row-actions">
                 {#if c.managed}
@@ -212,35 +185,42 @@
       </table>
     {/if}
 
+    <h2>Providers</h2>
+    <p class="muted small">
+      A provider is a platform connection a channel is carried on, defined in <code>pao.yaml</code> only. It holds the credential, which this page
+      never takes, shows or stores: it says only whether pao can read it.
+    </p>
+    {#if list.providers.length === 0}
+      <p class="muted">No providers. Define one in <code>pao.yaml</code> to add a channel.</p>
+    {:else}
+      <table class="providers">
+        <thead><tr><th>Provider</th><th>Credential</th><th class="wide-only">Channel</th></tr></thead>
+        <tbody>
+          {#each list.providers as p (p.name)}
+            <tr>
+              <td>{p.name}<div class="muted small">{p.kind}</div></td>
+              <td>
+                <span class="badge" class:warn={!p.credential.resolves}>{p.credential.resolves ? "set" : "not set"}</span>
+                {#if p.credential.problem}<div class="muted small">{p.credential.problem}</div>{/if}
+              </td>
+              <td class="wide-only">{p.channel || "—"}</td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    {/if}
+
     {#if editing}
       <h2>{editing === "new" ? "Add a channel" : `Change ${editing}`}</h2>
       <form class="stack" onsubmit={save}>
         <label for="c-name">Name</label>
         <input id="c-name" bind:value={name} required disabled={editing !== "new"} placeholder="lowercase letters, digits, - or _" />
         {#if editing !== "new"}<p class="muted small">Id {id}: it names the channel in every message id, and never changes.</p>{/if}
-        <label for="c-kind">Kind</label>
-        <select id="c-kind" bind:value={kind}>
-          {#each list.kinds as k (k)}<option value={k}>{k}</option>{/each}
+        <label for="c-provider">Provider</label>
+        <select id="c-provider" bind:value={provider} required>
+          {#each free(list) as p (p.name)}<option value={p.name}>{p.name} ({p.kind})</option>{/each}
         </select>
-
-        <fieldset>
-          <legend>Credential</legend>
-          <p class="muted small">pao reads the credential from where you name it here. Its value is never entered, shown or stored by this page: put it there yourself.</p>
-          <label class="check"><input type="radio" bind:group={credWay} value="secret" disabled={list.secrets.length === 0} /> one of the node's secrets</label>
-          {#if credWay === "secret"}
-            <select aria-label="Secret" bind:value={credSecret}>
-              {#each list.secrets as s (s)}<option value={s}>{s}</option>{/each}
-            </select>
-          {/if}
-          <label class="check"><input type="radio" bind:group={credWay} value="env" /> a variable in pao's environment</label>
-          {#if credWay === "env"}
-            <input aria-label="Variable" bind:value={credEnv} placeholder="PAO_CHAT_TOKEN" required autocomplete="off" />
-          {/if}
-          {#if list.secrets.length === 0}<p class="muted small">The node has no secrets a channel can name.</p>{/if}
-        </fieldset>
-
-        <label for="c-options">Options <span class="muted small">— the adapter's own, as JSON</span></label>
-        <textarea id="c-options" class="code" rows="4" bind:value={optionsText}></textarea>
+        {#if free(list).length === 0}<p class="muted small">Every provider carries a channel already. Providers are defined in <code>pao.yaml</code>.</p>{/if}
 
         <label for="c-owner">Owner</label>
         <input id="c-owner" bind:value={owner} required placeholder="the subject the channel belongs to" autocomplete="off" />

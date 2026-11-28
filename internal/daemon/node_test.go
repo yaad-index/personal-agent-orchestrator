@@ -54,13 +54,13 @@ func TestTheRecipesAreListedForTheOperator(t *testing.T) {
 }
 
 func TestTheChannelsListedForTheUIHoldNothingButNames(t *testing.T) {
+	provs := []config.Provider{{Name: "p", Kind: "telegram", CredentialEnv: "TG_SECRET_VAR", Options: map[string]any{"api": "https://adapter-option.example"}}}
 	chans := []config.Channel{{
-		ID: 1, Name: "tg", Kind: "telegram", CredentialEnv: "TG_SECRET_VAR",
-		Options: map[string]any{"api": "https://adapter-option.example"},
+		ID: 1, Name: "tg", Provider: "p",
 		Groups: []config.Group{{ID: "-100777/1", Name: "family", Members: config.MembersOperators,
 			Topics: []config.Topic{{ID: "42", Name: "family-news"}}}},
 	}}
-	got := channelsOf(chans)
+	got := channelsOf(provs, chans)
 	assert.Equal(t, []local.ChannelJSON{
 		{Name: "local", Kind: "local", Groups: []string{}},
 		{Name: "tg", Kind: "telegram", Groups: []string{"family", "family-news"}},

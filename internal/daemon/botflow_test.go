@@ -140,8 +140,8 @@ func TestAHumanReachesAnAgentThroughTheBotAndHearsBack(t *testing.T) {
 	t.Setenv("PAO_TEST_BOT_TOKEN", "tok-1")
 
 	n := startNodeWith(t, map[string]string{"bee": ""}, func(_, _ string, cfg *config.Config) {
-		cfg.Orchestrator.Channels = []config.Channel{{ID: 1, Name: "chat", Kind: "bot", CredentialEnv: "PAO_TEST_BOT_TOKEN", Owner: "alice", Target: config.TargetPrivate,
-			Options: map[string]any{"endpoint": ts.URL + "/bot{token}/{method}", "poll_timeout": 0}}}
+		cfg.Orchestrator.Providers = []config.Provider{botProvider("chat", "PAO_TEST_BOT_TOKEN", ts.URL)}
+		cfg.Orchestrator.Channels = []config.Channel{{ID: 1, Name: "chat", Provider: "chat", Owner: "alice", Target: config.TargetPrivate}}
 	}, func(o *Options) { o.Adapters = builtin.Table() })
 	ctx := context.Background()
 	channelIs(t, n, "chat", "bee")
@@ -212,8 +212,8 @@ func TestTheChannelsDefaultAgentIsReloadedSwitchedAtRuntimeAndSpeaksUnprefixed(t
 	t.Setenv("PAO_TEST_BOT_TOKEN", "tok-1")
 
 	n := startNodeWith(t, map[string]string{"bee": "", "wasp": ""}, func(_, _ string, cfg *config.Config) {
-		cfg.Orchestrator.Channels = []config.Channel{{ID: 1, Name: "chat", Kind: "bot", CredentialEnv: "PAO_TEST_BOT_TOKEN", Owner: "alice", Target: config.TargetPrivate,
-			Options: map[string]any{"endpoint": ts.URL + "/bot{token}/{method}", "poll_timeout": 0}}}
+		cfg.Orchestrator.Providers = []config.Provider{botProvider("chat", "PAO_TEST_BOT_TOKEN", ts.URL)}
+		cfg.Orchestrator.Channels = []config.Channel{{ID: 1, Name: "chat", Provider: "chat", Owner: "alice", Target: config.TargetPrivate}}
 		// What a node that ran before left behind.
 		require.NoError(t, os.MkdirAll(cfg.Orchestrator.StateDir, 0o700))
 		require.NoError(t, os.WriteFile(filepath.Join(cfg.Orchestrator.StateDir, defaultsFile),
@@ -300,8 +300,8 @@ func TestAGateQuestionIsAnsweredByAButtonAndItsButtonsAreClosed(t *testing.T) {
 	t.Setenv("PAO_TEST_BOT_TOKEN", "tok-1")
 
 	n := startNodeWith(t, map[string]string{"bee": ""}, func(_, _ string, cfg *config.Config) {
-		cfg.Orchestrator.Channels = []config.Channel{{ID: 1, Name: "chat", Kind: "bot", CredentialEnv: "PAO_TEST_BOT_TOKEN", Owner: "alice", Target: config.TargetPrivate,
-			Options: map[string]any{"endpoint": ts.URL + "/bot{token}/{method}", "poll_timeout": 0}}}
+		cfg.Orchestrator.Providers = []config.Provider{botProvider("chat", "PAO_TEST_BOT_TOKEN", ts.URL)}
+		cfg.Orchestrator.Channels = []config.Channel{{ID: 1, Name: "chat", Provider: "chat", Owner: "alice", Target: config.TargetPrivate}}
 	}, func(o *Options) { o.Adapters = builtin.Table() })
 	ctx := context.Background()
 	const person, other = 4242, 5151
@@ -386,9 +386,9 @@ func TestAnAdmittedGroupServesTheOperatorAndNoOneElse(t *testing.T) {
 	const person, other, stranger, group, unlisted = 4242, 5151, 6161, -700, -800
 
 	n := startNodeWith(t, map[string]string{"bee": ""}, func(_, _ string, cfg *config.Config) {
-		cfg.Orchestrator.Channels = []config.Channel{{ID: 1, Name: "chat", Kind: "bot", CredentialEnv: "PAO_TEST_BOT_TOKEN", Owner: "alice", Target: strconv.Itoa(group),
-			Options: map[string]any{"endpoint": ts.URL + "/bot{token}/{method}", "poll_timeout": 0},
-			Groups:  []config.Group{{ID: strconv.Itoa(group), Name: "team", Members: config.MembersOperators}}}}
+		cfg.Orchestrator.Providers = []config.Provider{botProvider("chat", "PAO_TEST_BOT_TOKEN", ts.URL)}
+		cfg.Orchestrator.Channels = []config.Channel{{ID: 1, Name: "chat", Provider: "chat", Owner: "alice", Target: strconv.Itoa(group),
+			Groups: []config.Group{{ID: strconv.Itoa(group), Name: "team", Members: config.MembersOperators}}}}
 	}, func(o *Options) { o.Adapters = builtin.Table() })
 	ctx := context.Background()
 	channelIs(t, n, "chat", "bee")
@@ -776,8 +776,8 @@ func TestAPressOfACommandWithAListIsAnsweredInThePressersPrivateChat(t *testing.
 	t.Setenv("PAO_TEST_BOT_TOKEN", "tok-1")
 	const person = 4242
 	n := startNodeWith(t, map[string]string{"bee": "", "wasp": ""}, func(_, _ string, cfg *config.Config) {
-		cfg.Orchestrator.Channels = []config.Channel{{ID: 1, Name: "chat", Kind: "bot", CredentialEnv: "PAO_TEST_BOT_TOKEN", Owner: "alice", Target: config.TargetPrivate,
-			Options: map[string]any{"endpoint": ts.URL + "/bot{token}/{method}", "poll_timeout": 0}}}
+		cfg.Orchestrator.Providers = []config.Provider{botProvider("chat", "PAO_TEST_BOT_TOKEN", ts.URL)}
+		cfg.Orchestrator.Channels = []config.Channel{{ID: 1, Name: "chat", Provider: "chat", Owner: "alice", Target: config.TargetPrivate}}
 	}, func(o *Options) { o.Adapters = builtin.Table() })
 	ctx := context.Background()
 	require.NoError(t, n.client.AddSubject(ctx, "alice"))
@@ -803,9 +803,9 @@ func TestANoticeAboutTheGovernorGoesToItsRequesterAlone(t *testing.T) {
 
 	n := startNodeWith(t, map[string]string{"gov": neverReady}, func(_, _ string, cfg *config.Config) {
 		cfg.Orchestrator.Governor = config.Governor{Agent: "gov"}
-		cfg.Orchestrator.Channels = []config.Channel{{ID: 1, Name: "chat", Kind: "bot", CredentialEnv: "PAO_TEST_BOT_TOKEN", Owner: "alice", Target: strconv.Itoa(group),
-			Options: map[string]any{"endpoint": ts.URL + "/bot{token}/{method}", "poll_timeout": 0},
-			Groups:  []config.Group{{ID: strconv.Itoa(group), Name: "team", Members: config.MembersOperators}}}}
+		cfg.Orchestrator.Providers = []config.Provider{botProvider("chat", "PAO_TEST_BOT_TOKEN", ts.URL)}
+		cfg.Orchestrator.Channels = []config.Channel{{ID: 1, Name: "chat", Provider: "chat", Owner: "alice", Target: strconv.Itoa(group),
+			Groups: []config.Group{{ID: strconv.Itoa(group), Name: "team", Members: config.MembersOperators}}}}
 	}, func(o *Options) { o.Adapters = builtin.Table() })
 	ctx := context.Background()
 
@@ -848,12 +848,11 @@ func startPair(t *testing.T, agents map[string]string, adjust func(dir, script s
 	t.Setenv("PAO_TEST_BOT_TOKEN", "tok-1")
 	t.Setenv("PAO_TEST_GROUP_BOT_TOKEN", "tok-2")
 	p.n = startNodeWith(t, agents, func(dir, script string, cfg *config.Config) {
+		cfg.Orchestrator.Providers = []config.Provider{botProvider("chat", "PAO_TEST_BOT_TOKEN", ts.URL), botProvider("team", "PAO_TEST_GROUP_BOT_TOKEN", gts.URL)}
 		cfg.Orchestrator.Channels = []config.Channel{
-			{ID: 1, Name: "chat", Kind: "bot", CredentialEnv: "PAO_TEST_BOT_TOKEN", Owner: "alice", Target: config.TargetPrivate,
-				Options: map[string]any{"endpoint": ts.URL + "/bot{token}/{method}", "poll_timeout": 0}},
-			{ID: 2, Name: "team", Kind: "bot", CredentialEnv: "PAO_TEST_GROUP_BOT_TOKEN", Owner: "alice", Target: strconv.Itoa(pairGroup),
-				Options: map[string]any{"endpoint": gts.URL + "/bot{token}/{method}", "poll_timeout": 0},
-				Groups:  []config.Group{{ID: strconv.Itoa(pairGroup), Name: "team", Members: config.MembersOperators}}},
+			{ID: 1, Name: "chat", Provider: "chat", Owner: "alice", Target: config.TargetPrivate},
+			{ID: 2, Name: "team", Provider: "team", Owner: "alice", Target: strconv.Itoa(pairGroup),
+				Groups: []config.Group{{ID: strconv.Itoa(pairGroup), Name: "team", Members: config.MembersOperators}}},
 		}
 		if adjust != nil {
 			adjust(dir, script, cfg)
@@ -877,4 +876,10 @@ func channelIs(t *testing.T, n *node, channel, agent string) {
 	t.Helper()
 	_, err := n.client.SetDefault(context.Background(), channel, agent)
 	require.NoError(t, err)
+}
+
+// botProvider is a bot provider on the fake service at url.
+func botProvider(name, credentialEnv, url string) config.Provider {
+	return config.Provider{Name: name, Kind: "bot", CredentialEnv: credentialEnv,
+		Options: map[string]any{"endpoint": url + "/bot{token}/{method}", "poll_timeout": 0}}
 }
