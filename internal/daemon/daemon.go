@@ -132,7 +132,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	}
 	// A channel's credential likewise: read once, from its variable or through
 	// the secret it names (ADR-0057 point 2), and taken out of the environment.
-	creds := channelCredentials(cfg.Orchestrator, secretValues)
+	creds := providerCredentials(cfg.Orchestrator, secretValues)
 	// An upstream MCP server's credential likewise: pao presents it, no agent
 	// ever holds it (ADR-0024 point 2). A server's secret is read each time pao
 	// connects to it (ADR-0053 point 2).
@@ -410,7 +410,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	tasks := &task.Service{Store: &task.Store{Root: filepath.Join(cfg.Orchestrator.StateDir, "tasks")}, Auth: auth, Gate: gt,
 		HasSecret: taskHasSecret(cfg.Orchestrator)}
 	mcpServer := mcpsrv.New(ops, resolver, mcpsrv.WithAuthorizer(auth), mcpsrv.WithGate(gt), mcpsrv.WithProxy(proxy), mcpsrv.WithGovernor(cfg.Orchestrator.Governor.Agent),
-		mcpsrv.WithChannels(governorChannels(cfg.Orchestrator.Channels, governorServing)), mcpsrv.WithTasks(tasks))
+		mcpsrv.WithChannels(governorChannels(cfg.Orchestrator.Providers, cfg.Orchestrator.Channels, governorServing)), mcpsrv.WithTasks(tasks))
 	mcpServers.Store(mcpServer)
 	mcpHandler := mcpServer.Handler()
 
@@ -516,7 +516,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		localOpts = append(localOpts, local.WithChannelConfig(channelConfig), local.WithRestartCheck(channelConfig.RestartCheck))
 	}
 	uiSessions := webui.NewSessions()
-	localOpts = append(localOpts, local.WithQuestions(questionsOf(pending)), local.WithRecipes(recipesOf(mgr)), local.WithChannels(channelsOf(cfg.Orchestrator.Channels)))
+	localOpts = append(localOpts, local.WithQuestions(questionsOf(pending)), local.WithRecipes(recipesOf(mgr)), local.WithChannels(channelsOf(cfg.Orchestrator.Providers, cfg.Orchestrator.Channels)))
 	restartCh := make(chan struct{}, 1)
 	localOpts = append(localOpts, local.WithRestart(func() {
 		select {

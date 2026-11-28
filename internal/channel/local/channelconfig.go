@@ -11,15 +11,24 @@ import (
 // Its credential is named, by a variable or a secret, never given: no request
 // or answer here carries a credential's value (ADR-0057 point 1).
 type ChannelConfigJSON struct {
-	ID               int               `json:"id"`
-	Name             string            `json:"name"`
-	Kind             string            `json:"kind"`
-	CredentialEnv    string            `json:"credential_env,omitempty"`
-	CredentialSecret string            `json:"credential_secret,omitempty"`
-	Options          map[string]any    `json:"options,omitempty"`
-	Owner            string            `json:"owner"`
-	Target           string            `json:"target"`
-	Groups           []GroupConfigJSON `json:"groups,omitempty"`
+	ID       int               `json:"id"`
+	Name     string            `json:"name"`
+	Provider string            `json:"provider"`
+	Owner    string            `json:"owner"`
+	Target   string            `json:"target"`
+	Groups   []GroupConfigJSON `json:"groups,omitempty"`
+}
+
+// ProviderJSON is a provider as the UI shows it (ADR-0058 point 1): defined in
+// the configuration only, so the UI lists it and changes nothing of it. Its
+// credential is shown only as resolving or not (ADR-0057 point 4).
+type ProviderJSON struct {
+	Name       string               `json:"name"`
+	Kind       string               `json:"kind"`
+	Credential CredentialStatusJSON `json:"credential"`
+	// Channel is the channel it carries, empty if none: a provider carries
+	// one channel for now.
+	Channel string `json:"channel,omitempty"`
 }
 
 // GroupConfigJSON is a group a channel serves, as the configuration holds it.
@@ -52,8 +61,7 @@ type ChannelConfigEntryJSON struct {
 	Managed bool `json:"managed"`
 	// Applied is true when the running node uses this definition as it is;
 	// false until pao next starts.
-	Applied    bool                 `json:"applied"`
-	Credential CredentialStatusJSON `json:"credential"`
+	Applied bool `json:"applied"`
 }
 
 // ChannelConfigListJSON is the configuration's channels and what a form needs
@@ -65,10 +73,9 @@ type ChannelConfigListJSON struct {
 	Channels    []ChannelConfigEntryJSON `json:"channels"`
 	// RestartNeeded is true when what is on disk differs from what runs.
 	RestartNeeded bool `json:"restart_needed"`
-	// Kinds are the channel adapters this build has.
-	Kinds []string `json:"kinds"`
-	// Secrets are the names of the node's secrets a channel may name.
-	Secrets []string `json:"secrets"`
+	// Providers are the providers the configuration defines, which a channel
+	// is put on.
+	Providers []ProviderJSON `json:"providers"`
 }
 
 // ChannelConfigAPI is the operator's view and change of the channels pao

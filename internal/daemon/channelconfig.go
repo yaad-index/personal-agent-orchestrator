@@ -43,10 +43,11 @@ func (a *channelConfigAPI) List(context.Context) (local.ChannelConfigListJSON, e
 	out := local.ChannelConfigListJSON{
 		ManagedFile: o.ManagedPath(),
 		Channels:    []local.ChannelConfigEntryJSON{},
-		Kinds:       a.adapters.Kinds(),
-		Secrets:     []string{},
+		Providers:   []local.ProviderJSON{},
 	}
+	carries := map[string]string{}
 	for _, c := range o.Channels {
+		carries[c.Provider] = c.Name
 		i := slices.IndexFunc(a.running, func(r config.Channel) bool { return r.Name == c.Name })
 		applied := i >= 0 && reflect.DeepEqual(a.running[i], c)
 		out.RestartNeeded = out.RestartNeeded || !applied
@@ -54,7 +55,6 @@ func (a *channelConfigAPI) List(context.Context) (local.ChannelConfigListJSON, e
 			ChannelConfigJSON: channelToJSON(c),
 			Managed:           o.ManagedChannel(c.Name),
 			Applied:           applied,
-			Credential:        a.credentialStatus(o, c),
 		})
 	}
 	for _, r := range a.running {
@@ -62,43 +62,40 @@ func (a *channelConfigAPI) List(context.Context) (local.ChannelConfigListJSON, e
 			out.RestartNeeded = true // removed from disk, still running
 		}
 	}
-	for _, s := range o.Secrets {
-		// a secret that is injected or a server's cannot be a channel's
-		if s.Inject == nil && !o.BoundToUpstream(s.Name) {
-			out.Secrets = append(out.Secrets, s.Name)
-		}
+	for _, p := range o.Providers {
+		out.Providers = append(out.Providers, local.ProviderJSON{Name: p.Name, Kind: p.Kind, Credential: a.credentialStatus(o, p), Channel: carries[p.Name]})
 	}
 	return out, nil
 }
 
-// credentialStatus says whether c's credential reference resolves where pao
+// credentialStatus says whether p's credential reference resolves where pao
 // would read it at its next start, never what it resolves to (ADR-0057 point
 // 4). A variable is looked for in the environment pao was started with: a
 // restart from the UI starts with that one again, so a variable set anywhere
 // else is not seen until the service itself is started again.
-func (a *channelConfigAPI) credentialStatus(o config.Orchestrator, c config.Channel) local.CredentialStatusJSON {
+func (a *channelConfigAPI) credentialStatus(o config.Orchestrator, p config.Provider) local.CredentialStatusJSON {
 	inEnv := func(name string) local.CredentialStatusJSON {
 		if v, ok := a.startEnv(name); ok && v != "" {
 			return local.CredentialStatusJSON{Resolves: true}
 		}
 		return local.CredentialStatusJSON{Problem: fmt.Sprintf("variable %s is not set in the environment pao was started with; set it where pao's service is configured, then start the service again", name)}
 	}
-	if c.CredentialEnv != "" {
-		return inEnv(c.CredentialEnv)
+	if p.CredentialEnv != "" {
+		return inEnv(p.CredentialEnv)
 	}
-	s, ok := o.Secret(c.CredentialSecret)
+	s, ok := o.Secret(p.CredentialSecret)
 	switch {
 	case !ok:
-		return local.CredentialStatusJSON{Problem: fmt.Sprintf("no secret named %q is configured", c.CredentialSecret)}
+		return local.CredentialStatusJSON{Problem: fmt.Sprintf("no secret named %q is configured", p.CredentialSecret)}
 	case s.Env != "":
 		return inEnv(s.Env)
 	}
 	b, err := os.ReadFile(s.File)
 	switch {
 	case err != nil:
-		return local.CredentialStatusJSON{Problem: fmt.Sprintf("secret %q: file %s cannot be read", c.CredentialSecret, s.File)}
+		return local.CredentialStatusJSON{Problem: fmt.Sprintf("secret %q: file %s cannot be read", p.CredentialSecret, s.File)}
 	case strings.TrimSpace(string(b)) == "":
-		return local.CredentialStatusJSON{Problem: fmt.Sprintf("secret %q: file %s is empty", c.CredentialSecret, s.File)}
+		return local.CredentialStatusJSON{Problem: fmt.Sprintf("secret %q: file %s is empty", p.CredentialSecret, s.File)}
 	}
 	return local.CredentialStatusJSON{Resolves: true}
 }
@@ -195,7 +192,7 @@ func (a *channelConfigAPI) change(edit func(config.Orchestrator, *config.Managed
 }
 
 func channelToJSON(c config.Channel) local.ChannelConfigJSON {
-	out := local.ChannelConfigJSON{ID: c.ID, Name: c.Name, Kind: c.Kind, CredentialEnv: c.CredentialEnv, CredentialSecret: c.CredentialSecret, Options: c.Options, Owner: c.Owner, Target: c.Target}
+	out := local.ChannelConfigJSON{ID: c.ID, Name: c.Name, Provider: c.Provider, Owner: c.Owner, Target: c.Target}
 	for _, g := range c.Groups {
 		gj := local.GroupConfigJSON{ID: g.ID, Name: g.Name, Members: g.Members}
 		for _, t := range g.Topics {
@@ -207,10 +204,7 @@ func channelToJSON(c config.Channel) local.ChannelConfigJSON {
 }
 
 func channelFromJSON(in local.ChannelConfigJSON) config.Channel {
-	c := config.Channel{ID: in.ID, Name: in.Name, Kind: in.Kind, CredentialEnv: in.CredentialEnv, CredentialSecret: in.CredentialSecret, Options: in.Options, Owner: in.Owner, Target: in.Target}
-	if len(c.Options) == 0 {
-		c.Options = nil
-	}
+	c := config.Channel{ID: in.ID, Name: in.Name, Provider: in.Provider, Owner: in.Owner, Target: in.Target}
 	for _, g := range in.Groups {
 		cg := config.Group{ID: g.ID, Name: g.Name, Members: g.Members}
 		if cg.Members == "" {
@@ -230,10 +224,11 @@ func ledgerOf(o config.Orchestrator) (*adapter.Ledger, error) {
 }
 
 // startable checks what starting the node would check of its channels: each
-// adapter accepts its channel, and no id is reused or name given another id
-// (ADR-0021 point 2). With credentials, each channel's credential must also be
-// there to read, as starting needs: a write may name one not provisioned yet,
-// but a restart with it would stop the node.
+// provider's adapter accepts its kind and options, and no channel id is reused
+// or name given another id (ADR-0021 point 2). With credentials, each provider
+// that carries a channel must also have its credential there to read, as
+// starting needs: a write may put a channel on one not provisioned yet, but a
+// restart with it would stop the node.
 func (a *channelConfigAPI) startable(o config.Orchestrator, credentials bool) error {
 	if err := a.adapters.CheckConfig(a.path, o); err != nil {
 		return err
@@ -244,15 +239,20 @@ func (a *channelConfigAPI) startable(o config.Orchestrator, credentials bool) er
 	}
 	specs := make([]adapter.Spec, 0, len(o.Channels))
 	for _, c := range o.Channels {
-		specs = append(specs, adapter.Spec{ID: c.ID, Name: c.Name, Kind: c.Kind})
+		specs = append(specs, adapter.Spec{ID: c.ID, Name: c.Name})
 	}
 	if err := l.Check(specs); err != nil {
 		return err
 	}
 	if credentials {
-		for _, c := range o.Channels {
-			if st := a.credentialStatus(o, c); !st.Resolves {
-				return fmt.Errorf("channel %q: %s", c.Name, st.Problem)
+		// A provider that carries no channel is not started, so its
+		// credential is not needed yet.
+		for _, p := range o.Providers {
+			if !slices.ContainsFunc(o.Channels, func(c config.Channel) bool { return c.Provider == p.Name }) {
+				continue
+			}
+			if st := a.credentialStatus(o, p); !st.Resolves {
+				return fmt.Errorf("provider %q: %s", p.Name, st.Problem)
 			}
 		}
 	}

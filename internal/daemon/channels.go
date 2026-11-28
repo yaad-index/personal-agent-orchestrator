@@ -34,7 +34,8 @@ func wireChannels(cfg *config.Config, creds map[string]string, table adapter.Tab
 	specs := make([]adapter.Spec, 0, len(cfg.Orchestrator.Channels))
 	chanIDs := make(map[string]int, len(cfg.Orchestrator.Channels))
 	for _, c := range cfg.Orchestrator.Channels {
-		specs = append(specs, adapter.Spec{ID: c.ID, Name: c.Name, Kind: c.Kind, Credential: creds[c.Name], Options: c.Options})
+		p, _ := cfg.Orchestrator.Provider(c.Provider)
+		specs = append(specs, adapter.Spec{ID: c.ID, Name: c.Name, Kind: p.Kind, Credential: creds[p.Name], Options: p.Options})
 		chanIDs[c.Name] = c.ID
 	}
 	ledger, err := adapter.OpenLedger(filepath.Join(cfg.Orchestrator.StateDir, "channels.json"))
@@ -136,29 +137,29 @@ func admittedGroups(chs []config.Channel) map[string]map[string]comm.Group {
 	return out
 }
 
-// channelCredentials reads each channel's credential: from the variable it
+// providerCredentials reads each provider's credential: from the variable it
 // names, which is then taken out of the environment, or through the secret it
 // names (ADR-0057 point 2), a variable's value as read at start or a file's,
-// without the line end a file holds. A channel whose credential cannot be
+// without the line end a file holds. A provider whose credential cannot be
 // read is given none, and its adapter reports it as an unset credential.
-func channelCredentials(o config.Orchestrator, secretValues map[string]string) map[string]string {
+func providerCredentials(o config.Orchestrator, secretValues map[string]string) map[string]string {
 	read := readSecret(o, secretValues)
-	creds := make(map[string]string, len(o.Channels))
-	for _, c := range o.Channels {
-		if c.CredentialEnv != "" {
-			creds[c.Name] = os.Getenv(c.CredentialEnv)
+	creds := make(map[string]string, len(o.Providers))
+	for _, p := range o.Providers {
+		if p.CredentialEnv != "" {
+			creds[p.Name] = os.Getenv(p.CredentialEnv)
 			continue
 		}
-		b, err := read(c.CredentialSecret)
+		b, err := read(p.CredentialSecret)
 		if err != nil {
-			slog.Warn("a channel's credential could not be read", "channel", c.Name, "error", err)
+			slog.Warn("a provider's credential could not be read", "provider", p.Name, "error", err)
 			continue
 		}
-		creds[c.Name] = strings.TrimRight(string(b), "\r\n")
+		creds[p.Name] = strings.TrimRight(string(b), "\r\n")
 	}
-	for _, c := range o.Channels {
-		if c.CredentialEnv != "" {
-			_ = os.Unsetenv(c.CredentialEnv)
+	for _, p := range o.Providers {
+		if p.CredentialEnv != "" {
+			_ = os.Unsetenv(p.CredentialEnv)
 		}
 	}
 	return creds

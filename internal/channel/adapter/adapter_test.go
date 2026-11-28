@@ -82,7 +82,7 @@ func TestAnAdapterThatRenamesItselfIsRefused(t *testing.T) {
 	assert.Contains(t, err.Error(), "named itself")
 }
 
-func TestCheckReportsEveryFailingChannelWithoutACredential(t *testing.T) {
+func TestCheckReportsEveryFailingProviderWithoutACredential(t *testing.T) {
 	tbl := Table{
 		"bot": {New: okFactory, Check: func(o map[string]any) error {
 			if _, bad := o["bad"]; bad {
@@ -101,9 +101,9 @@ func TestCheckReportsEveryFailingChannelWithoutACredential(t *testing.T) {
 		{ID: 4, Name: "four", Kind: "bot"},
 	})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), `channel "one": bad option`)
-	assert.Contains(t, err.Error(), `channel "two": kind "nope" is not compiled into this build`)
-	assert.Contains(t, err.Error(), `channel "three": kind "bare" has no option check`)
+	assert.Contains(t, err.Error(), `provider "one": bad option`)
+	assert.Contains(t, err.Error(), `provider "two": kind "nope" is not compiled into this build`)
+	assert.Contains(t, err.Error(), `provider "three": kind "bare" has no option check`)
 	assert.NotContains(t, err.Error(), `"four"`)
 }
 

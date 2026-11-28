@@ -14,18 +14,27 @@ import (
 )
 
 const (
-	chanOK = "    kind: bot\n    credential_env: PAO_BOT\n    owner: alice\n    target: private\n"
+	chanOK = "    provider: p1\n    owner: alice\n    target: private\n"
 	// a channel in the managed file has a credential of its own (ADR-0057 point 3)
-	chanUI = "    kind: bot\n    credential_env: PAO_BOT_UI\n    owner: alice\n    target: private\n"
+	chanUI = "    provider: p2\n    owner: alice\n    target: private\n"
 )
 
 // managedSetup writes a node whose pao.yaml holds own, naming managed.yaml,
 // which holds managed unless it is empty.
+// providerPool is providers p1 to p200, for the channels a test defines.
+var providerPool = func() string {
+	out := "providers:\n"
+	for i := 1; i <= 200; i++ {
+		out += fmt.Sprintf("  - name: p%d\n    kind: bot\n    credential_env: PAO_P%d\n", i, i)
+	}
+	return out
+}()
+
 func managedSetup(t *testing.T, own, managed string) (pao, mf string) {
 	t.Helper()
 	dir := t.TempDir()
 	pao = filepath.Join(dir, "pao.yaml")
-	write(t, pao, "node: n1\nprofiles_dir: profiles\nstate_dir: state\ntoken_env: PAO_TOKEN\nmanaged: managed.yaml\n"+own)
+	write(t, pao, "node: n1\nprofiles_dir: profiles\nstate_dir: state\ntoken_env: PAO_TOKEN\nmanaged: managed.yaml\n"+providerPool+own)
 	write(t, filepath.Join(dir, "profiles", "a.yaml"), "name: a\nbackend: claude-code\n"+startup)
 	mf = filepath.Join(dir, "managed.yaml")
 	if managed != "" {
@@ -55,7 +64,7 @@ func TestAManagedFileNotWrittenYetHoldsNothing(t *testing.T) {
 }
 
 func TestWithoutAManagedFileNothingIsManaged(t *testing.T) {
-	path, err := channelsConfig(t, "channels:\n  - id: 1\n    name: mine\n"+chanOK)
+	path, err := channelsConfig(t, providerPool+"channels:\n  - id: 1\n    name: mine\n"+chanOK)
 	require.NoError(t, err)
 	cfg, err := Load(path)
 	require.NoError(t, err)
@@ -70,7 +79,7 @@ func TestAClashBetweenTheTwoFilesIsALoadErrorNamingBoth(t *testing.T) {
 		"same id":   {"channels:\n  - id: 1\n    name: a\n" + chanOK, "channels:\n  - id: 1\n    name: b\n" + chanOK, "id 1 is already channel"},
 		"same group name": {
 			"channels:\n  - id: 1\n    name: a\n" + strings.Replace(chanOK, "private", `"-1"`, 1) + "    groups:\n      - id: \"-1\"\n        name: crew\n        members: operators\n",
-			"channels:\n  - id: 2\n    name: b\n" + strings.Replace(chanOK, "private", `"-2"`, 1) + "    groups:\n      - id: \"-2\"\n        name: crew\n        members: operators\n",
+			"channels:\n  - id: 2\n    name: b\n" + strings.Replace(chanUI, "private", `"-2"`, 1) + "    groups:\n      - id: \"-2\"\n        name: crew\n        members: operators\n",
 			`name "crew" is already`,
 		},
 	} {
@@ -89,7 +98,7 @@ func TestTheManagedFileHoldsOnlyWhatPaoManages(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "listen", "a setting it may not hold is an error, not ignored")
 
-	pao, _ = managedSetup(t, "", "channels:\n  - id: 2\n    name: x\n    kind: bot\n")
+	pao, _ = managedSetup(t, "", "channels:\n  - id: 2\n    name: x\n    provider: p2\n")
 	_, err = Load(pao)
 	require.Error(t, err, "its channels are checked as pao.yaml's are")
 	assert.Contains(t, err.Error(), "managed.yaml: channels[0]")
@@ -114,7 +123,7 @@ func TestAWriteThatLoadsReplacesTheManagedFileWhole(t *testing.T) {
 	paoBefore, err := os.ReadFile(pao)
 	require.NoError(t, err)
 
-	m := Managed{Channels: []Channel{{ID: 2, Name: "ui-made", Kind: "bot", CredentialEnv: "PAO_UI_BOT", Owner: "alice", Target: "-5/7",
+	m := Managed{Channels: []Channel{{ID: 2, Name: "ui-made", Provider: "p2", Owner: "alice", Target: "-5/7",
 		Groups: []Group{{ID: "-5", Name: "crew", Members: MembersOperators, Topics: []Topic{{ID: "7", Name: "crew-news"}}}}}}}
 	require.NoError(t, WriteManaged(pao, m))
 
@@ -145,8 +154,8 @@ func TestAWriteThatWouldNotLoadIsRefusedAndChangesNothing(t *testing.T) {
 	before, err := os.ReadFile(mf)
 	require.NoError(t, err)
 	for name, m := range map[string]Managed{
-		"clash with pao.yaml": {Channels: []Channel{{ID: 3, Name: "mine", Kind: "bot", CredentialEnv: "X"}}},
-		"invalid channel":     {Channels: []Channel{{ID: 3, Name: "Bad Name", Kind: "bot", CredentialEnv: "X"}}},
+		"clash with pao.yaml": {Channels: []Channel{{ID: 3, Name: "mine", Provider: "p3", Owner: "alice", Target: TargetPrivate}}},
+		"invalid channel":     {Channels: []Channel{{ID: 3, Name: "Bad Name", Provider: "p3", Owner: "alice", Target: TargetPrivate}}},
 	} {
 		require.Error(t, WriteManaged(pao, m), name)
 		after, err := os.ReadFile(mf)
@@ -162,7 +171,7 @@ func TestAReaderNeverSeesAHalfWrittenManagedFile(t *testing.T) {
 	many := func(n int) Managed {
 		var m Managed
 		for i := 1; i <= n; i++ {
-			m.Channels = append(m.Channels, Channel{ID: i, Name: "c" + strings.Repeat("x", i%20) + string(rune('a'+i%26)) + "-" + strings.Repeat("0", i/26), Kind: "bot", CredentialEnv: fmt.Sprintf("V%d", i), Owner: "alice", Target: TargetPrivate})
+			m.Channels = append(m.Channels, Channel{ID: i, Name: "c" + strings.Repeat("x", i%20) + string(rune('a'+i%26)) + "-" + strings.Repeat("0", i/26), Provider: fmt.Sprintf("p%d", i), Owner: "alice", Target: TargetPrivate})
 		}
 		return m
 	}

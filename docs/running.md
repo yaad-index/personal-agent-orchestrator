@@ -58,17 +58,22 @@ A backend that can't turn its tools off refuses a profile that asks it to, wheth
 A chat channel is one conversation and the one person it belongs to. pao acts on a message only when it comes from that conversation and from that person. Anything else, whoever sends it and wherever it is sent, reaches no agent and is answered with nothing. That covers a group the bot was added to, another topic of the same group, the owner writing somewhere else, and anyone else writing in the channel's own conversation. Each such message is kept in the record of rejected messages, with its sender and its text, for you to read (`pao inbound rejected`, or the UI's rejected page). Everything the channel shows goes to that one conversation. pao's own questions and notices are the exception: they also go to the owner's private conversation with the bot, where nobody else reads them, and a button pressed there is the owner's answer.
 
 ```yaml
+providers:                # platform connections, defined here only
+  - name: bot1
+    kind: bot
+    credential_env: PAO_BOT_TOKEN
+  - name: bot2
+    kind: bot
+    credential_env: PAO_TEAM_BOT_TOKEN
 channels:
   - id: 1
     name: chat
-    kind: bot
-    credential_env: PAO_BOT_TOKEN
+    provider: bot1
     owner: alice          # the subject the channel belongs to
     target: private       # alice's private conversation with the bot
   - id: 2
     name: team
-    kind: bot
-    credential_env: PAO_TEAM_BOT_TOKEN
+    provider: bot2
     owner: alice
     target: "-1001234567890/42"   # topic 42 of the group, or just the group's id
     groups:
@@ -77,7 +82,9 @@ channels:
         members: operators
 ```
 
-A channel whose target is a group lists that group, and only that group, under `groups`. A channel whose target is `private` lists none. Both `owner` and `target` are required: a configuration without them doesn't load. Since each channel reads with its own credential, a second conversation needs a second bot.
+A channel whose target is a group lists that group, and only that group, under `groups`. A channel whose target is `private` lists none. Both `owner` and `target` are required: a configuration without them doesn't load.
+
+A provider is the connection a channel is carried on: its `kind`, its credential and the adapter's `options`. It is defined in `pao.yaml` only, never from the UI or in the file pao manages. Its credential follows the same rules a channel's did: it is named, as a variable or one of the node's secrets, never written in the file, and where it is read from is that provider's alone. For now a provider carries one channel, so a second conversation needs a second provider, and a second bot.
 
 A channel is also one agent's: its default agent. Everything the owner writes there goes to that agent, and the channel shows that agent's words and pao's own, and no other agent's. Addressing another agent from the channel, by name or by a tag, is answered `only <agent> is reached from this channel.` and goes nowhere. A channel with no default agent reaches none. An agent belongs to a user, named in its profile:
 
@@ -111,7 +118,7 @@ The **Agents** page starts, stops and restarts configured agents, spawns a tempo
 
 The **Tasks** page lists the tasks still open (and the ended ones when asked), shows a task with its log, creates one, and cancels one with a reason. These are `pao tasks list`, `show`, `create` and `cancel`, under the same checks: a task is created only for tags the operator holds a grant on, and a secret it names must be configured.
 
-The **Channels** page lists every channel, from `pao.yaml` and from the file pao manages, with where its credential is read from and whether it is there to read. It adds, changes and removes the channels in the file pao manages; those in `pao.yaml` are changed there, and without `managed` nothing is changed here. A channel names its credential, as one of the node's secrets or a variable in pao's environment, and you put the value there yourself: the page never takes, shows or stores one. A variable counts only if it was in the environment pao was started with, because a restart from the UI starts with that one again; one set later needs the service itself started again. pao gives a new channel an id it has never used, or the id a channel of that name once had. Changes apply when pao next starts. **Restart pao** first checks that pao would start: the configuration loads, each channel's adapter accepts it, no channel id is reused, and every channel's credential is there to read. If not, it says why and pao keeps running.
+The **Channels** page lists every channel, from `pao.yaml` and from the file pao manages, and every provider with whether its credential is there to read. It adds, changes and removes the channels in the file pao manages, each on a provider that carries no other; those in `pao.yaml` are changed there, and without `managed` nothing is changed here. Providers are changed in `pao.yaml` only. A provider names its credential, as one of the node's secrets or a variable in pao's environment, and you put the value there yourself: the page never takes, shows or stores one. A variable counts only if it was in the environment pao was started with, because a restart from the UI starts with that one again; one set later needs the service itself started again. pao gives a new channel an id it has never used, or the id a channel of that name once had. Changes apply when pao next starts. **Restart pao** first checks that pao would start: the configuration loads, each provider's adapter accepts it, no channel id is reused, and the credential of every provider that carries a channel is there to read. If not, it says why and pao keeps running.
 
 The **Bindings** page shows where each agent's output goes, binds an agent's replies or errors to the local channel, a group or topic, or a private conversation, and removes a binding set while pao runs; one set in the configuration file is shown and changed there. It also sets and clears the default agent of each chat channel and group. These are the same operations as `pao bindings` and `pao channel default`, under the same checks.
 

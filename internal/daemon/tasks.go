@@ -307,7 +307,7 @@ func resolveSecret(o config.Orchestrator, fromEnv map[string]string) func(name s
 	return func(name string) ([]byte, error) {
 		// A server's or a channel's secret is never resolved into a run
 		// (ADR-0053 point 1, ADR-0057 point 3).
-		if o.BoundToUpstream(name) || o.BoundToChannel(name) {
+		if o.BoundToUpstream(name) || o.BoundToProvider(name) {
 			return nil, fmt.Errorf("no secret named %q is configured", name)
 		}
 		return read(name)
@@ -379,11 +379,11 @@ func upstreamCredential(u config.MCPUpstream, o config.Orchestrator, fromEnv map
 }
 
 // taskHasSecret says whether a task may name a secret: one that is configured
-// and is not a server's or a channel's credential, which to a task is not
+// and is not a server's or a provider's credential, which to a task is not
 // configured (ADR-0053 point 1, ADR-0057 point 3).
 func taskHasSecret(o config.Orchestrator) func(name string) bool {
 	return func(name string) bool {
 		_, ok := o.Secret(name)
-		return ok && !o.BoundToUpstream(name) && !o.BoundToChannel(name)
+		return ok && !o.BoundToUpstream(name) && !o.BoundToProvider(name)
 	}
 }

@@ -62,10 +62,10 @@ func servesAnOperator(requester func() (subject, channel string, ok bool), isOpe
 // policy. Each field is copied by name, so a credential, the variable that holds
 // one, an adapter option or a group's platform id never reaches it. Serving no
 // request, it lists nothing.
-func governorChannels(chans []config.Channel, serving func() bool) func() []mcpsrv.ChannelInfo {
+func governorChannels(providers []config.Provider, chans []config.Channel, serving func() bool) func() []mcpsrv.ChannelInfo {
 	all := []mcpsrv.ChannelInfo{{Name: local.Source, Kind: local.Source}}
 	for _, c := range chans {
-		info := mcpsrv.ChannelInfo{Name: c.Name, Kind: c.Kind}
+		info := mcpsrv.ChannelInfo{Name: c.Name, Kind: config.KindOf(providers, c)}
 		for _, g := range c.Groups {
 			info.Groups = append(info.Groups, mcpsrv.GroupInfo{Name: g.Name, Members: g.Members})
 		}

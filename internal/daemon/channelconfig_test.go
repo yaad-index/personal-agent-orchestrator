@@ -19,8 +19,11 @@ import (
 
 const okEndpoint = "https://bot.example/bot{token}/{method}"
 
-// channelNode writes a node with one channel of its own in pao.yaml and, when
-// managed is set, names managed.yaml; secret.txt holds a secret's value.
+// channelNode writes a node whose pao.yaml defines the channel mine on the
+// provider mine, and the providers a test puts channels on: via-file,
+// via-var and via-blank, whose credentials are secrets, unset, whose variable
+// pao was not started with, and free1 to free9. When managed is set, it
+// names managed.yaml. secret.txt holds a secret's value.
 func channelNode(t *testing.T, managed bool) (pao, mf string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -32,9 +35,18 @@ func channelNode(t *testing.T, managed bool) (pao, mf string) {
 	if managed {
 		m = "managed: managed.yaml\n"
 	}
+	provider := func(name, cred string) string {
+		return "  - name: " + name + "\n    kind: bot\n    " + cred + "\n    options:\n      endpoint: \"" + okEndpoint + "\"\n"
+	}
+	provs := provider("mine", "credential_env: MINE_VAR") + provider("via-file", "credential_secret: in-file") +
+		provider("via-var", "credential_secret: in-var") + provider("via-blank", "credential_secret: blank") +
+		provider("unset", "credential_env: NOT_SET_VAR")
+	for i := 1; i <= 9; i++ {
+		provs += provider(fmt.Sprintf("free%d", i), fmt.Sprintf("credential_env: FREE%d_VAR", i))
+	}
 	require.NoError(t, os.WriteFile(pao, []byte("node: n1\nprofiles_dir: profiles\nstate_dir: state\ntoken_env: PAO_TOKEN\n"+m+
 		"secrets:\n  - name: in-file\n    file: secret.txt\n  - name: in-var\n    env: S_VAR\n  - name: blank\n    file: empty.txt\n"+
-		"channels:\n  - id: 1\n    name: mine\n    kind: bot\n    credential_env: MINE_VAR\n    owner: alice\n    target: private\n    options:\n      endpoint: \""+okEndpoint+"\"\n"), 0o600))
+		"providers:\n"+provs+"channels:\n  - id: 1\n    name: mine\n    provider: mine\n    owner: alice\n    target: private\n"), 0o600))
 	return pao, mf
 }
 
@@ -48,30 +60,25 @@ func channelAPI(t *testing.T, pao string, env map[string]string) *channelConfigA
 	}
 }
 
-func uiChannel(id int, name string) local.ChannelConfigJSON {
-	return local.ChannelConfigJSON{ID: id, Name: name, Kind: "bot", CredentialSecret: "in-file", Owner: "alice", Target: config.TargetPrivate, Options: map[string]any{"endpoint": okEndpoint}}
+func uiChannel(id int, name, provider string) local.ChannelConfigJSON {
+	return local.ChannelConfigJSON{ID: id, Name: name, Provider: provider, Owner: "alice", Target: config.TargetPrivate}
 }
 
-func TestTheChannelsAreListedAsTheNextStartWouldHaveThem(t *testing.T) {
+func TestTheChannelsAndProvidersAreListedAsTheNextStartWouldHaveThem(t *testing.T) {
 	pao, _ := channelNode(t, true)
 	t.Setenv("S_VAR", "set-now-but-not-at-start")
 	a := channelAPI(t, pao, map[string]string{"MINE_VAR": "ENV-SECRET-VALUE"})
 	ctx := context.Background()
-
 	l, err := a.List(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, filepath.Join(filepath.Dir(pao), "managed.yaml"), l.ManagedFile)
-	assert.Equal(t, []string{"bot"}, l.Kinds)
-	assert.Equal(t, []string{"in-file", "in-var", "blank"}, l.Secrets)
 	require.Len(t, l.Channels, 1)
+	assert.Equal(t, "mine", l.Channels[0].Provider)
 	assert.False(t, l.Channels[0].Managed)
 	assert.True(t, l.Channels[0].Applied)
-	assert.True(t, l.Channels[0].Credential.Resolves)
 	assert.False(t, l.RestartNeeded)
 
-	for _, c := range []local.ChannelConfigJSON{uiChannel(2, "via-file"), {ID: 3, Name: "via-var", Kind: "bot", CredentialSecret: "in-var", Owner: "alice", Target: config.TargetPrivate, Options: map[string]any{"endpoint": okEndpoint}},
-		{ID: 4, Name: "via-blank", Kind: "bot", CredentialSecret: "blank", Owner: "alice", Target: config.TargetPrivate, Options: map[string]any{"endpoint": okEndpoint}},
-		{ID: 5, Name: "unset", Kind: "bot", CredentialEnv: "NOT_SET_VAR", Owner: "alice", Target: config.TargetPrivate, Options: map[string]any{"endpoint": okEndpoint}}} {
+	for _, c := range []local.ChannelConfigJSON{uiChannel(2, "a", "via-file"), uiChannel(3, "b", "via-var")} {
 		require.NoError(t, a.Put(ctx, c), c.Name)
 	}
 	l, err = a.List(ctx)
@@ -81,13 +88,22 @@ func TestTheChannelsAreListedAsTheNextStartWouldHaveThem(t *testing.T) {
 		byName[c.Name] = c
 	}
 	assert.True(t, l.RestartNeeded, "written, not yet running")
-	assert.True(t, byName["via-file"].Managed)
-	assert.False(t, byName["via-file"].Applied)
-	assert.True(t, byName["via-file"].Credential.Resolves)
-	assert.False(t, byName["via-var"].Credential.Resolves, "a variable set after start is not one pao starts with")
-	assert.Contains(t, byName["via-var"].Credential.Problem, "S_VAR is not set in the environment pao was started with")
-	assert.Contains(t, byName["via-blank"].Credential.Problem, "is empty")
-	assert.Contains(t, byName["unset"].Credential.Problem, "NOT_SET_VAR")
+	assert.True(t, byName["a"].Managed)
+	assert.False(t, byName["a"].Applied)
+
+	prov := map[string]local.ProviderJSON{}
+	for _, p := range l.Providers {
+		prov[p.Name] = p
+	}
+	assert.Len(t, l.Providers, 14)
+	assert.Equal(t, local.ProviderJSON{Name: "mine", Kind: "bot", Credential: local.CredentialStatusJSON{Resolves: true}, Channel: "mine"}, prov["mine"])
+	assert.True(t, prov["via-file"].Credential.Resolves)
+	assert.Equal(t, "a", prov["via-file"].Channel)
+	assert.False(t, prov["via-var"].Credential.Resolves, "a variable set after start is not one pao starts with")
+	assert.Contains(t, prov["via-var"].Credential.Problem, "S_VAR is not set in the environment pao was started with")
+	assert.Contains(t, prov["via-blank"].Credential.Problem, "is empty")
+	assert.Contains(t, prov["unset"].Credential.Problem, "NOT_SET_VAR")
+	assert.Empty(t, prov["free1"].Channel)
 
 	b, err := json.Marshal(l)
 	require.NoError(t, err)
@@ -103,13 +119,13 @@ func TestOnlyTheManagedFilesChannelsAreChanged(t *testing.T) {
 	paoBefore, err := os.ReadFile(pao)
 	require.NoError(t, err)
 
-	err = a.Put(ctx, local.ChannelConfigJSON{ID: 1, Name: "mine", Kind: "bot", CredentialEnv: "OTHER", Owner: "alice", Target: config.TargetPrivate, Options: map[string]any{"endpoint": okEndpoint}})
+	err = a.Put(ctx, uiChannel(1, "mine", "free1"))
 	assert.ErrorIs(t, err, local.ErrConflict)
 	assert.Contains(t, err.Error(), "change it there")
 	assert.ErrorIs(t, a.Delete(ctx, "mine"), local.ErrConflict)
 	assert.ErrorIs(t, a.Delete(ctx, "nobody"), local.ErrNotFound)
 
-	require.NoError(t, a.Put(ctx, uiChannel(2, "ui")))
+	require.NoError(t, a.Put(ctx, uiChannel(2, "ui", "free1")))
 	require.NoError(t, a.Delete(ctx, "ui"))
 	l, err := a.List(ctx)
 	require.NoError(t, err)
@@ -125,16 +141,15 @@ func TestAChangeThatWouldNotStartIsRefusedAndChangesNothing(t *testing.T) {
 	pao, mf := channelNode(t, true)
 	a := channelAPI(t, pao, nil)
 	ctx := context.Background()
-	require.NoError(t, a.Put(ctx, uiChannel(2, "ui")))
+	require.NoError(t, a.Put(ctx, uiChannel(2, "ui", "free1")))
 	before, err := os.ReadFile(mf)
 	require.NoError(t, err)
 	for name, c := range map[string]local.ChannelConfigJSON{
-		"unknown option":  {ID: 3, Name: "x", Kind: "bot", CredentialEnv: "X_VAR", Owner: "alice", Target: config.TargetPrivate, Options: map[string]any{"nonsense": 1}},
-		"unknown kind":    {ID: 3, Name: "x", Kind: "carrier-pigeon", CredentialEnv: "X_VAR", Owner: "alice", Target: config.TargetPrivate},
-		"same id":         {ID: 1, Name: "x", Kind: "bot", CredentialEnv: "X_VAR", Owner: "alice", Target: config.TargetPrivate, Options: map[string]any{"endpoint": okEndpoint}},
-		"shared variable": {ID: 3, Name: "x", Kind: "bot", CredentialEnv: "MINE_VAR", Owner: "alice", Target: config.TargetPrivate, Options: map[string]any{"endpoint": okEndpoint}},
-		"taken secret":    {ID: 3, Name: "x", Kind: "bot", CredentialSecret: "in-file", Owner: "alice", Target: config.TargetPrivate, Options: map[string]any{"endpoint": okEndpoint}},
-		"no credential":   {ID: 3, Name: "x", Kind: "bot", Options: map[string]any{"endpoint": okEndpoint}},
+		"no provider":      uiChannel(3, "x", ""),
+		"unknown provider": uiChannel(3, "x", "nope"),
+		"a carried one":    uiChannel(3, "x", "mine"),
+		"same id":          uiChannel(1, "x", "free2"),
+		"no owner":         {ID: 3, Name: "x", Provider: "free2", Target: config.TargetPrivate},
 	} {
 		err := a.Put(ctx, c)
 		assert.ErrorIs(t, err, local.ErrBadRequest, name)
@@ -146,16 +161,16 @@ func TestAChangeThatWouldNotStartIsRefusedAndChangesNothing(t *testing.T) {
 
 func TestRedefiningAChannelKeepsItsGroupsTopics(t *testing.T) {
 	pao, mf := channelNode(t, true)
-	require.NoError(t, os.WriteFile(mf, []byte("channels:\n  - id: 2\n    name: ui\n    kind: bot\n    credential_env: UI_VAR\n    owner: alice\n    target: \"-5/7\"\n    options:\n      endpoint: \""+okEndpoint+
-		"\"\n    groups:\n      - id: \"-5\"\n        name: crew\n        members: operators\n        topics:\n          - id: \"7\"\n            name: crew-news\n"), 0o600))
+	require.NoError(t, os.WriteFile(mf, []byte("channels:\n  - id: 2\n    name: ui\n    provider: free1\n    owner: alice\n    target: \"-5/7\"\n"+
+		"    groups:\n      - id: \"-5\"\n        name: crew\n        members: operators\n        topics:\n          - id: \"7\"\n            name: crew-news\n"), 0o600))
 	a := channelAPI(t, pao, nil)
-	c := local.ChannelConfigJSON{ID: 2, Name: "ui", Kind: "bot", CredentialEnv: "UI_VAR2", Owner: "alice", Target: "-5/7", Options: map[string]any{"endpoint": okEndpoint},
+	c := local.ChannelConfigJSON{ID: 2, Name: "ui", Provider: "free2", Owner: "alice", Target: "-5/7",
 		Groups: []local.GroupConfigJSON{{ID: "-5", Name: "crew"}}}
 	require.NoError(t, a.Put(context.Background(), c))
 	cfg, err := config.Load(pao)
 	require.NoError(t, err)
 	got := cfg.Orchestrator.Channels[1]
-	assert.Equal(t, "UI_VAR2", got.CredentialEnv)
+	assert.Equal(t, "free2", got.Provider)
 	assert.Equal(t, "-5/7", got.Target)
 	require.Len(t, got.Groups, 1)
 	assert.Equal(t, []config.Topic{{ID: "7", Name: "crew-news"}}, got.Groups[0].Topics, "the form does not show topics, so it does not drop them")
@@ -168,7 +183,7 @@ func TestWithoutAManagedFileNothingChanges(t *testing.T) {
 	l, err := a.List(context.Background())
 	require.NoError(t, err)
 	assert.Empty(t, l.ManagedFile)
-	err = a.Put(context.Background(), uiChannel(2, "ui"))
+	err = a.Put(context.Background(), uiChannel(2, "ui", "free1"))
 	assert.ErrorIs(t, err, local.ErrConflict)
 	assert.ErrorIs(t, err, config.ErrNotManaged)
 	_, err = os.Stat(mf)
@@ -183,8 +198,7 @@ func TestConcurrentChangesAreNotLost(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			c := local.ChannelConfigJSON{ID: 10 + i, Name: fmt.Sprintf("c%d", i), Kind: "bot", CredentialEnv: fmt.Sprintf("C%d_VAR", i), Owner: "alice", Target: config.TargetPrivate, Options: map[string]any{"endpoint": okEndpoint}}
-			assert.NoError(t, a.Put(context.Background(), c))
+			assert.NoError(t, a.Put(context.Background(), uiChannel(10+i, fmt.Sprintf("c%d", i), fmt.Sprintf("free%d", i+1))))
 		}()
 	}
 	wg.Wait()
@@ -205,11 +219,8 @@ func TestANewChannelIsGivenAnIdNeverUsed(t *testing.T) {
 	writeLedger(t, pao, `{"channels":{"1":"mine","7":"retired","4":"comeback"}}`)
 	a := channelAPI(t, pao, nil)
 	ctx := context.Background()
-	c := uiChannel(0, "fresh")
-	require.NoError(t, a.Put(ctx, c))
-	back := uiChannel(0, "comeback")
-	back.CredentialSecret, back.CredentialEnv = "", "BACK_VAR"
-	require.NoError(t, a.Put(ctx, back))
+	require.NoError(t, a.Put(ctx, uiChannel(0, "fresh", "free1")))
+	require.NoError(t, a.Put(ctx, uiChannel(0, "comeback", "free2")))
 	cfg, err := config.Load(pao)
 	require.NoError(t, err)
 	ids := map[string]int{}
@@ -219,7 +230,7 @@ func TestANewChannelIsGivenAnIdNeverUsed(t *testing.T) {
 	assert.Equal(t, 8, ids["fresh"], "above every id served, retired ones included")
 	assert.Equal(t, 4, ids["comeback"], "a name served before gets its id back")
 
-	reuse := local.ChannelConfigJSON{ID: 7, Name: "squatter", Kind: "bot", CredentialEnv: "SQ_VAR", Owner: "alice", Target: config.TargetPrivate, Options: map[string]any{"endpoint": okEndpoint}}
+	reuse := uiChannel(7, "squatter", "free3")
 	err = a.Put(ctx, reuse)
 	assert.ErrorIs(t, err, local.ErrBadRequest)
 	assert.Contains(t, err.Error(), "never reused")
@@ -231,11 +242,11 @@ func TestARestartIsRefusedWhenPaoWouldNotStart(t *testing.T) {
 	a := channelAPI(t, pao, env)
 	require.NoError(t, a.RestartCheck(), "a node that would start")
 
-	require.NoError(t, a.Put(context.Background(), local.ChannelConfigJSON{ID: 2, Name: "unset", Kind: "bot", CredentialEnv: "UNSET_VAR", Owner: "alice", Target: config.TargetPrivate, Options: map[string]any{"endpoint": okEndpoint}}))
+	require.NoError(t, a.Put(context.Background(), uiChannel(2, "late", "unset")))
 	err := a.RestartCheck()
-	require.Error(t, err, "saved, but its credential is not there to read")
-	assert.Contains(t, err.Error(), `channel "unset": variable UNSET_VAR is not set`)
-	env["UNSET_VAR"] = "now-set"
+	require.Error(t, err, "saved, but its provider's credential is not there to read")
+	assert.Contains(t, err.Error(), `provider "unset": variable NOT_SET_VAR is not set`)
+	env["NOT_SET_VAR"] = "now-set"
 	require.NoError(t, a.RestartCheck())
 
 	writeLedger(t, pao, `{"channels":{"1":"mine","2":"someone-else"}}`)

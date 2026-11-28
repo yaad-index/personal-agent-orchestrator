@@ -348,14 +348,15 @@ func channelsConfig(t *testing.T, channels string) (string, error) {
 	return filepath.Join(dir, "pao.yaml"), err
 }
 
-func TestChannelsAreLoadedWithTheirIdNameKindCredentialAndOptions(t *testing.T) {
-	path, err := channelsConfig(t, "channels:\n  - id: 1\n    name: chat\n    kind: bot\n    credential_env: PAO_BOT\n    owner: alice\n    target: private\n    options:\n      poll: 30\n  - id: 2\n    name: alt-chat\n    kind: bot\n    credential_env: PAO_BOT2\n    owner: alice\n    target: private\n")
+func TestChannelsAndProvidersAreLoaded(t *testing.T) {
+	path, err := channelsConfig(t, "providers:\n  - name: chat\n    kind: bot\n    credential_env: PAO_BOT\n    options:\n      poll: 30\n  - name: alt-chat\n    kind: bot\n    credential_env: PAO_BOT2\nchannels:\n  - id: 1\n    name: chat\n    provider: chat\n    owner: alice\n    target: private\n  - id: 2\n    name: alt-chat\n    provider: alt-chat\n    owner: alice\n    target: private\n")
 	require.NoError(t, err)
 	cfg, err := Load(path)
 	require.NoError(t, err)
 	require.Len(t, cfg.Orchestrator.Channels, 2)
-	assert.Equal(t, Channel{ID: 1, Name: "chat", Kind: "bot", CredentialEnv: "PAO_BOT", Options: map[string]any{"poll": 30}, Owner: "alice", Target: "private"}, cfg.Orchestrator.Channels[0])
+	assert.Equal(t, Channel{ID: 1, Name: "chat", Provider: "chat", Owner: "alice", Target: "private"}, cfg.Orchestrator.Channels[0])
 	assert.Equal(t, 2, cfg.Orchestrator.Channels[1].ID)
+	assert.Equal(t, []Provider{{Name: "chat", Kind: "bot", CredentialEnv: "PAO_BOT", Options: map[string]any{"poll": 30}}, {Name: "alt-chat", Kind: "bot", CredentialEnv: "PAO_BOT2"}}, cfg.Orchestrator.Providers)
 }
 
 func TestNoChannelsIsFine(t *testing.T) {
@@ -367,23 +368,45 @@ func TestNoChannelsIsFine(t *testing.T) {
 }
 
 func TestChannelsRejects(t *testing.T) {
-	ok := "    kind: bot\n    credential_env: PAO_BOT\n    owner: alice\n    target: private\n"
+	provs := "providers:\n  - name: tg\n    kind: bot\n    credential_env: PAO_BOT\n  - name: tg2\n    kind: bot\n    credential_env: PAO_BOT2\n"
+	ok := "    provider: tg\n    owner: alice\n    target: private\n"
+	ok2 := "    provider: tg2\n    owner: alice\n    target: private\n"
 	for name, c := range map[string]struct{ body, want string }{
-		"no id":          {"channels:\n  - name: chat\n" + ok, "id must be a positive integer"},
-		"zero id":        {"channels:\n  - id: 0\n    name: chat\n" + ok, "id must be a positive integer"},
-		"negative id":    {"channels:\n  - id: -3\n    name: chat\n" + ok, "id must be a positive integer"},
-		"no name":        {"channels:\n  - id: 1\n" + ok, "name"},
-		"bad name":       {"channels:\n  - id: 1\n    name: Chat Room\n" + ok, "name"},
-		"long name":      {"channels:\n  - id: 1\n    name: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n" + ok, "name"},
-		"reserved name":  {"channels:\n  - id: 1\n    name: local\n" + ok, "reserved"},
-		"no kind":        {"channels:\n  - id: 1\n    name: chat\n    credential_env: PAO_BOT\n    owner: alice\n    target: private\n", "kind is required"},
-		"no credential":  {"channels:\n  - id: 1\n    name: chat\n    kind: bot\n", "credential_env"},
-		"bad credential": {"channels:\n  - id: 1\n    name: chat\n    kind: bot\n    credential_env: \"has space\"\n", "credential_env"},
-		"duplicate id":   {"channels:\n  - id: 1\n    name: a\n" + ok + "  - id: 1\n    name: b\n" + ok, "id 1 is already channel"},
-		"duplicate name": {"channels:\n  - id: 1\n    name: a\n" + ok + "  - id: 2\n    name: a\n" + ok, "name \"a\" is already used"},
-		"unknown field":  {"channels:\n  - id: 1\n    name: chat\n    token: x\n" + ok, "token"},
+		"no id":              {"channels:\n  - name: chat\n" + ok, "id must be a positive integer"},
+		"zero id":            {"channels:\n  - id: 0\n    name: chat\n" + ok, "id must be a positive integer"},
+		"negative id":        {"channels:\n  - id: -3\n    name: chat\n" + ok, "id must be a positive integer"},
+		"no name":            {"channels:\n  - id: 1\n" + ok, "name"},
+		"bad name":           {"channels:\n  - id: 1\n    name: Chat Room\n" + ok, "name"},
+		"long name":          {"channels:\n  - id: 1\n    name: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n" + ok, "name"},
+		"reserved name":      {"channels:\n  - id: 1\n    name: local\n" + ok, "reserved"},
+		"no provider":        {"channels:\n  - id: 1\n    name: chat\n    owner: alice\n    target: private\n", `provider "" is not configured`},
+		"unknown provider":   {"channels:\n  - id: 1\n    name: chat\n    provider: nope\n    owner: alice\n    target: private\n", `provider "nope" is not configured`},
+		"shared provider":    {"channels:\n  - id: 1\n    name: a\n" + ok + "  - id: 2\n    name: b\n" + ok, `provider "tg" already carries channel "a"`},
+		"its own kind":       {"channels:\n  - id: 1\n    name: chat\n    kind: bot\n" + ok, "kind"},
+		"its own credential": {"channels:\n  - id: 1\n    name: chat\n    credential_env: PAO_BOT\n" + ok, "credential_env"},
+		"duplicate id":       {"channels:\n  - id: 1\n    name: a\n" + ok + "  - id: 1\n    name: b\n" + ok2, "id 1 is already channel"},
+		"duplicate name":     {"channels:\n  - id: 1\n    name: a\n" + ok + "  - id: 2\n    name: a\n" + ok2, "name \"a\" is already used"},
+		"unknown field":      {"channels:\n  - id: 1\n    name: chat\n    token: x\n" + ok, "token"},
 	} {
-		_, err := channelsConfig(t, c.body)
+		_, err := channelsConfig(t, provs+c.body)
+		require.Error(t, err, name)
+		assert.Contains(t, err.Error(), c.want, name)
+	}
+}
+
+func TestProvidersRejects(t *testing.T) {
+	ch := "channels:\n  - id: 1\n    name: chat\n    provider: tg\n    owner: alice\n    target: private\n"
+	for name, c := range map[string]struct{ body, want string }{
+		"no name":        {"providers:\n  - kind: bot\n    credential_env: PAO_BOT\n", `name "" must be`},
+		"bad name":       {"providers:\n  - name: Tele Gram\n    kind: bot\n    credential_env: PAO_BOT\n", `name "Tele Gram" must be`},
+		"no kind":        {"providers:\n  - name: tg\n    credential_env: PAO_BOT\n", "kind is required"},
+		"no credential":  {"providers:\n  - name: tg\n    kind: bot\n", "credential_env"},
+		"both":           {"providers:\n  - name: tg\n    kind: bot\n    credential_env: PAO_BOT\n    credential_secret: s\n", "one of them"},
+		"bad credential": {"providers:\n  - name: tg\n    kind: bot\n    credential_env: \"has space\"\n", "credential_env must name"},
+		"duplicate":      {"providers:\n  - name: tg\n    kind: bot\n    credential_env: PAO_BOT\n  - name: tg\n    kind: bot\n    credential_env: PAO_BOT2\n", `name "tg" is already providers[0]`},
+		"unknown field":  {"providers:\n  - name: tg\n    kind: bot\n    credential_env: PAO_BOT\n    owner: alice\n", "owner"},
+	} {
+		_, err := channelsConfig(t, c.body+ch)
 		require.Error(t, err, name)
 		assert.Contains(t, err.Error(), c.want, name)
 	}
@@ -424,7 +447,7 @@ func TestUpstreamsRejects(t *testing.T) {
 }
 
 func TestChannelGroupsAreLoaded(t *testing.T) {
-	path, err := channelsConfig(t, "channels:\n  - id: 1\n    name: chat\n    kind: bot\n    credential_env: PAO_BOT\n    owner: alice\n    target: \"-100200\"\n    groups:\n      - id: \"-100200\"\n        name: group_channel_one\n        members: operators\n")
+	path, err := channelsConfig(t, "providers:\n  - name: chat\n    kind: bot\n    credential_env: PAO_BOT\nchannels:\n  - id: 1\n    name: chat\n    provider: chat\n    owner: alice\n    target: \"-100200\"\n    groups:\n      - id: \"-100200\"\n        name: group_channel_one\n        members: operators\n")
 	require.NoError(t, err)
 	cfg, err := Load(path)
 	require.NoError(t, err)
@@ -433,7 +456,7 @@ func TestChannelGroupsAreLoaded(t *testing.T) {
 }
 
 func TestChannelGroupsRejects(t *testing.T) {
-	head := "channels:\n  - id: 1\n    name: chat\n    kind: bot\n    credential_env: PAO_BOT\n    owner: alice\n    target: private\n    groups:\n"
+	head := "providers:\n  - name: chat\n    kind: bot\n    credential_env: PAO_BOT\nchannels:\n  - id: 1\n    name: chat\n    provider: chat\n    owner: alice\n    target: private\n    groups:\n"
 	for name, c := range map[string]struct{ body, want string }{
 		"no id":          {"      - name: a\n        members: operators\n", "groups[0]: id is required"},
 		"blank id":       {"      - id: \" \"\n        name: a\n        members: operators\n", "id is required"},
@@ -454,8 +477,8 @@ func TestChannelGroupsRejects(t *testing.T) {
 }
 
 func TestAGroupNameIsUniqueAcrossTheNodesChannels(t *testing.T) {
-	_, err := channelsConfig(t, "channels:\n  - id: 1\n    name: a\n    kind: bot\n    credential_env: PAO_BOT\n    owner: alice\n    target: \"-5\"\n    groups:\n      - id: \"-5\"\n        name: team\n        members: operators\n"+
-		"  - id: 2\n    name: b\n    kind: bot\n    credential_env: PAO_BOT2\n    owner: alice\n    target: \"-6\"\n    groups:\n      - id: \"-6\"\n        name: team\n        members: operators\n")
+	_, err := channelsConfig(t, "providers:\n  - name: a\n    kind: bot\n    credential_env: PAO_BOT\n  - name: b\n    kind: bot\n    credential_env: PAO_BOT2\nchannels:\n  - id: 1\n    name: a\n    provider: a\n    owner: alice\n    target: \"-5\"\n    groups:\n      - id: \"-5\"\n        name: team\n        members: operators\n"+
+		"  - id: 2\n    name: b\n    provider: b\n    owner: alice\n    target: \"-6\"\n    groups:\n      - id: \"-6\"\n        name: team\n        members: operators\n")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `channels[1].groups[0]: name "team" is already`)
 	assert.Contains(t, err.Error(), "channels[0].groups[0]", "the error says where the name was first used")
@@ -465,11 +488,11 @@ func TestTheSameGroupMayBeListedOnTwoChannels(t *testing.T) {
 	g := func(name string) string {
 		return "    groups:\n      - id: \"-5\"\n        name: " + name + "\n        members: operators\n"
 	}
-	_, err := channelsConfig(t, "channels:\n  - id: 1\n    name: a\n    kind: bot\n    credential_env: PAO_BOT\n    owner: alice\n    target: \"-5\"\n"+g("via_a")+"  - id: 2\n    name: b\n    kind: bot\n    credential_env: PAO_BOT2\n    owner: alice\n    target: \"-5\"\n"+g("via_b"))
+	_, err := channelsConfig(t, "providers:\n  - name: a\n    kind: bot\n    credential_env: PAO_BOT\n  - name: b\n    kind: bot\n    credential_env: PAO_BOT2\nchannels:\n  - id: 1\n    name: a\n    provider: a\n    owner: alice\n    target: \"-5\"\n"+g("via_a")+"  - id: 2\n    name: b\n    provider: b\n    owner: alice\n    target: \"-5\"\n"+g("via_b"))
 	require.NoError(t, err)
 }
 
-const bindingsHead = "level: 2\nchannels:\n  - id: 1\n    name: chat\n    kind: bot\n    credential_env: PAO_BOT\n    owner: alice\n    target: \"-5\"\n    groups:\n      - id: \"-5\"\n        name: team\n        members: operators\nbindings:\n"
+const bindingsHead = "level: 2\nproviders:\n  - name: chat\n    kind: bot\n    credential_env: PAO_BOT\nchannels:\n  - id: 1\n    name: chat\n    provider: chat\n    owner: alice\n    target: \"-5\"\n    groups:\n      - id: \"-5\"\n        name: team\n        members: operators\nbindings:\n"
 
 func TestBindingsAreLoadedWithTheirDefaults(t *testing.T) {
 	path, err := channelsConfig(t, bindingsHead+
@@ -579,7 +602,7 @@ func TestTheGovernorRejects(t *testing.T) {
 		"no slash":         {"governor:\n  agent: a\n  prefix: ask\n", `governor.prefix "ask" must be`},
 		"two words":        {"governor:\n  agent: a\n  prefix: \"/ask me\"\n", `governor.prefix "/ask me" must be`},
 		"unknown field":    {"governor:\n  agent: a\n  model: small\n", "model"},
-		"bound": {"level: 2\nchannels:\n  - id: 1\n    name: chat\n    kind: bot\n    credential_env: PAO_BOT\n    owner: alice\n    target: \"-5\"\n    groups:\n      - id: \"-5\"\n        name: team\n        members: operators\n" +
+		"bound": {"level: 2\nproviders:\n  - name: chat\n    kind: bot\n    credential_env: PAO_BOT\nchannels:\n  - id: 1\n    name: chat\n    provider: chat\n    owner: alice\n    target: \"-5\"\n    groups:\n      - id: \"-5\"\n        name: team\n        members: operators\n" +
 			"governor:\n  agent: a\nbindings:\n  - agent: a\n    to: group:team\n", `agent "a" is the governor: what it says goes only where it was asked`},
 	} {
 		_, err := channelsConfig(t, c.body)
@@ -729,7 +752,7 @@ func TestASecretsInjectRejects(t *testing.T) {
 }
 
 func TestAGroupsNamedTopicsAreLoadedAndNameDestinations(t *testing.T) {
-	path, err := channelsConfig(t, "channels:\n  - id: 1\n    name: chat\n    kind: bot\n    credential_env: PAO_BOT\n    owner: alice\n    target: \"-5/42\"\n    groups:\n      - id: \"-5\"\n        name: team\n        members: operators\n        topics:\n          - id: \"42\"\n            name: games\n"+
+	path, err := channelsConfig(t, "providers:\n  - name: chat\n    kind: bot\n    credential_env: PAO_BOT\nchannels:\n  - id: 1\n    name: chat\n    provider: chat\n    owner: alice\n    target: \"-5/42\"\n    groups:\n      - id: \"-5\"\n        name: team\n        members: operators\n        topics:\n          - id: \"42\"\n            name: games\n"+
 		"bindings:\n  - agent: a\n    to: group:games\n")
 	require.NoError(t, err)
 	cfg, err := Load(path)
@@ -741,7 +764,7 @@ func TestAGroupsNamedTopicsAreLoadedAndNameDestinations(t *testing.T) {
 }
 
 func TestAGroupsTopicsRejects(t *testing.T) {
-	head := "channels:\n  - id: 1\n    name: chat\n    kind: bot\n    credential_env: PAO_BOT\n    owner: alice\n    target: \"-5\"\n    groups:\n      - id: \"-5\"\n        name: team\n        members: operators\n        topics:\n"
+	head := "providers:\n  - name: chat\n    kind: bot\n    credential_env: PAO_BOT\nchannels:\n  - id: 1\n    name: chat\n    provider: chat\n    owner: alice\n    target: \"-5\"\n    groups:\n      - id: \"-5\"\n        name: team\n        members: operators\n        topics:\n"
 	for name, c := range map[string]struct{ body, want string }{
 		"no id":          {"          - name: a\n", "topics[0]: id is required"},
 		"padded id":      {"          - id: \" 4\"\n            name: a\n", "no surrounding space"},
@@ -757,19 +780,19 @@ func TestAGroupsTopicsRejects(t *testing.T) {
 		assert.Contains(t, err.Error(), c.want, name)
 	}
 	for _, topics := range []string{"        topics:\n          - id: \"4\"\n            name: a\n", ""} {
-		_, err := channelsConfig(t, "channels:\n  - id: 1\n    name: chat\n    kind: bot\n    credential_env: PAO_BOT\n    owner: alice\n    target: \"-5/1\"\n    groups:\n      - id: \"-5/1\"\n        name: team\n        members: operators\n"+topics)
+		_, err := channelsConfig(t, "providers:\n  - name: chat\n    kind: bot\n    credential_env: PAO_BOT\nchannels:\n  - id: 1\n    name: chat\n    provider: chat\n    owner: alice\n    target: \"-5/1\"\n    groups:\n      - id: \"-5/1\"\n        name: team\n        members: operators\n"+topics)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "must not contain '/'", "a group's id must be told from a topic's conversation and from a topic target")
 	}
-	_, err := channelsConfig(t, "channels:\n  - id: 1\n    name: chat\n    kind: bot\n    credential_env: PAO_BOT\n    owner: alice\n    target: \"-5/4\"\n    groups:\n      - id: \"-5\"\n        name: team\n        members: operators\n        topics:\n          - id: \"4\"\n            name: games\n"+
-		"  - id: 2\n    name: other\n    kind: bot\n    credential_env: PAO_BOT2\n    owner: alice\n    target: \"-6\"\n    groups:\n      - id: \"-6\"\n        name: games\n        members: operators\n")
+	_, err := channelsConfig(t, "providers:\n  - name: chat\n    kind: bot\n    credential_env: PAO_BOT\n  - name: other\n    kind: bot\n    credential_env: PAO_BOT2\nchannels:\n  - id: 1\n    name: chat\n    provider: chat\n    owner: alice\n    target: \"-5/4\"\n    groups:\n      - id: \"-5\"\n        name: team\n        members: operators\n        topics:\n          - id: \"4\"\n            name: games\n"+
+		"  - id: 2\n    name: other\n    provider: other\n    owner: alice\n    target: \"-6\"\n    groups:\n      - id: \"-6\"\n        name: games\n        members: operators\n")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `channels[1].groups[0]: name "games" is already`, "a topic's name is unique among the node's groups too")
 	assert.Contains(t, err.Error(), "channels[0].groups[0].topics[0]", "the error says where the name was first used")
 }
 
 func TestAChannelIsOneConversationOfOneOwner(t *testing.T) {
-	head := "channels:\n  - id: 1\n    name: chat\n    kind: bot\n    credential_env: PAO_BOT\n"
+	head := "providers:\n  - name: chat\n    kind: bot\n    credential_env: PAO_BOT\nchannels:\n  - id: 1\n    name: chat\n    provider: chat\n"
 	group := func(topics string) string {
 		return "    groups:\n      - id: \"-5\"\n        name: team\n        members: operators\n" + topics
 	}

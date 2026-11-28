@@ -49,8 +49,8 @@ func TestAChannelThatIsATopicServesThatTopicAlone(t *testing.T) {
 	const person, group = 4242, -700
 
 	n := startNodeWith(t, map[string]string{"bee": "", "wasp": ""}, func(_, _ string, cfg *config.Config) {
-		cfg.Orchestrator.Channels = []config.Channel{{ID: 1, Name: "chat", Kind: "bot", CredentialEnv: "PAO_TEST_BOT_TOKEN", Owner: "alice", Target: strconv.Itoa(group) + "/42",
-			Options: map[string]any{"endpoint": ts.URL + "/bot{token}/{method}", "poll_timeout": 0},
+		cfg.Orchestrator.Providers = []config.Provider{botProvider("chat", "PAO_TEST_BOT_TOKEN", ts.URL)}
+		cfg.Orchestrator.Channels = []config.Channel{{ID: 1, Name: "chat", Provider: "chat", Owner: "alice", Target: strconv.Itoa(group) + "/42",
 			Groups: []config.Group{{ID: strconv.Itoa(group), Name: "team", Members: config.MembersOperators,
 				Topics: []config.Topic{{ID: "42", Name: "games"}}}}}}
 	}, func(o *Options) { o.Adapters = builtin.Table() })
