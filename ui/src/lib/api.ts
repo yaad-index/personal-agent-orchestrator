@@ -329,6 +329,14 @@ export interface ChannelConfig {
   owner: string;
   target: string;
   groups?: GroupConfig[];
+  // the code pao sent to the target, given when the channel is new or moves
+  code?: string;
+}
+
+// pao sent a code to that many conversations; it can be entered until expires
+export interface IdentifyResult {
+  expires: string;
+  sent: number;
 }
 
 export interface CredentialStatus {
@@ -359,4 +367,6 @@ export interface ChannelConfigList {
 
 export const channelConfig = () => call<ChannelConfigList>("GET", "/v1/config/channels");
 export const putChannel = (c: ChannelConfig) => call<void>("PUT", `/v1/config/channels/${encodeURIComponent(c.name)}`, c);
+export const identifyChannel = (c: ChannelConfig) =>
+  call<IdentifyResult>("POST", `/v1/config/channels/${encodeURIComponent(c.name)}/identify`, c);
 export const deleteChannel = (name: string) => call<void>("DELETE", `/v1/config/channels/${encodeURIComponent(name)}`);

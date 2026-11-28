@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -57,7 +58,19 @@ func channelAPI(t *testing.T, pao string, env map[string]string) *channelConfigA
 	return &channelConfigAPI{
 		path: pao, running: cfg.Orchestrator.Channels, adapters: builtin.Table(),
 		startEnv: func(n string) (string, bool) { v, ok := env[n]; return v, ok },
+		codes:    newIdentifyCodes(time.Now),
 	}
+}
+
+// putIdentified puts c with a code issued for its target, as if Identify had
+// sent it and the operator had entered it.
+func putIdentified(ctx context.Context, a *channelConfigAPI, c local.ChannelConfigJSON) error {
+	code, _, err := a.codes.issue(c.Name, where{c.Provider, c.Target, c.Owner})
+	if err != nil {
+		return err
+	}
+	c.Code = code
+	return a.Put(ctx, c)
 }
 
 func uiChannel(id int, name, provider string) local.ChannelConfigJSON {
@@ -79,7 +92,7 @@ func TestTheChannelsAndProvidersAreListedAsTheNextStartWouldHaveThem(t *testing.
 	assert.False(t, l.RestartNeeded)
 
 	for _, c := range []local.ChannelConfigJSON{uiChannel(2, "a", "via-file"), uiChannel(3, "b", "via-var")} {
-		require.NoError(t, a.Put(ctx, c), c.Name)
+		require.NoError(t, putIdentified(ctx, a, c), c.Name)
 	}
 	l, err = a.List(ctx)
 	require.NoError(t, err)
@@ -119,13 +132,13 @@ func TestOnlyTheManagedFilesChannelsAreChanged(t *testing.T) {
 	paoBefore, err := os.ReadFile(pao)
 	require.NoError(t, err)
 
-	err = a.Put(ctx, uiChannel(1, "mine", "free1"))
+	err = putIdentified(ctx, a, uiChannel(1, "mine", "free1"))
 	assert.ErrorIs(t, err, local.ErrConflict)
 	assert.Contains(t, err.Error(), "change it there")
 	assert.ErrorIs(t, a.Delete(ctx, "mine"), local.ErrConflict)
 	assert.ErrorIs(t, a.Delete(ctx, "nobody"), local.ErrNotFound)
 
-	require.NoError(t, a.Put(ctx, uiChannel(2, "ui", "free1")))
+	require.NoError(t, putIdentified(ctx, a, uiChannel(2, "ui", "free1")))
 	require.NoError(t, a.Delete(ctx, "ui"))
 	l, err := a.List(ctx)
 	require.NoError(t, err)
@@ -141,7 +154,7 @@ func TestAChangeThatWouldNotStartIsRefusedAndChangesNothing(t *testing.T) {
 	pao, mf := channelNode(t, true)
 	a := channelAPI(t, pao, nil)
 	ctx := context.Background()
-	require.NoError(t, a.Put(ctx, uiChannel(2, "ui", "free1")))
+	require.NoError(t, putIdentified(ctx, a, uiChannel(2, "ui", "free1")))
 	before, err := os.ReadFile(mf)
 	require.NoError(t, err)
 	for name, c := range map[string]local.ChannelConfigJSON{
@@ -151,7 +164,7 @@ func TestAChangeThatWouldNotStartIsRefusedAndChangesNothing(t *testing.T) {
 		"same id":          uiChannel(1, "x", "free2"),
 		"no owner":         {ID: 3, Name: "x", Provider: "free2", Target: config.TargetPrivate},
 	} {
-		err := a.Put(ctx, c)
+		err := putIdentified(ctx, a, c)
 		assert.ErrorIs(t, err, local.ErrBadRequest, name)
 		after, rerr := os.ReadFile(mf)
 		require.NoError(t, rerr)
@@ -166,7 +179,7 @@ func TestRedefiningAChannelKeepsItsGroupsTopics(t *testing.T) {
 	a := channelAPI(t, pao, nil)
 	c := local.ChannelConfigJSON{ID: 2, Name: "ui", Provider: "free2", Owner: "alice", Target: "-5/7",
 		Groups: []local.GroupConfigJSON{{ID: "-5", Name: "crew"}}}
-	require.NoError(t, a.Put(context.Background(), c))
+	require.NoError(t, putIdentified(context.Background(), a, c))
 	cfg, err := config.Load(pao)
 	require.NoError(t, err)
 	got := cfg.Orchestrator.Channels[1]
@@ -183,7 +196,7 @@ func TestWithoutAManagedFileNothingChanges(t *testing.T) {
 	l, err := a.List(context.Background())
 	require.NoError(t, err)
 	assert.Empty(t, l.ManagedFile)
-	err = a.Put(context.Background(), uiChannel(2, "ui", "free1"))
+	err = putIdentified(context.Background(), a, uiChannel(2, "ui", "free1"))
 	assert.ErrorIs(t, err, local.ErrConflict)
 	assert.ErrorIs(t, err, config.ErrNotManaged)
 	_, err = os.Stat(mf)
@@ -198,7 +211,7 @@ func TestConcurrentChangesAreNotLost(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			assert.NoError(t, a.Put(context.Background(), uiChannel(10+i, fmt.Sprintf("c%d", i), fmt.Sprintf("free%d", i+1))))
+			assert.NoError(t, putIdentified(context.Background(), a, uiChannel(10+i, fmt.Sprintf("c%d", i), fmt.Sprintf("free%d", i+1))))
 		}()
 	}
 	wg.Wait()
@@ -219,8 +232,8 @@ func TestANewChannelIsGivenAnIdNeverUsed(t *testing.T) {
 	writeLedger(t, pao, `{"channels":{"1":"mine","7":"retired","4":"comeback"}}`)
 	a := channelAPI(t, pao, nil)
 	ctx := context.Background()
-	require.NoError(t, a.Put(ctx, uiChannel(0, "fresh", "free1")))
-	require.NoError(t, a.Put(ctx, uiChannel(0, "comeback", "free2")))
+	require.NoError(t, putIdentified(ctx, a, uiChannel(0, "fresh", "free1")))
+	require.NoError(t, putIdentified(ctx, a, uiChannel(0, "comeback", "free2")))
 	cfg, err := config.Load(pao)
 	require.NoError(t, err)
 	ids := map[string]int{}
@@ -231,7 +244,7 @@ func TestANewChannelIsGivenAnIdNeverUsed(t *testing.T) {
 	assert.Equal(t, 4, ids["comeback"], "a name served before gets its id back")
 
 	reuse := uiChannel(7, "squatter", "free3")
-	err = a.Put(ctx, reuse)
+	err = putIdentified(ctx, a, reuse)
 	assert.ErrorIs(t, err, local.ErrBadRequest)
 	assert.Contains(t, err.Error(), "never reused")
 }
@@ -242,7 +255,7 @@ func TestARestartIsRefusedWhenPaoWouldNotStart(t *testing.T) {
 	a := channelAPI(t, pao, env)
 	require.NoError(t, a.RestartCheck(), "a node that would start")
 
-	require.NoError(t, a.Put(context.Background(), uiChannel(2, "late", "unset")))
+	require.NoError(t, putIdentified(context.Background(), a, uiChannel(2, "late", "unset")))
 	err := a.RestartCheck()
 	require.Error(t, err, "saved, but its provider's credential is not there to read")
 	assert.Contains(t, err.Error(), `provider "unset": variable NOT_SET_VAR is not set`)

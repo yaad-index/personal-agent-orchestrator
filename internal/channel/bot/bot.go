@@ -214,6 +214,18 @@ func (b *Bot) Channels() []comm.Channel {
 // conversations the layer names for that channel.
 func (b *Bot) For(channel string) *Face { return &Face{b: b, name: channel} }
 
+// Announce sends text to one conversation, by the id the layer knows it by: a
+// person's private conversation by their sender id, a group by its id, a topic
+// by the group's and the topic's together.
+func (b *Bot) Announce(ctx context.Context, conversation, text string) error {
+	at, err := parseAddr(conversation)
+	if err != nil {
+		return err
+	}
+	_, err = b.send(ctx, at, piece{text: text}, nil)
+	return err
+}
+
 // Face is one channel the provider carries (ADR-0058 point 1): it sends the
 // channel's messages through the provider's one connection.
 type Face struct {
