@@ -1,6 +1,6 @@
 # ADR 0059: An agent reads a message's sender only as the node or its profile sets
 
-**Status:** Proposed
+**Status:** Accepted (2026-11-28)
 
 Supersedes ADR-0054. It keeps ADR-0054 in full except the last sentence of point 4, which it carries from ADR-0001 and which this ADR replaces. Builds on ADR-0058 point 10 (the sender prefix, off by default) and point 4 (the agent treats its channel as an opaque terminal).
 
