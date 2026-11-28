@@ -299,11 +299,17 @@ func (l *Layer) Receive(ctx context.Context, in Inbound) (Delivery, error) {
 		return Delivery{}, err
 	}
 
+	// Only a channel the layer has is a channel a prefix may name; a source
+	// such as the mesh or an agent's MCP call is none.
+	var channel string
+	if l.HasChannel(in.Source) {
+		channel = in.Source
+	}
 	msg, err := l.store.Add(core.Message{
 		Sender:      in.Sender,
 		Kind:        in.Kind,
 		Text:        in.Text,
-		Channel:     in.Source,
+		Channel:     channel,
 		Format:      in.Format,
 		Reply:       reply,
 		Attachments: in.Attachments,
