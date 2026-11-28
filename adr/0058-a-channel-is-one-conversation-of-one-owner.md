@@ -5,7 +5,7 @@
 Supersedes ADR-0019, ADR-0029, ADR-0038, ADR-0045 and ADR-0057. Each is kept in full except the points named here, which this ADR changes:
 - ADR-0019 points 4 and 6;
 - ADR-0029 points 1, 4 and 7;
-- ADR-0038 points 8 and 10;
+- ADR-0038 points 8, 9 and 10;
 - ADR-0045 point 2;
 - ADR-0057 points 2 and 3, which keep their rules and move from the channel to the provider.
 
@@ -33,6 +33,7 @@ ADR-0045 point 6 already says an agent has at most one input, a conversation, a 
    - A channel is defined in the UI by picking a configured provider, choosing the owner and entering the target in that provider's shape. It may also be written in configuration.
    - This replaces ADR-0019 point 4's "one channel serves many subjects": a provider serves many channels, and a channel serves its owner.
    - It replaces ADR-0038 point 10's "every topic of an admitted group is served": a channel is one topic, or one group, and no other.
+   - It changes ADR-0038 point 9's "a topic is a conversation of its group, not a channel": a topic may now be a channel's target. The platform's single polling consumer is the provider, which serves every channel on it, rather than one adapter serving one channel. How a message is placed in a topic's conversation, by the platform's own mark, is unchanged.
 
 3. **A channel defined in the UI is registered by a verify round-trip, not a plain save.** The UI's **Identify** action has pao send a one-time code to the target through the provider. The operator enters the code back into the UI, and only then is the channel saved.
    - The code is single-use and expires.
