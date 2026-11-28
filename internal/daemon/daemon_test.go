@@ -104,6 +104,9 @@ func startNodeWith(t *testing.T, agents map[string]string, adjust func(dir, scri
 		Node: "n1", StateDir: filepath.Join(dir, "state"), TmuxSocket: sock,
 		MessageWindow: 100, Level: 1,
 		Gate: config.Gate{AutoAllow: []string{"read"}, AskTimeout: 5 * time.Second},
+		// The test agents echo what they read; the sender before it shows whose
+		// words reached them.
+		MessagePrefix: core.PrefixName,
 	}}
 	for name, startup := range agents {
 		file := filepath.Join(transcripts, name+".jsonl")
@@ -574,4 +577,22 @@ func TestAStoppedAgentsTokenIsGone(t *testing.T) {
 	require.FileExists(t, file)
 	require.NoError(t, n.client.AgentAction(context.Background(), "a", "stop"))
 	assert.NoFileExists(t, file)
+}
+
+func TestWithTheNodesDefaultPrefixTheAgentReadsTheTextAloneAndAProfileMaySayOtherwise(t *testing.T) {
+	n := startNodeWith(t, map[string]string{"a": "", "b": ""}, func(_, _ string, cfg *config.Config) {
+		cfg.Orchestrator.MessagePrefix = core.PrefixOff
+		for i := range cfg.Profiles {
+			if cfg.Profiles[i].Name == "b" {
+				cfg.Profiles[i].MessagePrefix = core.PrefixChannel
+			}
+		}
+	})
+	ctx := context.Background()
+	_, err := n.client.Post(ctx, "human", "hello there", "name", "a")
+	require.NoError(t, err)
+	assert.Equal(t, "echo: hello there", n.next(t).Text, "no sender before it")
+	_, err = n.client.Post(ctx, "human", "hello b", "name", "b")
+	require.NoError(t, err)
+	assert.Equal(t, "echo: [human@local]: hello b", n.next(t).Text, "its own setting, naming the channel it came in on")
 }

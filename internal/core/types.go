@@ -68,6 +68,9 @@ type Profile struct {
 	// or topic channels, shown all of the agent's output unfiltered and taking
 	// no input (ADR-0058 point 7). Empty, the default, is none.
 	LogChannel string `yaml:"log_channel"`
+	// MessagePrefix is how a message the agent reads carries its sender, in
+	// place of the node's setting: off, name or channel (ADR-0058 point 10).
+	MessagePrefix string `yaml:"message_prefix"`
 	// Budget is how the agent's headroom is judged from its account's figure.
 	Budget BudgetRule `yaml:"budget"`
 }
@@ -244,6 +247,8 @@ type Message struct {
 	Sender string
 	Kind   MessageKind
 	Text   string
+	// Channel is the channel the message came in on, where it came in on one.
+	Channel string
 	// Format is how Text is written. Only an agent's own words are Markdown;
 	// what pao or a human writes is plain (ADR-0050 point 2).
 	Format Format
@@ -267,6 +272,32 @@ type Message struct {
 // Line renders the message as the one line the agent reads: `[sender]: text`
 // (ADR-0001 point 4).
 func (m Message) Line() string { return "[" + m.Sender + "]: " + m.Text }
+
+// The ways a message can carry its sender to the agent (ADR-0058 point 10).
+const (
+	// PrefixOff shows the text alone. It is the default.
+	PrefixOff = "off"
+	// PrefixName shows the sender's name first, as `[name]: text`.
+	PrefixName = "name"
+	// PrefixChannel shows the sender and the channel the message came in on,
+	// as `[name@channel]: text`; one that came in on no channel as PrefixName.
+	PrefixChannel = "channel"
+)
+
+// Prefixes are the values a message prefix may take.
+var Prefixes = []string{PrefixOff, PrefixName, PrefixChannel}
+
+// LineWith renders the message as the agent reads it under a prefix setting;
+// an empty one is PrefixOff.
+func (m Message) LineWith(prefix string) string {
+	switch {
+	case prefix == PrefixName, prefix == PrefixChannel && m.Channel == "":
+		return m.Line()
+	case prefix == PrefixChannel:
+		return "[" + m.Sender + "@" + m.Channel + "]: " + m.Text
+	}
+	return m.Text
+}
 
 // Shown renders the message as a human is shown it: after its label where it has
 // one, otherwise as Line.

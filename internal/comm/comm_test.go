@@ -100,6 +100,7 @@ func TestReceiveNormalizesStoresAndRoutes(t *testing.T) {
 	require.Len(t, r.routed, 1)
 	assert.Equal(t, d.Message, r.routed[0])
 	assert.Equal(t, "[h]: hi", r.routed[0].Line(), "the agent reads only sender and text")
+	assert.Empty(t, r.routed[0].Channel, "a source the layer has no channel of is none")
 
 	got, err := st.GetScoped("a", d.Message.ID)
 	require.NoError(t, err)
@@ -586,4 +587,18 @@ func TestOutsideAMeshAnIdWithAColonIsNotAMessage(t *testing.T) {
 	require.NoError(t, err)
 	_, err = l.Receive(context.Background(), Inbound{Source: "x", Sender: "human", Text: "re", Reply: "n-a:" + m.ID, Target: core.Target{Kind: core.ByName, Value: "a"}})
 	assert.ErrorIs(t, err, msgstore.ErrNotFound)
+}
+
+func TestAMessageKeepsTheChannelItCameInOnAndNoOtherSource(t *testing.T) {
+	l, r, _ := setup(t)
+	l.AddChannel(&fakeChannel{name: "chat"})
+	for source, want := range map[string]string{"chat": "chat", "mesh": "", "mcp": "", "": ""} {
+		_, err := l.Receive(context.Background(), Inbound{Source: source, Sender: "h", Text: "hi", Target: byName("a")})
+		require.NoError(t, err)
+		got := r.routed[len(r.routed)-1]
+		assert.Equal(t, want, got.Channel, "source %q", source)
+		if want == "" {
+			assert.Equal(t, "[h]: hi", got.LineWith(core.PrefixChannel), "source %q shows the sender alone", source)
+		}
+	}
 }

@@ -314,7 +314,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 			}
 		}))
 	term := tmux.New(tmux.WithSocket(cfg.Orchestrator.TmuxSocket))
-	plane := control.New(term, ctlOpts...)
+	plane := control.New(term, append(ctlOpts, control.WithMessagePrefix(cfg.Orchestrator.MessagePrefix))...)
 
 	hook := &launchHook{plane: plane}
 	router := route.New(reg, hook, plane)

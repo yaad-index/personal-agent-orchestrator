@@ -163,10 +163,25 @@ func TestLaunchRejectsInvalidPattern(t *testing.T) {
 	assert.ErrorContains(t, err, "ready_pattern")
 }
 
-func TestDeliverPastesTheAgentLine(t *testing.T) {
+func TestDeliverPastesTheMessageWithTheSenderAsTheProfileOrTheNodeSays(t *testing.T) {
+	m := core.Message{Sender: "h", Text: "hi", Channel: "chat"}
+	for _, c := range []struct{ node, profile, want string }{
+		{"", "", "a:hi"},
+		{core.PrefixOff, "", "a:hi"},
+		{core.PrefixName, "", "a:[h]: hi"},
+		{core.PrefixChannel, "", "a:[h@chat]: hi"},
+		{core.PrefixName, core.PrefixOff, "a:hi"},
+		{core.PrefixOff, core.PrefixChannel, "a:[h@chat]: hi"},
+	} {
+		ft := &fakeTerm{}
+		prof := profile(0)
+		prof.MessagePrefix = c.profile
+		require.NoError(t, New(ft, WithMessagePrefix(c.node)).Deliver(context.Background(), prof, m))
+		assert.Equal(t, []string{c.want}, ft.pasted, "node %q, profile %q", c.node, c.profile)
+	}
 	ft := &fakeTerm{}
-	require.NoError(t, New(ft).Deliver(context.Background(), profile(0), core.Message{Sender: "h", Text: "hi"}))
-	assert.Equal(t, []string{"a:[h]: hi"}, ft.pasted)
+	require.NoError(t, New(ft, WithMessagePrefix(core.PrefixChannel)).Deliver(context.Background(), profile(0), core.Message{Sender: "h", Text: "hi"}))
+	assert.Equal(t, []string{"a:[h]: hi"}, ft.pasted, "a message that came in on no channel shows its sender alone")
 }
 
 func TestKillIsIdempotent(t *testing.T) {
@@ -215,6 +230,7 @@ func TestRealLaunchDeliverRestartKill(t *testing.T) {
 	p := realPlane(t)
 	ctx := context.Background()
 	prof := realProfile(`sh -c "echo 'READY>'; exec cat"`, 5*time.Second)
+	prof.MessagePrefix = core.PrefixName
 
 	require.NoError(t, p.Launch(ctx, prof))
 	require.NoError(t, p.Deliver(ctx, prof, core.Message{Sender: "h", Text: "ping"}))
