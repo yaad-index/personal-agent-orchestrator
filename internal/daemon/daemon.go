@@ -182,6 +182,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		return err
 	}
 	defer func() { _ = ids.Close() }()
+	warnUnknownOwners(ids, cfg.Orchestrator.Channels)
 	defaults, err := defaultagent.Open(filepath.Join(cfg.Orchestrator.StateDir, defaultsFile))
 	if err != nil {
 		return err
@@ -315,7 +316,9 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	hook := &launchHook{plane: plane}
 	router := route.New(reg, hook, plane)
 	layer := comm.New(store, router)
-	layer.SetDefaults(defaults)
+	// The layer routes by the defaults that belong to their channel's owner.
+	defaultsCtl := newDefaultsAPI(defaults, cfg.Orchestrator.Channels, router.Resolve)
+	layer.SetDefaults(defaultsCtl)
 	layer.SetOperatorAccess(func(p core.Profile) bool {
 		return access.Allowed(auth, access.Operator, access.Route, access.AgentResource(p.Name, p.Tags))
 	})
@@ -525,7 +528,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		localOpts = append(localOpts, local.WithProfiles(profiles))
 	}
 	srv, err := local.New(layer, token, append([]local.Option{local.WithDecider(decider), local.WithTemp(tempOps), local.WithStream(streamOps), local.WithStanding(standingOps), local.WithWatch(streamOps), local.WithLifecycle(lifeOps), local.WithRejected(rejectedAPI{rejects}), local.WithTasks(taskAPI{tasks}), local.WithIdentity(identityAPI{ids}),
-		local.WithDefaults(newDefaultsAPI(defaults, cfg.Orchestrator.Channels, router.Resolve)), local.WithGrants(grantsAPI{store: grantStore, changed: mcpServer.Refresh}),
+		local.WithDefaults(defaultsCtl), local.WithGrants(grantsAPI{store: grantStore, changed: mcpServer.Refresh}),
 		local.WithMount("/mcp", mcpHandler),
 		// The management UI (ADR-0047), on this same listener: its session is the
 		// operator's, opened with the operator token.

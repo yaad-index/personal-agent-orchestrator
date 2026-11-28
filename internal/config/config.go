@@ -1101,6 +1101,9 @@ func validate(p core.Profile) error {
 	if slices.Contains(core.CommandWords, p.Name) {
 		return fmt.Errorf("name %q is reserved: it is a pao command word", p.Name)
 	}
+	if p.User != "" && !channelNamePattern.MatchString(p.User) {
+		return fmt.Errorf("user %q must name a subject: lowercase letters, digits, '-' or '_', at most 32", p.User)
+	}
 	if p.Backend == "" {
 		return errors.New("backend is required")
 	}

@@ -1,6 +1,7 @@
 package comm
 
 import (
+	"log/slog"
 	"slices"
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/core"
@@ -78,7 +79,7 @@ func (l *Layer) inScope(channel string, m core.Message, out []string) []string {
 	if l.unscoped {
 		return out
 	}
-	if len(out) == 0 {
+	if len(out) == 0 || l.othersOutput(channel, m) {
 		return nil
 	}
 	s, ok := l.scopes[channel]
@@ -103,4 +104,59 @@ func (l *Layer) inScope(channel string, m core.Message, out []string) []string {
 		}
 	}
 	return kept
+}
+
+// ReplyNoAgent answers a message on a channel that has no agent yet.
+const ReplyNoAgent = "this channel has no agent yet: set its default agent."
+
+// channelAgent is the agent a scoped channel belongs to: the default agent of
+// its one conversation (ADR-0058 point 4).
+func (l *Layer) channelAgent(channel string) (string, bool) {
+	s, ok := l.scopes[channel]
+	if !ok {
+		return "", false
+	}
+	return l.DefaultAgentIn(channel, s.Conversation)
+}
+
+// onlyItsAgent returns the answer to a message on a channel whose target is not
+// the channel's own agent, or "" if it is. A channel with no agent reaches none,
+// and an address naming another agent, or a tag reaching more than its own, is
+// refused rather than narrowed, so the sender learns it went nowhere.
+func (l *Layer) onlyItsAgent(channel string, target core.Target) string {
+	if l.unscoped {
+		return ""
+	}
+	agent, ok := l.channelAgent(channel)
+	if !ok {
+		return ReplyNoAgent
+	}
+	ps, err := l.router.Resolve(target)
+	if err == nil && len(ps) == 1 && ps[0].Name == agent {
+		return ""
+	}
+	return "only " + agent + " is reached from this channel."
+}
+
+// othersOutput reports whether m is the words of an agent other than the
+// channel's own, which a channel with an agent never shows (ADR-0058 point 8).
+// pao's own messages, a person's words mirrored, and the governor's answers
+// are not. A channel with no agent shows what is bound to it, as a log channel
+// would (ADR-0058 point 7).
+func (l *Layer) othersOutput(channel string, m core.Message) bool {
+	if m.Kind == core.MessageSystemEvent || m.Sender == "" || m.Sender == l.governor {
+		return false
+	}
+	agent, ok := l.channelAgent(channel)
+	if !ok || m.Sender == agent {
+		return false
+	}
+	ps, err := l.router.Resolve(core.Target{Kind: core.ByName, Value: m.Sender})
+	if err != nil || len(ps) == 0 {
+		return false
+	}
+	if _, seen := l.unshown.LoadOrStore("other\x00"+channel+"\x00"+m.Sender, true); !seen {
+		slog.Warn("an agent's output was held back from a channel that is another agent's", "channel", channel, "agent", m.Sender)
+	}
+	return true
 }

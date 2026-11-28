@@ -78,6 +78,7 @@ func TestTheSameNativeIdOnTwoChannelsIsTwoMessages(t *testing.T) {
 	l, _, id := compSetup(t)
 	id.bound["other\x00op"] = "alice"
 	l.SetScopes(map[string]Scope{"chat": {Owner: "alice"}, "other": {Owner: "alice"}})
+	l.SetDefaults(mapDefaults{"chat": "a", "other": "a"})
 	a, err := l.ReceiveFromChannel(context.Background(), ChannelInbound{Channel: "chat", Sender: "op", Text: "a", Target: byName("a"), Native: "5"})
 	require.NoError(t, err)
 	b, err := l.ReceiveFromChannel(context.Background(), ChannelInbound{Channel: "other", Sender: "op", Text: "b", Target: byName("a"), Native: "5"})

@@ -80,6 +80,9 @@ func TestACommandIsPaosAndNeverRouted(t *testing.T) {
 
 func TestACommandThatAddressesRoutesItsMessageThere(t *testing.T) {
 	l, r, _, _ := chanSetup(t)
+	// routing precedence, beneath the rule that a channel reaches only its agent
+	l.unscoped = true
+	l.SetDefaults(mapDefaults{})
 	res, err := l.ReceiveFromChannel(context.Background(), ChannelInbound{Channel: "chat", Sender: "op", Text: "/pao tag team hello all", Target: byName("a")})
 	require.NoError(t, err)
 	require.NotNil(t, res.Delivery)

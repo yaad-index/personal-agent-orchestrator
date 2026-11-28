@@ -127,7 +127,7 @@ func startNodeWith(t *testing.T, agents map[string]string, adjust func(dir, scri
 			cmd = fmt.Sprintf("env REPORT_ENV=1 TRANSCRIPT=%s sh %s", file, scriptPath)
 		}
 		cfg.Profiles = append(cfg.Profiles, core.Profile{
-			Name: name, Tags: []string{"team"}, Backend: "claude-code", Workdir: dir,
+			Name: name, Tags: []string{"team"}, Backend: "claude-code", Workdir: dir, User: "alice",
 			Startup:    core.Startup{Command: cmd, ReadyPattern: `READY>`, ReadyTimeout: 700 * time.Millisecond},
 			Transcript: core.Transcript{Format: "claude-code", Path: tpath},
 		})

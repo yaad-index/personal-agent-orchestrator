@@ -144,6 +144,7 @@ func TestAHumanReachesAnAgentThroughTheBotAndHearsBack(t *testing.T) {
 			Options: map[string]any{"endpoint": ts.URL + "/bot{token}/{method}", "poll_timeout": 0}}}
 	}, func(o *Options) { o.Adapters = builtin.Table() })
 	ctx := context.Background()
+	channelIs(t, n, "chat", "bee")
 	const person = 4242
 
 	svc.push(chatUpdate(1, 10, person, "/pao bee hello"))
@@ -180,7 +181,7 @@ func TestAHumanReachesAnAgentThroughTheBotAndHearsBack(t *testing.T) {
 			out = s
 		}
 	}
-	assert.True(t, strings.HasPrefix(out, "[bee]: "), "pao's output reads as a line from the agent: %q", out)
+	assert.True(t, strings.HasPrefix(out, "echo: "), "the channel's own agent speaks unprefixed: %q", out)
 	assert.Contains(t, out, "hello again")
 	assert.Contains(t, out, "[alice]", "the agent saw the subject's name, not the external id")
 	assert.NotContains(t, out, "4242")
@@ -243,15 +244,16 @@ func TestTheChannelsDefaultAgentIsReloadedSwitchedAtRuntimeAndSpeaksUnprefixed(t
 	out = lineWith(t, svc, person, "second unaddressed")
 	assert.True(t, strings.HasPrefix(out, "echo:"), "the new default answers, unprefixed: %q", out)
 
+	// The channel is wasp's now, and reaches no other agent (ADR-0058 point 4).
 	svc.push(chatUpdate(4, 13, person, "/pao bee third addressed"))
-	out = lineWith(t, svc, person, "third addressed")
-	assert.True(t, strings.HasPrefix(out, "[bee]: "), "an agent that is not the default is named: %q", out)
+	assert.Equal(t, "only wasp is reached from this channel.", lineWith(t, svc, person, "is reached"))
+	assert.Nil(t, svc.sentWith(person, "third addressed"), "bee is not sent it")
 
 	// A leading @name is no address any more (ADR-0026 point 9): the message goes
-	// where the sender last addressed, as the text it was sent as.
-	svc.push(chatUpdate(5, 14, person, "@wasp fourth"))
-	out = lineWith(t, svc, person, "@wasp fourth")
-	assert.Equal(t, "[bee]: echo: [alice]: @wasp fourth", out)
+	// to the channel's agent, as the text it was sent as.
+	svc.push(chatUpdate(5, 14, person, "@bee fourth"))
+	out = lineWith(t, svc, person, "@bee fourth")
+	assert.Equal(t, "echo: [alice]: @bee fourth", out)
 
 	// A command is answered to the sender and reaches no agent (ADR-0026 points 1 and 5).
 	svc.push(chatUpdate(6, 15, person, "/pao help"))
@@ -389,6 +391,7 @@ func TestAnAdmittedGroupServesTheOperatorAndNoOneElse(t *testing.T) {
 			Groups:  []config.Group{{ID: strconv.Itoa(group), Name: "team", Members: config.MembersOperators}}}}
 	}, func(o *Options) { o.Adapters = builtin.Table() })
 	ctx := context.Background()
+	channelIs(t, n, "chat", "bee")
 
 	for i, who := range []struct {
 		name string
@@ -404,11 +407,11 @@ func TestAnAdmittedGroupServesTheOperatorAndNoOneElse(t *testing.T) {
 
 	svc.push(groupUpdate(3, 20, person, group, "/pao agent bee hello group"))
 	out := lineWith(t, svc, group, "hello group")
-	assert.Equal(t, "[bee]: echo: [alice]: hello group", out, "attributed to the operator's subject, answered in the group")
+	assert.Equal(t, "echo: [alice]: hello group", out, "attributed to the operator's subject, answered in the group")
 	assert.Nil(t, svc.sentWith(person, "hello group"), "the output goes to the group, not privately")
 
 	svc.push(groupUpdate(4, 21, person, group, "and again"))
-	assert.Equal(t, "[bee]: echo: [alice]: and again", lineWith(t, svc, group, "and again"), "the address made in the group is kept there")
+	assert.Equal(t, "echo: [alice]: and again", lineWith(t, svc, group, "and again"), "the address made in the group is kept there")
 
 	// The owner's private conversation is not the channel's: what the owner writes
 	// there reaches no agent, and is answered with nothing.
@@ -495,9 +498,10 @@ func TestAStandingBindingFollowsTheAgentBesideTheOrigin(t *testing.T) {
 	p := startPair(t, map[string]string{"bee": ""}, func(_, _ string, cfg *config.Config) {
 		cfg.Orchestrator.Bindings = []config.Binding{{Agent: "bee", Stream: config.StreamStdout, To: "group:team", Level: 1, Prefix: "B:"}}
 	})
+	channelIs(t, p.n, "chat", "bee")
 
 	p.svc.push(chatUpdate(2, 11, person, "/pao agent bee hello"))
-	assert.Equal(t, "[bee]: echo: [alice]: hello", lineWith(t, p.svc, person, "hello"), "the origin: privately, named as before")
+	assert.Equal(t, "echo: [alice]: hello", lineWith(t, p.svc, person, "hello"), "the origin: privately, the channel's own agent unprefixed")
 	assert.Equal(t, "B: echo: [alice]: hello", lineWith(t, p.gsvc, pairGroup, "hello"), "the binding: in the group, with its prefix")
 }
 
@@ -512,9 +516,10 @@ func TestALogBindingMirrorsWhatTheAgentIsSent(t *testing.T) {
 	n, svc, gsvc := p.n, p.svc, p.gsvc
 	ctx := context.Background()
 	_, _, _ = n, svc, ctx
+	channelIs(t, n, "chat", "bee")
 
 	svc.push(chatUpdate(2, 11, person, "/pao agent bee hello"))
-	assert.Equal(t, "[bee]: echo: [alice]: hello", lineWith(t, svc, person, "echo"), "the origin is answered")
+	assert.Equal(t, "echo: [alice]: hello", lineWith(t, svc, person, "echo"), "the origin is answered")
 	assert.Equal(t, "[alice]: hello", lineWith(t, gsvc, group, "[alice]: hello"), "the group is shown what the agent was sent")
 	assert.Equal(t, "[bee]: echo: [alice]: hello", lineWith(t, gsvc, group, "echo"), "and what it said")
 	for _, s := range svc.texts(person) {
@@ -581,11 +586,13 @@ func TestANoticeThatAnAgentIsNotReadyGoesToItsStderrDestinations(t *testing.T) {
 	n, svc, gsvc := p.n, p.svc, p.gsvc
 	ctx := context.Background()
 	_, _, _ = n, svc, ctx
+	channelIs(t, n, "chat", "bee")
 
 	svc.push(chatUpdate(2, 11, person, "/pao agent bee hello"))
 	lineWith(t, gsvc, group, `agent "bee" is not ready`)
 	assert.Nil(t, svc.sentWith(person, `agent "bee" is not ready`), "bee's notice is not shown privately")
 
+	channelIs(t, n, "chat", "wasp")
 	svc.push(chatUpdate(3, 12, person, "/pao agent wasp hello"))
 	lineWith(t, svc, person, `agent "wasp" is not ready`)
 	assert.Nil(t, gsvc.sentWith(group, `agent "wasp" is not ready`), "wasp's notice is not shown in the group")
@@ -613,6 +620,7 @@ func TestABindingSetWhileTheNodeRunsFollowsTheAgent(t *testing.T) {
 	n, svc, gsvc := p.n, p.svc, p.gsvc
 	ctx := context.Background()
 	_, _, _ = n, svc, ctx
+	channelIs(t, n, "chat", "bee")
 
 	b, err := n.client.BindStanding(ctx, local.StandingJSON{Agent: "bee", To: "group:team", Prefix: "B:"})
 	require.NoError(t, err)
@@ -626,7 +634,7 @@ func TestABindingSetWhileTheNodeRunsFollowsTheAgent(t *testing.T) {
 	}, list.Bindings)
 
 	svc.push(chatUpdate(2, 11, person, "/pao agent bee hello"))
-	assert.Equal(t, "[bee]: echo: [alice]: hello", lineWith(t, svc, person, "hello"), "the origin")
+	assert.Equal(t, "echo: [alice]: hello", lineWith(t, svc, person, "hello"), "the origin")
 	assert.Equal(t, "B: echo: [alice]: hello", lineWith(t, gsvc, group, "hello"), "the binding set at runtime")
 
 	_, err = n.client.UnbindStanding(ctx, local.StandingJSON{Agent: "bee", To: "group:team"})
@@ -665,6 +673,7 @@ func TestTheOperatorBindsAnAgentFromChat(t *testing.T) {
 	n, svc, gsvc := p.n, p.svc, p.gsvc
 	ctx := context.Background()
 	_, _, _ = n, svc, ctx
+	channelIs(t, n, "chat", "bee")
 
 	svc.push(chatUpdate(2, 11, person, "/pao bind bee group:team 2 B:"))
 	assert.Equal(t, `group:team follows bee's stdout at level 2, prefix "B:"`, lineWith(t, svc, person, "group:team follows bee"))
@@ -703,6 +712,7 @@ func TestTheOperatorSpawnsAndKillsATemporaryAgentFromChat(t *testing.T) {
 	n, svc, gsvc := p.n, p.svc, p.gsvc
 	ctx := context.Background()
 	_, _, _ = n, svc, ctx
+	channelIs(t, n, "chat", "bee")
 
 	gsvc.push(groupUpdate(2, 11, person, group, "/pao spawn fake scout"))
 	assert.Equal(t, "spawning an agent from recipe fake; you will be told when it is ready", lineWith(t, gsvc, group, "spawning"))
@@ -712,8 +722,9 @@ func TestTheOperatorSpawnsAndKillsATemporaryAgentFromChat(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "team", a.Channel, "its stream is bound to the channel the spawn came from")
 
+	// The chat channel is bee's: a spawned agent is not reached from it.
 	svc.push(chatUpdate(3, 12, person, "/pao agent scout hi"))
-	lineWith(t, svc, person, "echo: [alice]: hi")
+	assert.Equal(t, "only bee is reached from this channel.", lineWith(t, svc, person, "is reached"))
 
 	svc.push(chatUpdate(4, 13, person, "/pao kill bee"))
 	assert.Equal(t, "no such temporary agent", lineWith(t, svc, person, "no such temporary agent"), "a configured agent is not killed from chat")
@@ -858,4 +869,12 @@ func startPair(t *testing.T, agents map[string]string, adjust func(dir, script s
 	}
 	require.NoError(t, p.n.client.SetOperator(ctx, "alice", true))
 	return p
+}
+
+// channelIs makes agent the channel's own: its default, and the one agent it
+// reaches (ADR-0058 point 4).
+func channelIs(t *testing.T, n *node, channel, agent string) {
+	t.Helper()
+	_, err := n.client.SetDefault(context.Background(), channel, agent)
+	require.NoError(t, err)
 }

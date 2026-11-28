@@ -153,3 +153,41 @@ func TestARejectionIsRecordedWithTheSendersNameAsThePlatformGaveIt(t *testing.T)
 	receive(t, l, in)
 	assert.Equal(t, []string{"Mallory @mal"}, rc.names)
 }
+
+func TestAChannelReachesItsOwnAgentAndNoOther(t *testing.T) {
+	l, r, _, _ := scopeSetup(t, "")
+	r.agents["b"] = []string{"b"}
+	l.SetCommands(&cmdOps{})
+
+	require.NotNil(t, receive(t, l, from("op", "", "plain text")).Delivery, "plain text goes to the channel's agent")
+	assert.Equal(t, [][]string{{"a"}}, r.to)
+
+	for _, text := range []string{"/pao agent b hi", "/pao b hi", "/pao tag team hi"} {
+		in := from("op", "", text)
+		in.Target = core.Target{}
+		res := receive(t, l, in)
+		assert.Nil(t, res.Delivery, text)
+		assert.Equal(t, "only a is reached from this channel.", res.Reply, text)
+	}
+	sticky := from("op", "", "sticky to b")
+	sticky.Target = core.Target{Kind: core.ByName, Value: "b"}
+	assert.Equal(t, "only a is reached from this channel.", receive(t, l, sticky).Reply, "an address kept from before is refused too")
+	assert.Equal(t, [][]string{{"a"}}, r.to, "nothing reached b, nor a and b by their tag")
+
+	l.SetDefaults(mapDefaults{})
+	res := receive(t, l, from("op", "", "anyone?"))
+	assert.Nil(t, res.Delivery)
+	assert.Equal(t, ReplyNoAgent, res.Reply, "a channel with no agent reaches none")
+}
+
+func TestAChannelShowsItsOwnAgentsOutputAndNoOthers(t *testing.T) {
+	l, r, chat, _ := scopeSetup(t, "-5")
+	r.agents["b"] = []string{"b"}
+	l.SetBindings([]Binding{{Agent: "b", To: Dest{Kind: DestGroup, Name: "team"}, Level: 1}})
+	fromB := func(int) (core.Message, bool) {
+		return core.Message{Sender: "b", Kind: core.MessageContent, Text: "from b"}, true
+	}
+	require.NoError(t, l.SendEntry(context.Background(), "b", 1, fromB, nil))
+	say(t, l, "from a")
+	assert.Equal(t, map[string][]string{"-5": {"from a"}}, chat.take(), "b's words never reach a's channel, though b is bound there")
+}

@@ -109,6 +109,8 @@ func TestInboundThroughAChannelIsRecordedRoutedAndAttributedBySubject(t *testing
 	bot := theBot(t, built)
 	ctx := context.Background()
 	<-bot.started
+	_, err := n.client.SetDefault(ctx, "chat", "bee")
+	require.NoError(t, err, "the channel is bee's")
 
 	res, err := bot.h.ReceiveFromChannel(ctx, comm.ChannelInbound{Channel: "chat", Sender: "900", Text: "hello", Target: core.Target{Kind: core.ByName, Value: "bee"}, Raw: "RAW-1"})
 	require.NoError(t, err)
