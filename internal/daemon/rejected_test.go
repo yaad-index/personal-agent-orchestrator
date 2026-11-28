@@ -25,10 +25,10 @@ func TestTheRejectedAPIPassesEveryFieldOfAnEntry(t *testing.T) {
 	s, err := rejected.Open(filepath.Join(t.TempDir(), "r.db"), rejected.Options{})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = s.Close() })
-	require.NoError(t, s.Record("chat", "9", rejected.Message, "no subject", "hello"))
+	require.NoError(t, s.Record("chat", "9", "", rejected.Message, "no subject", "hello"))
 	time.Sleep(5 * time.Millisecond)
-	require.NoError(t, s.Record("chat", "9", rejected.Message, "no subject", "hello again"))
-	require.NoError(t, s.Record("chat", "8", rejected.Registration, "bad secret", "S3CRET"))
+	require.NoError(t, s.Record("chat", "9", "", rejected.Message, "no subject", "hello again"))
+	require.NoError(t, s.Record("chat", "8", "", rejected.Registration, "bad secret", "S3CRET"))
 
 	got, err := rejectedAPI{s}.Rejected(context.Background())
 	require.NoError(t, err)

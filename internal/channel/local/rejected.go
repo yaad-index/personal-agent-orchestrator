@@ -12,6 +12,7 @@ import (
 type RejectedJSON struct {
 	Channel string    `json:"channel"`
 	Sender  string    `json:"sender"`
+	Name    string    `json:"name,omitempty"`
 	Kind    string    `json:"kind"`
 	Reason  string    `json:"reason"`
 	First   time.Time `json:"first"`

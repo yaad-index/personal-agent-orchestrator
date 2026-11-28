@@ -44,15 +44,21 @@ type callback struct {
 	Data    string   `json:"data"`
 }
 
+// person is a message's sender as the service describes them.
+type person struct {
+	ID        int64  `json:"id"`
+	IsBot     bool   `json:"is_bot"`
+	FirstName string `json:"first_name,omitempty"`
+	LastName  string `json:"last_name,omitempty"`
+	Username  string `json:"username,omitempty"`
+}
+
 type message struct {
 	ID int64 `json:"message_id"`
 	// Date is when the message was sent. The service gives a message a bot can no
 	// longer reach a date of 0.
-	Date int64 `json:"date,omitempty"`
-	From *struct {
-		ID    int64 `json:"id"`
-		IsBot bool  `json:"is_bot"`
-	} `json:"from,omitempty"`
+	Date int64   `json:"date,omitempty"`
+	From *person `json:"from,omitempty"`
 	Chat struct {
 		ID   int64  `json:"id"`
 		Type string `json:"type"`
@@ -253,10 +259,7 @@ func (s *server) sentTo(chat float64) []string {
 
 func priv(id, msg int64, from int64, text string) update {
 	m := &message{ID: msg, Text: text}
-	m.From = &struct {
-		ID    int64 `json:"id"`
-		IsBot bool  `json:"is_bot"`
-	}{ID: from}
+	m.From = &person{ID: from}
 	m.Chat.ID, m.Chat.Type = from, "private"
 	return update{ID: id, Message: m}
 }
@@ -416,6 +419,21 @@ func TestAGroupTextGoesToTheLayerWithItsConversationAndASecretIsNeverPassedOn(t 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	assert.Empty(t, s.sent, "what the layer leaves unanswered is not answered")
+}
+
+func TestTheSendersNameAsTheServiceShowsItGoesToTheLayer(t *testing.T) {
+	s, h := newServer(t), &handler{}
+	full, first, none := grp(1, 1, 900, -500, "a"), priv(2, 2, 901, "b"), priv(3, 3, 902, "c")
+	full.Message.From.FirstName, full.Message.From.LastName, full.Message.From.Username = "Ada", "Lovelace", "ada"
+	first.Message.From.FirstName = "Bo"
+	s.queue(full, first, none)
+	start(t, s, h, nil)
+	waitFor(t, func() bool { return len(h.inbound()) == 3 }, "all three")
+	got := h.inbound()
+	assert.Equal(t, "Ada Lovelace @ada", got[0].SenderName)
+	assert.Equal(t, "Bo", got[1].SenderName)
+	assert.Empty(t, got[2].SenderName, "a sender the service names nothing is left unnamed")
+	assert.Equal(t, "902", got[2].Sender, "the id is still who they are")
 }
 
 func TestTheLayersAnswerToAGroupMessageGoesToTheGroup(t *testing.T) {

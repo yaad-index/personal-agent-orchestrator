@@ -145,3 +145,11 @@ func TestOnAGroupChannelABindingToTheOwnerPrivatelyShowsNoAgentOutputThere(t *te
 	entry(t, l, atLevel("x", 9))
 	assert.Equal(t, map[string][]string{"-5": {"x@1"}}, chat.take(), "an agent's output stays in the channel's conversation, whatever binds it elsewhere")
 }
+
+func TestARejectionIsRecordedWithTheSendersNameAsThePlatformGaveIt(t *testing.T) {
+	l, _, _, rc := scopeSetup(t, "-5")
+	in := from("stranger", "-5", "hi")
+	in.SenderName = "Mallory @mal"
+	receive(t, l, in)
+	assert.Equal(t, []string{"Mallory @mal"}, rc.names)
+}

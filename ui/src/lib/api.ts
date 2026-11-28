@@ -277,6 +277,8 @@ export interface Harvest {
 export interface Rejected {
   channel: string;
   sender: string;
+  // the name the platform showed for the sender, their own choosing; the id is who they are
+  name?: string;
   kind: string;
   reason: string;
   first: string;

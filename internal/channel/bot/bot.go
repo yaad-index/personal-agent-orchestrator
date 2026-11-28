@@ -296,6 +296,20 @@ func truncate(s string, n int) string {
 	return string(r[:n])
 }
 
+// nameOf is the name the service shows for a person: their first and last
+// name, and their handle if they have one. It is for the operator to read in
+// the record of a rejection, and decides nothing.
+func nameOf(u *models.User) string {
+	if u == nil {
+		return ""
+	}
+	name := strings.TrimSpace(u.FirstName + " " + u.LastName)
+	if u.Username != "" {
+		name = strings.TrimSpace(name + " @" + u.Username)
+	}
+	return truncate(name, 128)
+}
+
 func native(chat int64, msg int) string {
 	return strconv.FormatInt(chat, 10) + ":" + strconv.Itoa(msg)
 }
@@ -409,7 +423,7 @@ func (b *Bot) handle(ctx context.Context, u *models.Update) {
 	}
 	sender := strconv.FormatInt(m.From.ID, 10)
 	at := addrOf(m)
-	in := comm.ChannelInbound{Channel: b.name, Sender: sender, Native: native(m.Chat.ID, m.ID), Raw: truncate(m.Text, 4096)}
+	in := comm.ChannelInbound{Channel: b.name, Sender: sender, SenderName: nameOf(m.From), Native: native(m.Chat.ID, m.ID), Raw: truncate(m.Text, 4096)}
 	if group {
 		in.Group, in.Conversation = true, at.String()
 	}
@@ -495,7 +509,7 @@ func (b *Bot) notice(ctx context.Context, m *models.Message) bool {
 			if u.ID == 0 || u.ID == b.self {
 				continue
 			}
-			ins = append(ins, comm.ChannelInbound{Sender: strconv.FormatInt(u.ID, 10), Conversation: chat, Join: true})
+			ins = append(ins, comm.ChannelInbound{Sender: strconv.FormatInt(u.ID, 10), SenderName: nameOf(&u), Conversation: chat, Join: true})
 		}
 	default:
 		return false
@@ -777,7 +791,7 @@ func (b *Bot) press(ctx context.Context, q *models.CallbackQuery) {
 		return
 	}
 	in := comm.ChannelInbound{
-		Channel: b.name, Sender: strconv.FormatInt(q.From.ID, 10),
+		Channel: b.name, Sender: strconv.FormatInt(q.From.ID, 10), SenderName: nameOf(&q.From),
 		Text: q.Data, Raw: truncate(q.Data, 4096), Press: true,
 	}
 	var where *models.Chat

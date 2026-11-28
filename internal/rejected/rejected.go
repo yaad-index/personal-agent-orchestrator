@@ -32,10 +32,15 @@ const (
 	Registration Kind = "registration"
 )
 
+// maxName bounds a sender's name as the record keeps it.
+const maxName = 256
+
 // Defaults for Options (ADR-0020 point 7).
 const (
 	DefaultMaxEntries = 1000
-	DefaultMaxPayload = 4 << 10
+	// DefaultMaxPayload holds a chat message whole: 4096 characters of up to
+	// four bytes each.
+	DefaultMaxPayload = 16 << 10
 	DefaultRetention  = 30 * 24 * time.Hour
 )
 
@@ -53,6 +58,10 @@ type Options struct {
 type Entry struct {
 	Channel string `json:"channel"`
 	Sender  string `json:"sender"`
+	// Name is the name the platform gave the sender with the most recent
+	// rejection, if it gave one. Like the payload it is the sender's own
+	// saying, and never what pao goes by: the sender is the id.
+	Name string `json:"name,omitempty"`
 	// Kind and Reason are those of the most recent rejection.
 	Kind   Kind      `json:"kind"`
 	Reason string    `json:"reason"`
@@ -119,7 +128,7 @@ func truncate(p string, n int) string {
 // its entry. A new sender at the cap displaces the entry last seen longest ago.
 // A registration attempt's payload is discarded here, so the secret it carried
 // cannot be stored whatever the caller passes.
-func (s *Store) Record(channel, sender string, kind Kind, reason, payload string) error {
+func (s *Store) Record(channel, sender, name string, kind Kind, reason, payload string) error {
 	if channel == "" || sender == "" || strings.ContainsRune(channel, 0) {
 		return fmt.Errorf("%w: channel and sender are required", ErrInvalid)
 	}
@@ -146,7 +155,7 @@ func (s *Store) Record(channel, sender string, kind Kind, reason, payload string
 		} else if err := s.makeRoom(b); err != nil {
 			return err
 		}
-		e.Kind, e.Reason, e.Last, e.Payload = kind, reason, now, payload
+		e.Name, e.Kind, e.Reason, e.Last, e.Payload = truncate(name, maxName), kind, reason, now, payload
 		e.Count++
 		raw, err := json.Marshal(e)
 		if err != nil {

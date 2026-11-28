@@ -62,7 +62,7 @@ type Identity interface {
 // Recorder keeps what the layer did not act on (ADR-0019 point 7). It is write-only
 // from here: nothing the layer holds reads the record back.
 type Recorder interface {
-	Record(channel, sender, kind, reason, payload string) error
+	Record(channel, sender, name, kind, reason, payload string) error
 }
 
 // ChannelInbound is what a channel adapter hands the layer for one incoming
@@ -73,6 +73,10 @@ type ChannelInbound struct {
 	// Sender is the platform's authenticated per-sender id (ADR-0019 point 2),
 	// never a value read from the message text.
 	Sender string
+	// SenderName is the name the platform shows for the sender, kept only in
+	// the record of a rejection. It is the sender's own choosing and decides
+	// nothing.
+	SenderName string
 	// Text is the message text, or, for a registration, the secret presented.
 	Text string
 	// Registration marks the registration entry point: Text is a secret and not
@@ -255,7 +259,7 @@ func (l *Layer) reject(in ChannelInbound, kind, reason, payload string) error {
 	if l.recorder == nil {
 		return nil
 	}
-	if err := l.recorder.Record(in.Channel, in.Sender, kind, reason, payload); err != nil {
+	if err := l.recorder.Record(in.Channel, in.Sender, in.SenderName, kind, reason, payload); err != nil {
 		return fmt.Errorf("%w: %w", ErrRecord, err)
 	}
 	return nil

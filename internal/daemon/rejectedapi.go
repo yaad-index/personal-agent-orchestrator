@@ -15,7 +15,7 @@ func (a rejectedAPI) Rejected(context.Context) ([]local.RejectedJSON, error) {
 	es, err := a.s.List()
 	out := make([]local.RejectedJSON, 0, len(es))
 	for _, e := range es {
-		out = append(out, local.RejectedJSON{Channel: e.Channel, Sender: e.Sender, Kind: string(e.Kind), Reason: e.Reason,
+		out = append(out, local.RejectedJSON{Channel: e.Channel, Sender: e.Sender, Name: e.Name, Kind: string(e.Kind), Reason: e.Reason,
 			First: e.First, Last: e.Last, Count: e.Count, Payload: e.Payload})
 	}
 	return out, err
