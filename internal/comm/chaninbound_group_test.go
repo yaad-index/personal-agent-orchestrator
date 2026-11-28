@@ -9,11 +9,12 @@ import (
 )
 
 // groupSetup is chanSetup with group "-5", named "team", admitted on channel
-// "chat" under the operators policy.
+// "chat" under the operators policy, and the channel's conversation.
 func groupSetup(t *testing.T) (*Layer, *fakeRouter, *fakeIdentity, *fakeRecorder) {
 	t.Helper()
 	l, r, id, rc := chanSetup(t)
 	l.SetGroups(map[string]map[string]Group{"chat": {"-5": Group{Name: "team", Policy: PolicyOperators}}})
+	l.SetScopes(map[string]Scope{"chat": {Owner: "alice", Conversation: "-5"}})
 	return l, r, id, rc
 }
 
@@ -44,17 +45,45 @@ func TestAGroupThatIsNotAdmittedIsRefusedWhoeverSends(t *testing.T) {
 		assert.Equal(t, ChannelResult{}, res)
 	}
 	assert.Empty(t, r.routed)
-	assert.Equal(t, []rec{{"chat", "op", RecordMessage, "group -6", "RAW"}, {"chat", "op", RecordMessage, "group", "RAW"}, {"other", "op", RecordMessage, "group -5", "RAW"}}, rc.got,
-		"the record names the conversation, so the operator can admit it by its id")
+	assert.Equal(t, []rec{
+		{"chat", "op", RecordMessage, "not the channel's conversation: -6", "RAW"},
+		{"chat", "op", RecordMessage, "not the channel's conversation: unknown", "RAW"},
+		{"other", "op", RecordMessage, "channel has no owner and conversation", "RAW"},
+	}, rc.got, "the record names the conversation, so the operator can see where it came from")
 }
 
-func TestWithNoGroupsAdmittedEveryGroupIsRefused(t *testing.T) {
+func TestOnAPrivateChannelEveryGroupIsRefusedTheOwnerToo(t *testing.T) {
 	l, r, _, rc := chanSetup(t)
 	res, err := l.ReceiveFromChannel(context.Background(), inGroup("-5", "op", "hi"))
 	require.NoError(t, err)
 	assert.Equal(t, ChannelResult{}, res)
 	assert.Empty(t, r.routed)
-	assert.Equal(t, []rec{{"chat", "op", RecordMessage, "group -5", "RAW"}}, rc.got)
+	assert.Equal(t, []rec{{"chat", "op", RecordMessage, "not the channel's conversation: -5", "RAW"}}, rc.got)
+}
+
+func TestOnAGroupChannelThePrivateConversationIsRefusedTheOwnerToo(t *testing.T) {
+	l, r, _, rc := groupSetup(t)
+	for _, text := range []string{"hi", "/pao help"} {
+		res, err := l.ReceiveFromChannel(context.Background(), ChannelInbound{Channel: "chat", Sender: "op", Text: text, Target: byName("a"), Raw: "RAW"})
+		require.NoError(t, err)
+		assert.Equal(t, ChannelResult{}, res, text)
+	}
+	assert.Empty(t, r.routed)
+	assert.Equal(t, []rec{{"chat", "op", RecordMessage, "not the channel's conversation: private", "RAW"}, {"chat", "op", RecordMessage, "not the channel's conversation: private", "RAW"}}, rc.got)
+}
+
+func TestOnAGroupChannelTheOwnersPressInPrivateIsTheChannelsAndNoOneElses(t *testing.T) {
+	l, _, _, rc := groupSetup(t)
+	press := ChannelInbound{Channel: "chat", Sender: "op", Text: "not a command", Raw: "RAW", Press: true}
+	res, err := l.ReceiveFromChannel(context.Background(), press)
+	require.NoError(t, err)
+	assert.Equal(t, ReplyNotACommand, res.Reply, "the owner answers a question pao asked privately")
+
+	press.Sender = "plain"
+	res, err = l.ReceiveFromChannel(context.Background(), press)
+	require.NoError(t, err)
+	assert.Equal(t, ChannelResult{}, res)
+	assert.Equal(t, []rec{{"chat", "op", RecordMessage, "press not a command", "RAW"}, {"chat", "plain", RecordMessage, "not the channel's owner", "RAW"}}, rc.got)
 }
 
 func TestInAnAdmittedGroupAnyoneThePolicyDoesNotAdmitIsRecordedAndNotAnswered(t *testing.T) {
@@ -65,7 +94,7 @@ func TestInAnAdmittedGroupAnyoneThePolicyDoesNotAdmitIsRecordedAndNotAnswered(t 
 		assert.Equal(t, ChannelResult{}, res, "%s: nothing is said in the group, not even a refusal", sender)
 	}
 	assert.Empty(t, r.routed)
-	assert.Equal(t, []rec{{"chat", "plain", RecordMessage, "outside access in group team", "RAW"}, {"chat", "stranger", RecordMessage, "no subject in group team", "RAW"}}, rc.got)
+	assert.Equal(t, []rec{{"chat", "plain", RecordMessage, "not the channel's owner", "RAW"}, {"chat", "stranger", RecordMessage, "no subject", "RAW"}}, rc.got)
 }
 
 func TestTheOperatorFlagIsReadAtEachGroupMessage(t *testing.T) {
@@ -115,7 +144,7 @@ func TestAPressInAnAdmittedGroupIsTheOperatorsAndOneFromAnyoneElseIsRecorded(t *
 	require.NoError(t, err)
 	assert.Equal(t, ChannelResult{}, res)
 	assert.Empty(t, r.routed)
-	assert.Equal(t, []rec{{"chat", "op", RecordMessage, "press not a command", "RAW"}, {"chat", "plain", RecordMessage, "outside access in group team", "RAW"}}, rc.got)
+	assert.Equal(t, []rec{{"chat", "op", RecordMessage, "press not a command", "RAW"}, {"chat", "plain", RecordMessage, "not the channel's owner", "RAW"}}, rc.got)
 }
 
 func TestAJoinThePolicyDoesNotAdmitIsRecordedAndAnAdmittedOneIsNot(t *testing.T) {
@@ -148,6 +177,7 @@ func TestAConversationThatMovedIsRecordedWithBothIdsAndTheNewIdIsNotAdmitted(t *
 func TestAPolicyTheLayerDoesNotKnowAdmitsNoOne(t *testing.T) {
 	l, r, _, rc := chanSetup(t)
 	l.SetGroups(map[string]map[string]Group{"chat": {"-5": {Name: "odd", Policy: "everyone"}}})
+	l.SetScopes(map[string]Scope{"chat": {Owner: "alice", Conversation: "-5"}})
 	res, err := l.ReceiveFromChannel(context.Background(), inGroup("-5", "op", "hi"))
 	require.NoError(t, err)
 	assert.Equal(t, ChannelResult{}, res)
@@ -162,7 +192,7 @@ func TestAGroupWithNoConversationIdIsNeverAdmittedEvenIfAnEmptyIdIsListed(t *tes
 	require.NoError(t, err)
 	assert.Equal(t, ChannelResult{}, res)
 	assert.Empty(t, r.routed, "a press on no message reaches the layer with no conversation, and must stay refused")
-	assert.Equal(t, []rec{{"chat", "op", RecordMessage, "group", "RAW"}}, rc.got)
+	assert.Equal(t, []rec{{"chat", "op", RecordMessage, "not the channel's conversation: unknown", "RAW"}}, rc.got)
 }
 
 // The layer refuses a group registration without keeping its secret on its own,

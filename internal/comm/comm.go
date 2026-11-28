@@ -140,6 +140,11 @@ type Layer struct {
 	// groups are the admitted group conversations: channel, then conversation id,
 	// to the group's name and member policy.
 	groups map[string]map[string]Group
+	// scopes are each channel's owner and one conversation, by channel name.
+	scopes map[string]Scope
+	// unscoped lifts the scopes, for this package's tests of the routing under
+	// them alone. Nothing outside the package can set it.
+	unscoped bool
 	// unshown is the (channel, sender) pairs already logged as shown nowhere.
 	unshown sync.Map
 

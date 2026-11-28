@@ -14,9 +14,9 @@ import (
 )
 
 const (
-	chanOK = "    kind: bot\n    credential_env: PAO_BOT\n"
+	chanOK = "    kind: bot\n    credential_env: PAO_BOT\n    owner: alice\n    target: private\n"
 	// a channel in the managed file has a credential of its own (ADR-0057 point 3)
-	chanUI = "    kind: bot\n    credential_env: PAO_BOT_UI\n"
+	chanUI = "    kind: bot\n    credential_env: PAO_BOT_UI\n    owner: alice\n    target: private\n"
 )
 
 // managedSetup writes a node whose pao.yaml holds own, naming managed.yaml,
@@ -69,8 +69,8 @@ func TestAClashBetweenTheTwoFilesIsALoadErrorNamingBoth(t *testing.T) {
 		"same name": {"channels:\n  - id: 1\n    name: chat\n" + chanOK, "channels:\n  - id: 2\n    name: chat\n" + chanOK, `name "chat" is already used`},
 		"same id":   {"channels:\n  - id: 1\n    name: a\n" + chanOK, "channels:\n  - id: 1\n    name: b\n" + chanOK, "id 1 is already channel"},
 		"same group name": {
-			"channels:\n  - id: 1\n    name: a\n" + chanOK + "    groups:\n      - id: \"-1\"\n        name: crew\n        members: operators\n",
-			"channels:\n  - id: 2\n    name: b\n" + chanOK + "    groups:\n      - id: \"-2\"\n        name: crew\n        members: operators\n",
+			"channels:\n  - id: 1\n    name: a\n" + strings.Replace(chanOK, "private", `"-1"`, 1) + "    groups:\n      - id: \"-1\"\n        name: crew\n        members: operators\n",
+			"channels:\n  - id: 2\n    name: b\n" + strings.Replace(chanOK, "private", `"-2"`, 1) + "    groups:\n      - id: \"-2\"\n        name: crew\n        members: operators\n",
 			`name "crew" is already`,
 		},
 	} {
@@ -114,7 +114,7 @@ func TestAWriteThatLoadsReplacesTheManagedFileWhole(t *testing.T) {
 	paoBefore, err := os.ReadFile(pao)
 	require.NoError(t, err)
 
-	m := Managed{Channels: []Channel{{ID: 2, Name: "ui-made", Kind: "bot", CredentialEnv: "PAO_UI_BOT",
+	m := Managed{Channels: []Channel{{ID: 2, Name: "ui-made", Kind: "bot", CredentialEnv: "PAO_UI_BOT", Owner: "alice", Target: "-5/7",
 		Groups: []Group{{ID: "-5", Name: "crew", Members: MembersOperators, Topics: []Topic{{ID: "7", Name: "crew-news"}}}}}}}
 	require.NoError(t, WriteManaged(pao, m))
 
@@ -162,7 +162,7 @@ func TestAReaderNeverSeesAHalfWrittenManagedFile(t *testing.T) {
 	many := func(n int) Managed {
 		var m Managed
 		for i := 1; i <= n; i++ {
-			m.Channels = append(m.Channels, Channel{ID: i, Name: "c" + strings.Repeat("x", i%20) + string(rune('a'+i%26)) + "-" + strings.Repeat("0", i/26), Kind: "bot", CredentialEnv: fmt.Sprintf("V%d", i)})
+			m.Channels = append(m.Channels, Channel{ID: i, Name: "c" + strings.Repeat("x", i%20) + string(rune('a'+i%26)) + "-" + strings.Repeat("0", i/26), Kind: "bot", CredentialEnv: fmt.Sprintf("V%d", i), Owner: "alice", Target: TargetPrivate})
 		}
 		return m
 	}

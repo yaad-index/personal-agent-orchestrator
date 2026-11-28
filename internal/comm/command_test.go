@@ -94,15 +94,23 @@ func TestACommandThatAddressesRoutesItsMessageThere(t *testing.T) {
 }
 
 // A subject that is not the operator is refused before any command is read: in
-// the first build every command is the operator's.
+// the first build every command is the operator's. One that is not the
+// channel's owner is told nothing at all.
 func TestACommandFromASubjectThatIsNotTheOperatorIsRefused(t *testing.T) {
 	l, r, _, _ := chanSetup(t)
 	ops := &cmdOps{}
 	l.SetCommands(ops)
-	for _, text := range []string{"/pao help", "/pao stream a", "/pao agent a hi", "/pao agents"} {
-		res, err := l.ReceiveFromChannel(context.Background(), ChannelInbound{Channel: "chat", Sender: "plain", Text: text})
-		require.NoError(t, err)
-		assert.Equal(t, ReplyNoAccess, res.Reply, text)
+	for _, owner := range []string{"alice", "bob"} {
+		l.SetScopes(map[string]Scope{"chat": {Owner: owner}})
+		want := ReplyNoAccess
+		if owner == "alice" {
+			want = ""
+		}
+		for _, text := range []string{"/pao help", "/pao stream a", "/pao agent a hi", "/pao agents"} {
+			res, err := l.ReceiveFromChannel(context.Background(), ChannelInbound{Channel: "chat", Sender: "plain", Text: text})
+			require.NoError(t, err)
+			assert.Equal(t, want, res.Reply, owner+": "+text)
+		}
 	}
 	assert.Empty(t, ops.calls)
 	assert.Empty(t, r.routed)

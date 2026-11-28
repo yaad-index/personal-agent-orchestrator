@@ -324,6 +324,10 @@ export interface ChannelConfig {
   credential_env?: string;
   credential_secret?: string;
   options?: Record<string, unknown>;
+  // owner is the subject the channel belongs to; target is its one conversation:
+  // "private", a group's id, or "<group id>/<topic id>"
+  owner: string;
+  target: string;
   groups?: GroupConfig[];
 }
 

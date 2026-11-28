@@ -26,7 +26,12 @@
   let credSecret = $state("");
   let credEnv = $state("");
   let optionsText = $state("{}");
-  let groups = $state<{ id: string; name: string }[]>([]);
+  let owner = $state("");
+  // the channel's one conversation: the owner's private one, a group, or a topic of a group
+  let convWay = $state<"private" | "group">("private");
+  let groupId = $state("");
+  let groupName = $state("");
+  let topicId = $state("");
 
   async function load() {
     try {
@@ -50,7 +55,9 @@
     credSecret = list.secrets[0] ?? "";
     credEnv = "";
     optionsText = "{}";
-    groups = [];
+    owner = "";
+    convWay = "private";
+    groupId = groupName = topicId = "";
     error = "";
     notice = "";
   }
@@ -64,7 +71,12 @@
     credSecret = c.credential_secret ?? list?.secrets[0] ?? "";
     credEnv = c.credential_env ?? "";
     optionsText = JSON.stringify(c.options ?? {}, null, 2);
-    groups = (c.groups ?? []).map((g) => ({ id: g.id, name: g.name }));
+    owner = c.owner ?? "";
+    convWay = c.target && c.target !== "private" ? "group" : "private";
+    const [gid, tid] = convWay === "group" ? c.target.split("/") : ["", ""];
+    groupId = gid ?? "";
+    topicId = tid ?? "";
+    groupName = c.groups?.find((g) => g.id === groupId)?.name ?? "";
     error = "";
     notice = "";
   }
@@ -87,8 +99,10 @@
       credential_secret: credWay === "secret" ? credSecret : undefined,
       credential_env: credWay === "env" ? credEnv.trim() : undefined,
       options,
-      // a group's topics are kept by pao; the form leaves them out
-      groups: groups.filter((g) => g.id.trim() || g.name.trim()).map((g) => ({ id: g.id.trim(), name: g.name.trim(), members: "operators" })),
+      owner: owner.trim(),
+      target: convWay === "private" ? "private" : groupId.trim() + (topicId.trim() ? "/" + topicId.trim() : ""),
+      // a group's named topics are kept by pao; the form leaves them out
+      groups: convWay === "private" ? [] : [{ id: groupId.trim(), name: groupName.trim(), members: "operators" }],
     };
     busy = true;
     error = "";
@@ -133,6 +147,13 @@
   }
 
   const credLabel = (c: ChannelConfig) => (c.credential_secret ? `secret ${c.credential_secret}` : `variable ${c.credential_env}`);
+  function convLabel(c: ChannelConfig): string {
+    if (!c.target) return "—";
+    if (c.target === "private") return `${c.owner}, privately`;
+    const [gid, tid] = c.target.split("/");
+    const g = c.groups?.find((x) => x.id === gid)?.name ?? gid;
+    return tid ? `${c.owner} in ${g}, topic ${tid}` : `${c.owner} in ${g}`;
+  }
 </script>
 
 <section>
@@ -165,7 +186,7 @@
       <p class="muted">No channels yet. The local channel, this UI and the command line, is always there.</p>
     {:else}
       <table class="channels">
-        <thead><tr><th>Channel</th><th>Credential</th><th class="wide-only">Groups</th><th></th></tr></thead>
+        <thead><tr><th>Channel</th><th>Credential</th><th class="wide-only">Conversation</th><th></th></tr></thead>
         <tbody>
           {#each list.channels as c (c.name)}
             <tr>
@@ -178,7 +199,7 @@
                 <div><span class="badge" class:warn={!c.credential.resolves}>{c.credential.resolves ? "set" : "not set"}</span></div>
                 {#if c.credential.problem}<div class="muted small">{c.credential.problem}</div>{/if}
               </td>
-              <td class="wide-only">{(c.groups ?? []).map((g) => g.name).join(", ") || "—"}</td>
+              <td class="wide-only">{convLabel(c)}</td>
               <td class="row-actions">
                 {#if c.managed}
                   <button class="link" disabled={busy} onclick={() => openEdit(c)}>Edit</button>
@@ -221,17 +242,24 @@
         <label for="c-options">Options <span class="muted small">— the adapter's own, as JSON</span></label>
         <textarea id="c-options" class="code" rows="4" bind:value={optionsText}></textarea>
 
+        <label for="c-owner">Owner</label>
+        <input id="c-owner" bind:value={owner} required placeholder="the subject the channel belongs to" autocomplete="off" />
+
         <fieldset>
-          <legend>Groups</legend>
-          <p class="muted small">Group conversations the channel serves, by the platform's id and your name for each. Their members are operators. A group's named topics are kept as they are.</p>
-          {#each groups as g, i (i)}
+          <legend>Conversation</legend>
+          <p class="muted small">
+            The one conversation the channel is. pao acts only on what the owner writes there, and shows the channel's output there alone. Anything else
+            is not acted on, and is kept in the record of rejected messages.
+          </p>
+          <label class="check"><input type="radio" bind:group={convWay} value="private" /> the owner's private conversation with the channel</label>
+          <label class="check"><input type="radio" bind:group={convWay} value="group" /> a group, or a topic of a group</label>
+          {#if convWay === "group"}
             <div class="group-row">
-              <input aria-label="Group id" bind:value={g.id} placeholder="platform id" />
-              <input aria-label="Group name" bind:value={g.name} placeholder="name" />
-              <button type="button" class="link danger" onclick={() => groups.splice(i, 1)}>Remove</button>
+              <input aria-label="Group id" bind:value={groupId} placeholder="group id" required />
+              <input aria-label="Group name" bind:value={groupName} placeholder="name" required />
+              <input aria-label="Topic id" bind:value={topicId} placeholder="topic id (optional)" />
             </div>
-          {/each}
-          <button type="button" class="link" onclick={() => groups.push({ id: "", name: "" })}>Add a group</button>
+          {/if}
         </fieldset>
 
         <div class="actions">

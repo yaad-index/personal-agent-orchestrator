@@ -53,6 +53,32 @@ An empty list (`disable: []`) gives that agent every tool back. Tools are named 
 
 A backend that can't turn its tools off refuses a profile that asks it to, whether the list comes from the profile or from `profile_defaults`. pao says so when it loads the configuration.
 
+## A channel is one conversation of one owner
+
+A chat channel is one conversation and the one person it belongs to. pao acts on a message only when it comes from that conversation and from that person. Anything else, whoever sends it and wherever it is sent, reaches no agent and is answered with nothing. That covers a group the bot was added to, another topic of the same group, the owner writing somewhere else, and anyone else writing in the channel's own conversation. Each such message is kept in the record of rejected messages, with its sender and its text, for you to read (`pao inbound rejected`, or the UI's rejected page). Everything the channel shows goes to that one conversation. pao's own questions and notices are the exception: they also go to the owner's private conversation with the bot, where nobody else reads them, and a button pressed there is the owner's answer.
+
+```yaml
+channels:
+  - id: 1
+    name: chat
+    kind: bot
+    credential_env: PAO_BOT_TOKEN
+    owner: alice          # the subject the channel belongs to
+    target: private       # alice's private conversation with the bot
+  - id: 2
+    name: team
+    kind: bot
+    credential_env: PAO_TEAM_BOT_TOKEN
+    owner: alice
+    target: "-1001234567890/42"   # topic 42 of the group, or just the group's id
+    groups:
+      - id: "-1001234567890"
+        name: team
+        members: operators
+```
+
+A channel whose target is a group lists that group, and only that group, under `groups`. A channel whose target is `private` lists none. Both `owner` and `target` are required: a configuration without them doesn't load. Since each channel reads with its own credential, a second conversation needs a second bot.
+
 ## The file pao manages
 
 pao never writes `pao.yaml`. Settings the management UI sets go in a second file, which you name in `pao.yaml`:

@@ -401,10 +401,33 @@ type Channel struct {
 	CredentialSecret string `yaml:"credential_secret,omitempty"`
 	// Options are the adapter's own settings; only the adapter interprets them.
 	Options map[string]any `yaml:"options,omitempty"`
+	// Owner is the subject the channel belongs to. Only the owner's inbound is
+	// acted on; anyone else's is rejected and recorded.
+	Owner string `yaml:"owner"`
+	// Target is the one conversation the channel is: TargetPrivate for the
+	// owner's private conversation with the channel, a group's id, or a topic
+	// of a group as "<group id>/<topic id>". Inbound from any other
+	// conversation is rejected and recorded, and the channel's output goes
+	// there alone.
+	Target string `yaml:"target"`
 	// Groups are the group conversations the channel serves (ADR-0028 point 1).
 	// A group not listed here is refused. If the platform moves a conversation to
 	// a new id, the new id is not listed and the group is refused until it is.
 	Groups []Group `yaml:"groups,omitempty"`
+}
+
+// TargetPrivate is the target of a channel that is its owner's private
+// conversation with it.
+const TargetPrivate = "private"
+
+// TargetGroup returns the group a channel's target is in, and the topic within
+// it if the target is a topic. ok is false for a private target.
+func (c Channel) TargetGroup() (group, topic string, ok bool) {
+	if c.Target == TargetPrivate || c.Target == "" {
+		return "", "", false
+	}
+	group, topic, _ = strings.Cut(c.Target, "/")
+	return group, topic, true
 }
 
 // MembersOperators is the member policy that admits only subjects routed as the
@@ -504,6 +527,39 @@ func checkChannelsOf(src channelSource, ids map[int]string, names, groupNames ma
 		if err := checkGroups(at, c.Groups, groupNames); err != nil {
 			return err
 		}
+		if err := checkTarget(at, c); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// checkTarget validates a channel's owner and its one conversation. A group or
+// a named topic the target is not would never be served or shown, so listing
+// one is refused rather than left dead.
+func checkTarget(at string, c Channel) error {
+	if !channelNamePattern.MatchString(c.Owner) {
+		return fmt.Errorf("%s: owner %q must name a subject: lowercase letters, digits, '-' or '_', at most 32", at, c.Owner)
+	}
+	group, topic, isGroup := c.TargetGroup()
+	switch {
+	case c.Target == "":
+		return fmt.Errorf("%s: target is required: %q, a group's id, or \"<group id>/<topic id>\"", at, TargetPrivate)
+	case c.Target != strings.TrimSpace(c.Target):
+		return fmt.Errorf("%s: target %q must have no surrounding space", at, c.Target)
+	case !isGroup && len(c.Groups) > 0:
+		return fmt.Errorf("%s: a channel whose target is %q lists no groups", at, TargetPrivate)
+	case !isGroup:
+		return nil
+	case group == "" || strings.Contains(c.Target, "/") && (topic == "" || strings.Contains(topic, "/")):
+		return fmt.Errorf("%s: target %q must be a group's id, or \"<group id>/<topic id>\"", at, c.Target)
+	case len(c.Groups) != 1 || c.Groups[0].ID != group:
+		return fmt.Errorf("%s: target %q needs its group, and only it, under groups", at, c.Target)
+	}
+	for _, t := range c.Groups[0].Topics {
+		if t.ID != topic {
+			return fmt.Errorf("%s: topic %q is not the target, so it is never served: remove it", at, t.ID)
+		}
 	}
 	return nil
 }
@@ -517,8 +573,8 @@ func checkGroups(at string, gs []Group, names map[string]string) error {
 		switch {
 		case strings.TrimSpace(g.ID) == "" || g.ID != strings.TrimSpace(g.ID):
 			return fmt.Errorf("%s: id is required, with no surrounding space", gat)
-		case len(g.Topics) > 0 && strings.Contains(g.ID, "/"):
-			return fmt.Errorf("%s: id %q of a group with topics must not contain '/'", gat, g.ID)
+		case strings.Contains(g.ID, "/"):
+			return fmt.Errorf("%s: id %q must not contain '/', which a channel's target puts between a group and its topic", gat, g.ID)
 		case !channelNamePattern.MatchString(g.Name):
 			return fmt.Errorf("%s: name %q must be lowercase letters, digits, '-' or '_', at most 32", gat, g.Name)
 		case g.Members != MembersOperators:

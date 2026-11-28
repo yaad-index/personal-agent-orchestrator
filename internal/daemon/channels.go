@@ -50,6 +50,7 @@ func wireChannels(cfg *config.Config, creds map[string]string, table adapter.Tab
 	}
 	layer.SetChannelIDs(chanIDs)
 	layer.SetGroups(admittedGroups(cfg.Orchestrator.Channels))
+	layer.SetScopes(channelScopes(cfg.Orchestrator.Channels))
 	for _, a := range adapters {
 		layer.AddChannel(a)
 	}
@@ -66,6 +67,22 @@ func standingBindings(bs []config.Binding) []comm.Binding {
 			continue
 		}
 		out = append(out, comm.Binding{Agent: b.Agent, Stream: b.Stream, To: comm.Dest{Kind: d.Kind, Name: d.Name, Channel: d.Channel}, Level: int(b.Level), Prefix: b.Prefix})
+	}
+	return out
+}
+
+// channelScopes is each channel's owner and one conversation.
+func channelScopes(chs []config.Channel) map[string]comm.Scope {
+	out := make(map[string]comm.Scope, len(chs))
+	for _, c := range chs {
+		s := comm.Scope{Owner: c.Owner}
+		if group, topic, ok := c.TargetGroup(); ok {
+			s.Conversation = group
+			if topic != "" {
+				s.Conversation = comm.TopicConversation(group, topic)
+			}
+		}
+		out[c.Name] = s
 	}
 	return out
 }

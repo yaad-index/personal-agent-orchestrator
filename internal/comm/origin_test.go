@@ -45,10 +45,12 @@ func (c *convChannel) take() map[string][]string {
 }
 
 // originSetup is a layer with the channel "chat", where op is the operator and the
-// group -5 is admitted, and the local channel.
+// group -5 is admitted, and the local channel. Its scopes are lifted: it tests the
+// routing across a channel's conversations, which scope_test.go narrows to one.
 func originSetup(t *testing.T) (*Layer, *fakeRouter, *convChannel, *recChannel) {
 	t.Helper()
 	l, r, _, _ := groupSetup(t)
+	l.unscoped = true
 	chat := &convChannel{name: "chat", l: l, got: map[string][]string{}}
 	local := &recChannel{name: "local"}
 	l.AddChannel(chat)

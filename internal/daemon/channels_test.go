@@ -66,7 +66,7 @@ func theBot(t *testing.T, built <-chan *botFake) *botFake {
 }
 
 func withChannel(cfg *config.Config) {
-	cfg.Orchestrator.Channels = []config.Channel{{ID: 1, Name: "chat", Kind: "bot", CredentialEnv: "PAO_TEST_BOT_CRED"}}
+	cfg.Orchestrator.Channels = []config.Channel{{ID: 1, Name: "chat", Kind: "bot", CredentialEnv: "PAO_TEST_BOT_CRED", Owner: "alice", Target: config.TargetPrivate}}
 }
 
 func TestAConfiguredChannelIsBuiltRunStoppedAndItsCredentialIsKeptFromAgents(t *testing.T) {
@@ -144,13 +144,13 @@ func TestInboundThroughAChannelIsRecordedRoutedAndAttributedBySubject(t *testing
 
 func TestAChannelOfAKindNotCompiledInStopsTheNode(t *testing.T) {
 	t.Setenv("PAO_TEST_BOT_CRED", "x")
-	_, err := wireChannelsForTest(t, config.Channel{ID: 1, Name: "chat", Kind: "nope", CredentialEnv: "PAO_TEST_BOT_CRED"}, "x")
+	_, err := wireChannelsForTest(t, config.Channel{ID: 1, Name: "chat", Kind: "nope", CredentialEnv: "PAO_TEST_BOT_CRED", Owner: "alice", Target: config.TargetPrivate}, "x")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not compiled into this build")
 }
 
 func TestAnUnsetCredentialStopsTheNode(t *testing.T) {
-	_, err := wireChannelsForTest(t, config.Channel{ID: 1, Name: "chat", Kind: "bot", CredentialEnv: "PAO_TEST_BOT_CRED"}, "")
+	_, err := wireChannelsForTest(t, config.Channel{ID: 1, Name: "chat", Kind: "bot", CredentialEnv: "PAO_TEST_BOT_CRED", Owner: "alice", Target: config.TargetPrivate}, "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "credential")
 }
@@ -159,7 +159,7 @@ func TestAReusedChannelIdStopsTheNodeBeforeAnythingStarts(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "channels.json"), []byte(`{"channels":{"1":"oldchat"}}`), 0o600))
 	cfg := &config.Config{Orchestrator: config.Orchestrator{StateDir: dir, MessageWindow: 10,
-		Channels: []config.Channel{{ID: 1, Name: "newchat", Kind: "bot", CredentialEnv: "E"}}}}
+		Channels: []config.Channel{{ID: 1, Name: "newchat", Kind: "bot", CredentialEnv: "E", Owner: "alice", Target: config.TargetPrivate}}}}
 	built := make(chan *botFake, 1)
 	_, err := wireChannels(cfg, map[string]string{"newchat": "x"}, fakeTable(built), comm.New(nil, nil), nil, nil)
 	require.Error(t, err)
@@ -170,7 +170,7 @@ func TestAReusedChannelIdStopsTheNodeBeforeAnythingStarts(t *testing.T) {
 func TestAConfiguredChannelBecomesAChannelOfTheLayer(t *testing.T) {
 	built := make(chan *botFake, 1)
 	cfg := &config.Config{Orchestrator: config.Orchestrator{StateDir: t.TempDir(), MessageWindow: 10,
-		Channels: []config.Channel{{ID: 4, Name: "chat", Kind: "bot", CredentialEnv: "E"}}}}
+		Channels: []config.Channel{{ID: 4, Name: "chat", Kind: "bot", CredentialEnv: "E", Owner: "alice", Target: config.TargetPrivate}}}}
 	l := comm.New(nil, nil)
 	as, err := wireChannels(cfg, map[string]string{"chat": "x"}, fakeTable(built), l, nil, nil)
 	require.NoError(t, err)

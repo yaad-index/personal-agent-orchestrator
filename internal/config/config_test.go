@@ -349,12 +349,12 @@ func channelsConfig(t *testing.T, channels string) (string, error) {
 }
 
 func TestChannelsAreLoadedWithTheirIdNameKindCredentialAndOptions(t *testing.T) {
-	path, err := channelsConfig(t, "channels:\n  - id: 1\n    name: chat\n    kind: bot\n    credential_env: PAO_BOT\n    options:\n      poll: 30\n  - id: 2\n    name: alt-chat\n    kind: bot\n    credential_env: PAO_BOT2\n")
+	path, err := channelsConfig(t, "channels:\n  - id: 1\n    name: chat\n    kind: bot\n    credential_env: PAO_BOT\n    owner: alice\n    target: private\n    options:\n      poll: 30\n  - id: 2\n    name: alt-chat\n    kind: bot\n    credential_env: PAO_BOT2\n    owner: alice\n    target: private\n")
 	require.NoError(t, err)
 	cfg, err := Load(path)
 	require.NoError(t, err)
 	require.Len(t, cfg.Orchestrator.Channels, 2)
-	assert.Equal(t, Channel{ID: 1, Name: "chat", Kind: "bot", CredentialEnv: "PAO_BOT", Options: map[string]any{"poll": 30}}, cfg.Orchestrator.Channels[0])
+	assert.Equal(t, Channel{ID: 1, Name: "chat", Kind: "bot", CredentialEnv: "PAO_BOT", Options: map[string]any{"poll": 30}, Owner: "alice", Target: "private"}, cfg.Orchestrator.Channels[0])
 	assert.Equal(t, 2, cfg.Orchestrator.Channels[1].ID)
 }
 
@@ -367,7 +367,7 @@ func TestNoChannelsIsFine(t *testing.T) {
 }
 
 func TestChannelsRejects(t *testing.T) {
-	ok := "    kind: bot\n    credential_env: PAO_BOT\n"
+	ok := "    kind: bot\n    credential_env: PAO_BOT\n    owner: alice\n    target: private\n"
 	for name, c := range map[string]struct{ body, want string }{
 		"no id":          {"channels:\n  - name: chat\n" + ok, "id must be a positive integer"},
 		"zero id":        {"channels:\n  - id: 0\n    name: chat\n" + ok, "id must be a positive integer"},
@@ -376,7 +376,7 @@ func TestChannelsRejects(t *testing.T) {
 		"bad name":       {"channels:\n  - id: 1\n    name: Chat Room\n" + ok, "name"},
 		"long name":      {"channels:\n  - id: 1\n    name: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n" + ok, "name"},
 		"reserved name":  {"channels:\n  - id: 1\n    name: local\n" + ok, "reserved"},
-		"no kind":        {"channels:\n  - id: 1\n    name: chat\n    credential_env: PAO_BOT\n", "kind is required"},
+		"no kind":        {"channels:\n  - id: 1\n    name: chat\n    credential_env: PAO_BOT\n    owner: alice\n    target: private\n", "kind is required"},
 		"no credential":  {"channels:\n  - id: 1\n    name: chat\n    kind: bot\n", "credential_env"},
 		"bad credential": {"channels:\n  - id: 1\n    name: chat\n    kind: bot\n    credential_env: \"has space\"\n", "credential_env"},
 		"duplicate id":   {"channels:\n  - id: 1\n    name: a\n" + ok + "  - id: 1\n    name: b\n" + ok, "id 1 is already channel"},
@@ -424,15 +424,16 @@ func TestUpstreamsRejects(t *testing.T) {
 }
 
 func TestChannelGroupsAreLoaded(t *testing.T) {
-	path, err := channelsConfig(t, "channels:\n  - id: 1\n    name: chat\n    kind: bot\n    credential_env: PAO_BOT\n    groups:\n      - id: \"-100200\"\n        name: group_channel_one\n        members: operators\n      - id: \"-300\"\n        name: ops-2\n        members: operators\n")
+	path, err := channelsConfig(t, "channels:\n  - id: 1\n    name: chat\n    kind: bot\n    credential_env: PAO_BOT\n    owner: alice\n    target: \"-100200\"\n    groups:\n      - id: \"-100200\"\n        name: group_channel_one\n        members: operators\n")
 	require.NoError(t, err)
 	cfg, err := Load(path)
 	require.NoError(t, err)
-	assert.Equal(t, []Group{{ID: "-100200", Name: "group_channel_one", Members: "operators"}, {ID: "-300", Name: "ops-2", Members: "operators"}}, cfg.Orchestrator.Channels[0].Groups)
+	assert.Equal(t, []Group{{ID: "-100200", Name: "group_channel_one", Members: "operators"}}, cfg.Orchestrator.Channels[0].Groups)
+	assert.Equal(t, "-100200", cfg.Orchestrator.Channels[0].Target)
 }
 
 func TestChannelGroupsRejects(t *testing.T) {
-	head := "channels:\n  - id: 1\n    name: chat\n    kind: bot\n    credential_env: PAO_BOT\n    groups:\n"
+	head := "channels:\n  - id: 1\n    name: chat\n    kind: bot\n    credential_env: PAO_BOT\n    owner: alice\n    target: private\n    groups:\n"
 	for name, c := range map[string]struct{ body, want string }{
 		"no id":          {"      - name: a\n        members: operators\n", "groups[0]: id is required"},
 		"blank id":       {"      - id: \" \"\n        name: a\n        members: operators\n", "id is required"},
@@ -453,8 +454,8 @@ func TestChannelGroupsRejects(t *testing.T) {
 }
 
 func TestAGroupNameIsUniqueAcrossTheNodesChannels(t *testing.T) {
-	_, err := channelsConfig(t, "channels:\n  - id: 1\n    name: a\n    kind: bot\n    credential_env: PAO_BOT\n    groups:\n      - id: \"-5\"\n        name: team\n        members: operators\n"+
-		"  - id: 2\n    name: b\n    kind: bot\n    credential_env: PAO_BOT2\n    groups:\n      - id: \"-6\"\n        name: team\n        members: operators\n")
+	_, err := channelsConfig(t, "channels:\n  - id: 1\n    name: a\n    kind: bot\n    credential_env: PAO_BOT\n    owner: alice\n    target: \"-5\"\n    groups:\n      - id: \"-5\"\n        name: team\n        members: operators\n"+
+		"  - id: 2\n    name: b\n    kind: bot\n    credential_env: PAO_BOT2\n    owner: alice\n    target: \"-6\"\n    groups:\n      - id: \"-6\"\n        name: team\n        members: operators\n")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `channels[1].groups[0]: name "team" is already`)
 	assert.Contains(t, err.Error(), "channels[0].groups[0]", "the error says where the name was first used")
@@ -464,11 +465,11 @@ func TestTheSameGroupMayBeListedOnTwoChannels(t *testing.T) {
 	g := func(name string) string {
 		return "    groups:\n      - id: \"-5\"\n        name: " + name + "\n        members: operators\n"
 	}
-	_, err := channelsConfig(t, "channels:\n  - id: 1\n    name: a\n    kind: bot\n    credential_env: PAO_BOT\n"+g("via_a")+"  - id: 2\n    name: b\n    kind: bot\n    credential_env: PAO_BOT2\n"+g("via_b"))
+	_, err := channelsConfig(t, "channels:\n  - id: 1\n    name: a\n    kind: bot\n    credential_env: PAO_BOT\n    owner: alice\n    target: \"-5\"\n"+g("via_a")+"  - id: 2\n    name: b\n    kind: bot\n    credential_env: PAO_BOT2\n    owner: alice\n    target: \"-5\"\n"+g("via_b"))
 	require.NoError(t, err)
 }
 
-const bindingsHead = "level: 2\nchannels:\n  - id: 1\n    name: chat\n    kind: bot\n    credential_env: PAO_BOT\n    groups:\n      - id: \"-5\"\n        name: team\n        members: operators\nbindings:\n"
+const bindingsHead = "level: 2\nchannels:\n  - id: 1\n    name: chat\n    kind: bot\n    credential_env: PAO_BOT\n    owner: alice\n    target: \"-5\"\n    groups:\n      - id: \"-5\"\n        name: team\n        members: operators\nbindings:\n"
 
 func TestBindingsAreLoadedWithTheirDefaults(t *testing.T) {
 	path, err := channelsConfig(t, bindingsHead+
@@ -578,7 +579,7 @@ func TestTheGovernorRejects(t *testing.T) {
 		"no slash":         {"governor:\n  agent: a\n  prefix: ask\n", `governor.prefix "ask" must be`},
 		"two words":        {"governor:\n  agent: a\n  prefix: \"/ask me\"\n", `governor.prefix "/ask me" must be`},
 		"unknown field":    {"governor:\n  agent: a\n  model: small\n", "model"},
-		"bound": {"level: 2\nchannels:\n  - id: 1\n    name: chat\n    kind: bot\n    credential_env: PAO_BOT\n    groups:\n      - id: \"-5\"\n        name: team\n        members: operators\n" +
+		"bound": {"level: 2\nchannels:\n  - id: 1\n    name: chat\n    kind: bot\n    credential_env: PAO_BOT\n    owner: alice\n    target: \"-5\"\n    groups:\n      - id: \"-5\"\n        name: team\n        members: operators\n" +
 			"governor:\n  agent: a\nbindings:\n  - agent: a\n    to: group:team\n", `agent "a" is the governor: what it says goes only where it was asked`},
 	} {
 		_, err := channelsConfig(t, c.body)
@@ -728,7 +729,7 @@ func TestASecretsInjectRejects(t *testing.T) {
 }
 
 func TestAGroupsNamedTopicsAreLoadedAndNameDestinations(t *testing.T) {
-	path, err := channelsConfig(t, "channels:\n  - id: 1\n    name: chat\n    kind: bot\n    credential_env: PAO_BOT\n    groups:\n      - id: \"-5\"\n        name: team\n        members: operators\n        topics:\n          - id: \"42\"\n            name: games\n"+
+	path, err := channelsConfig(t, "channels:\n  - id: 1\n    name: chat\n    kind: bot\n    credential_env: PAO_BOT\n    owner: alice\n    target: \"-5/42\"\n    groups:\n      - id: \"-5\"\n        name: team\n        members: operators\n        topics:\n          - id: \"42\"\n            name: games\n"+
 		"bindings:\n  - agent: a\n    to: group:games\n")
 	require.NoError(t, err)
 	cfg, err := Load(path)
@@ -740,7 +741,7 @@ func TestAGroupsNamedTopicsAreLoadedAndNameDestinations(t *testing.T) {
 }
 
 func TestAGroupsTopicsRejects(t *testing.T) {
-	head := "channels:\n  - id: 1\n    name: chat\n    kind: bot\n    credential_env: PAO_BOT\n    groups:\n      - id: \"-5\"\n        name: team\n        members: operators\n        topics:\n"
+	head := "channels:\n  - id: 1\n    name: chat\n    kind: bot\n    credential_env: PAO_BOT\n    owner: alice\n    target: \"-5\"\n    groups:\n      - id: \"-5\"\n        name: team\n        members: operators\n        topics:\n"
 	for name, c := range map[string]struct{ body, want string }{
 		"no id":          {"          - name: a\n", "topics[0]: id is required"},
 		"padded id":      {"          - id: \" 4\"\n            name: a\n", "no surrounding space"},
@@ -755,14 +756,53 @@ func TestAGroupsTopicsRejects(t *testing.T) {
 		require.Error(t, err, name)
 		assert.Contains(t, err.Error(), c.want, name)
 	}
-	_, err := channelsConfig(t, "channels:\n  - id: 1\n    name: chat\n    kind: bot\n    credential_env: PAO_BOT\n    groups:\n      - id: \"-5/1\"\n        name: team\n        members: operators\n        topics:\n          - id: \"4\"\n            name: a\n")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "must not contain '/'", "a group with topics needs an id a topic's conversation can be told from")
-	_, err = channelsConfig(t, "channels:\n  - id: 1\n    name: chat\n    kind: bot\n    credential_env: PAO_BOT\n    groups:\n      - id: \"-5/1\"\n        name: team\n        members: operators\n")
-	require.NoError(t, err, "a group without topics is accepted as before, whatever its id")
-	_, err = channelsConfig(t, "channels:\n  - id: 1\n    name: chat\n    kind: bot\n    credential_env: PAO_BOT\n    groups:\n      - id: \"-5\"\n        name: team\n        members: operators\n        topics:\n          - id: \"4\"\n            name: games\n"+
-		"  - id: 2\n    name: other\n    kind: bot\n    credential_env: PAO_BOT2\n    groups:\n      - id: \"-6\"\n        name: games\n        members: operators\n")
+	for _, topics := range []string{"        topics:\n          - id: \"4\"\n            name: a\n", ""} {
+		_, err := channelsConfig(t, "channels:\n  - id: 1\n    name: chat\n    kind: bot\n    credential_env: PAO_BOT\n    owner: alice\n    target: \"-5/1\"\n    groups:\n      - id: \"-5/1\"\n        name: team\n        members: operators\n"+topics)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "must not contain '/'", "a group's id must be told from a topic's conversation and from a topic target")
+	}
+	_, err := channelsConfig(t, "channels:\n  - id: 1\n    name: chat\n    kind: bot\n    credential_env: PAO_BOT\n    owner: alice\n    target: \"-5/4\"\n    groups:\n      - id: \"-5\"\n        name: team\n        members: operators\n        topics:\n          - id: \"4\"\n            name: games\n"+
+		"  - id: 2\n    name: other\n    kind: bot\n    credential_env: PAO_BOT2\n    owner: alice\n    target: \"-6\"\n    groups:\n      - id: \"-6\"\n        name: games\n        members: operators\n")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `channels[1].groups[0]: name "games" is already`, "a topic's name is unique among the node's groups too")
 	assert.Contains(t, err.Error(), "channels[0].groups[0].topics[0]", "the error says where the name was first used")
+}
+
+func TestAChannelIsOneConversationOfOneOwner(t *testing.T) {
+	head := "channels:\n  - id: 1\n    name: chat\n    kind: bot\n    credential_env: PAO_BOT\n"
+	group := func(topics string) string {
+		return "    groups:\n      - id: \"-5\"\n        name: team\n        members: operators\n" + topics
+	}
+	topic := func(id string) string {
+		return "        topics:\n          - id: \"" + id + "\"\n            name: t" + id + "\n"
+	}
+	for name, c := range map[string]struct{ body, want string }{
+		"no owner":            {"    target: private\n", `owner "" must name a subject`},
+		"bad owner":           {"    owner: Alice\n    target: private\n", `owner "Alice" must name a subject`},
+		"no target":           {"    owner: alice\n", "target is required"},
+		"padded target":       {"    owner: alice\n    target: \" -5\"\n" + group(""), "no surrounding space"},
+		"private with groups": {"    owner: alice\n    target: private\n" + group(""), `whose target is "private" lists no groups`},
+		"group not listed":    {"    owner: alice\n    target: \"-6\"\n" + group(""), `target "-6" needs its group`},
+		"no group listed":     {"    owner: alice\n    target: \"-5\"\n", `target "-5" needs its group`},
+		"a second group": {"    owner: alice\n    target: \"-5\"\n" + group("") + "      - id: \"-6\"\n        name: other\n        members: operators\n",
+			`target "-5" needs its group, and only it`},
+		"empty topic":           {"    owner: alice\n    target: \"-5/\"\n" + group(""), `must be a group's id`},
+		"empty group":           {"    owner: alice\n    target: \"/4\"\n" + group(""), `must be a group's id`},
+		"nested topic":          {"    owner: alice\n    target: \"-5/4/2\"\n" + group(""), `must be a group's id`},
+		"another topic":         {"    owner: alice\n    target: \"-5/4\"\n" + group(topic("4")+"          - id: \"9\"\n            name: t9\n"), `topic "9" is not the target`},
+		"a topic, group target": {"    owner: alice\n    target: \"-5\"\n" + group(topic("4")), `topic "4" is not the target`},
+	} {
+		_, err := channelsConfig(t, head+c.body)
+		require.Error(t, err, name)
+		assert.Contains(t, err.Error(), c.want, name)
+	}
+	for name, body := range map[string]string{
+		"private":       "    owner: alice\n    target: private\n",
+		"a group":       "    owner: alice\n    target: \"-5\"\n" + group(""),
+		"a topic":       "    owner: alice\n    target: \"-5/4\"\n" + group(""),
+		"a named topic": "    owner: alice\n    target: \"-5/4\"\n" + group(topic("4")),
+	} {
+		_, err := channelsConfig(t, head+body)
+		require.NoError(t, err, name)
+	}
 }

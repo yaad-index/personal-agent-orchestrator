@@ -195,7 +195,7 @@ func (a *channelConfigAPI) change(edit func(config.Orchestrator, *config.Managed
 }
 
 func channelToJSON(c config.Channel) local.ChannelConfigJSON {
-	out := local.ChannelConfigJSON{ID: c.ID, Name: c.Name, Kind: c.Kind, CredentialEnv: c.CredentialEnv, CredentialSecret: c.CredentialSecret, Options: c.Options}
+	out := local.ChannelConfigJSON{ID: c.ID, Name: c.Name, Kind: c.Kind, CredentialEnv: c.CredentialEnv, CredentialSecret: c.CredentialSecret, Options: c.Options, Owner: c.Owner, Target: c.Target}
 	for _, g := range c.Groups {
 		gj := local.GroupConfigJSON{ID: g.ID, Name: g.Name, Members: g.Members}
 		for _, t := range g.Topics {
@@ -207,7 +207,7 @@ func channelToJSON(c config.Channel) local.ChannelConfigJSON {
 }
 
 func channelFromJSON(in local.ChannelConfigJSON) config.Channel {
-	c := config.Channel{ID: in.ID, Name: in.Name, Kind: in.Kind, CredentialEnv: in.CredentialEnv, CredentialSecret: in.CredentialSecret, Options: in.Options}
+	c := config.Channel{ID: in.ID, Name: in.Name, Kind: in.Kind, CredentialEnv: in.CredentialEnv, CredentialSecret: in.CredentialSecret, Options: in.Options, Owner: in.Owner, Target: in.Target}
 	if len(c.Options) == 0 {
 		c.Options = nil
 	}
