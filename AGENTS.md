@@ -39,6 +39,10 @@ Behaviour lives in `internal/<concern>`; `cmd/pao` only parses and wires.
   Detail the ADRs leave open is decided in code and captured afterwards.
 - Code PRs merge on two reviews and green CI. An ADR change also needs the
   operator's approval.
+- A PR's title is a conventional-commit subject (`feat(comm): …`,
+  `fix(config): …`, `docs(adr): …`): it becomes the squash commit's subject,
+  which release-please reads and puts in the changelog as written
+  (RELEASING.md).
 
 ## The mesh wire
 
