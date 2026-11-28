@@ -504,6 +504,7 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	dispatcher.Liveness = taskLiveness{reg: reg, thresholds: mgr.Thresholds}
 	tasks.Changed, tasks.Tell = dispatcher.Kick, fleet.Tell
 	localOpts = append(localOpts, local.WithBudget(budgetJSON(book)))
+	var channelConfig *channelConfigAPI
 	if opts.ConfigPath != "" {
 		startEnv := opts.StartEnv
 		if startEnv == nil {
@@ -513,8 +514,9 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 		if adapters == nil {
 			adapters = builtin.Table()
 		}
-		channelConfig := &channelConfigAPI{
+		channelConfig = &channelConfigAPI{
 			path: opts.ConfigPath, running: slices.Clone(cfg.Orchestrator.Channels), startEnv: startEnv, adapters: adapters,
+			codes: newIdentifyCodes(time.Now), senders: sendersOn(ids),
 		}
 		localOpts = append(localOpts, local.WithChannelConfig(channelConfig), local.WithRestartCheck(channelConfig.RestartCheck))
 	}
@@ -566,6 +568,9 @@ func Run(ctx context.Context, cfg *config.Config, token string, opts Options) er
 	adapters, err := wireChannels(cfg, creds, table, layer, ids, rejects)
 	if err != nil {
 		return err
+	}
+	if channelConfig != nil {
+		channelConfig.providers = adapters
 	}
 	// Every channel is known now: the bindings kept from before can be applied.
 	streams.restore()

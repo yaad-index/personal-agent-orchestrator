@@ -72,6 +72,14 @@ type Adapter interface {
 	Channels() []comm.Channel
 }
 
+// Announcer is an adapter that can say a line of pao's own in any conversation
+// of its platform, named as the layer names it, whether or not a channel is
+// there yet: how a target is shown to be the operator's before it becomes a
+// channel (ADR-0058 point 2).
+type Announcer interface {
+	Announce(ctx context.Context, conversation, text string) error
+}
+
 // Factory builds an adapter for a spec.
 type Factory func(spec Spec, h Handler) (Adapter, error)
 

@@ -3,6 +3,7 @@
   import {
     channelConfig,
     putChannel,
+    identifyChannel,
     deleteChannel,
     restartNode,
     type ChannelConfig,
@@ -28,6 +29,12 @@
   let groupId = $state("");
   let groupName = $state("");
   let topicId = $state("");
+  // where the channel is when the form opens; moving it, or a new one, needs a code
+  let was = $state("");
+  // where pao sent the code to, when it did, and until when it can be entered
+  let sentFor = $state("");
+  let expires = $state("");
+  let code = $state("");
 
   async function load() {
     try {
@@ -50,6 +57,7 @@
     owner = "";
     convWay = "private";
     groupId = groupName = topicId = "";
+    was = sentFor = expires = code = "";
     error = "";
     notice = "";
   }
@@ -65,13 +73,16 @@
     groupId = gid ?? "";
     topicId = tid ?? "";
     groupName = c.groups?.find((g) => g.id === groupId)?.name ?? "";
+    was = whereOf(c);
+    sentFor = expires = code = "";
     error = "";
     notice = "";
   }
 
-  async function save(e: SubmitEvent) {
-    e.preventDefault();
-    const c: ChannelConfig = {
+  const whereOf = (c: ChannelConfig) => [c.name, c.provider, c.owner, c.target].join("\u0000");
+
+  function current(): ChannelConfig {
+    return {
       id,
       name: name.trim(),
       provider,
@@ -80,6 +91,36 @@
       // a group's named topics are kept by pao; the form leaves them out
       groups: convWay === "private" ? [] : [{ id: groupId.trim(), name: groupName.trim(), members: "operators" }],
     };
+  }
+
+  // a new channel, or one put elsewhere, is saved with the code pao sends there
+  const needsCode = $derived(editing !== "" && whereOf(current()) !== was);
+  // a code sent for where the form no longer says is no use
+  const codeFits = $derived(sentFor !== "" && sentFor === whereOf(current()));
+
+  async function sendCode() {
+    const c = current();
+    busy = true;
+    error = "";
+    notice = "";
+    try {
+      const r = await identifyChannel(c);
+      sentFor = whereOf(c);
+      expires = new Date(r.expires).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      code = "";
+    } catch (err) {
+      onLost(err);
+      error = err instanceof Error ? err.message : "Could not send the code.";
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function save(e: SubmitEvent) {
+    e.preventDefault();
+    if (needsCode && !codeFits) return;
+    const c = current();
+    if (needsCode) c.code = code.trim();
     busy = true;
     error = "";
     try {
@@ -239,8 +280,28 @@
           {/if}
         </fieldset>
 
+        {#if needsCode}
+          <fieldset>
+            <legend>Identify</legend>
+            <p class="muted small">
+              Before it is saved, pao sends a one-time code to {convLabel(current())}, from the provider's bot. Entering it here shows the conversation is
+              yours. For a private conversation, the owner must have registered with the bot first.
+            </p>
+            {#if codeFits}
+              <p class="ok small" role="status">Code sent. It can be used once, until {expires}.</p>
+              <label for="c-code">Code</label>
+              <input id="c-code" bind:value={code} required autocomplete="one-time-code" placeholder="XXXX-XXXX" />
+              <button type="button" class="link" disabled={busy} onclick={sendCode}>Send another</button>
+            {:else}
+              <button type="button" disabled={busy || !name.trim() || !provider || !owner.trim()} onclick={sendCode}>
+                {busy ? "Sending…" : sentFor ? "Send a code for these settings" : "Send a code"}
+              </button>
+            {/if}
+          </fieldset>
+        {/if}
+
         <div class="actions">
-          <button type="submit" disabled={busy}>{busy ? "Saving…" : "Save"}</button>
+          <button type="submit" disabled={busy || (needsCode && (!codeFits || !code.trim()))}>{busy ? "Saving…" : "Save"}</button>
           <button type="button" class="secondary" onclick={() => (editing = "")}>Cancel</button>
         </div>
       </form>

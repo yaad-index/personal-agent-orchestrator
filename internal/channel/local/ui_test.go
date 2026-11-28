@@ -160,9 +160,10 @@ func TestTheChannelsAreReadByTheOperator(t *testing.T) {
 }
 
 type fakeChannelConfig struct {
-	put     []ChannelConfigJSON
-	deleted []string
-	err     error
+	put        []ChannelConfigJSON
+	identified []ChannelConfigJSON
+	deleted    []string
+	err        error
 }
 
 func (f *fakeChannelConfig) List(context.Context) (ChannelConfigListJSON, error) {
@@ -171,6 +172,10 @@ func (f *fakeChannelConfig) List(context.Context) (ChannelConfigListJSON, error)
 func (f *fakeChannelConfig) Put(_ context.Context, c ChannelConfigJSON) error {
 	f.put = append(f.put, c)
 	return f.err
+}
+func (f *fakeChannelConfig) Identify(_ context.Context, c ChannelConfigJSON) (IdentifyJSON, error) {
+	f.identified = append(f.identified, c)
+	return IdentifyJSON{Expires: time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC), Sent: 1}, f.err
 }
 func (f *fakeChannelConfig) Delete(_ context.Context, name string) error {
 	f.deleted = append(f.deleted, name)
@@ -186,9 +191,16 @@ func TestTheChannelConfigurationIsTheOperatorsToChange(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "/n/managed.yaml", l.ManagedFile)
 	assert.Equal(t, []ProviderJSON{{Name: "tg", Kind: "bot"}}, l.Providers)
-	require.NoError(t, c.PutChannelConfig(ctx, ChannelConfigJSON{ID: 2, Name: "ui", Provider: "tg"}))
+	id, err := c.IdentifyChannel(ctx, ChannelConfigJSON{Name: "ui", Provider: "tg", Owner: "alice", Target: "private"})
+	require.NoError(t, err)
+	assert.Equal(t, IdentifyJSON{Expires: time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC), Sent: 1}, id)
+	assert.Equal(t, "alice", f.identified[0].Owner)
+	assert.Equal(t, http.StatusBadRequest, do(t, ts, "POST", "/v1/config/channels/other/identify", `{"name":"ui","provider":"tg"}`, bearer()).StatusCode, "the name is the path's")
+	assert.Equal(t, http.StatusUnauthorized, send(t, "POST", ts.URL+"/v1/config/channels/ui/identify", `{"name":"ui"}`, nil, nil))
+	require.NoError(t, c.PutChannelConfig(ctx, ChannelConfigJSON{ID: 2, Name: "ui", Provider: "tg", Code: "ABCD-EFGH"}))
 	require.NoError(t, c.DeleteChannelConfig(ctx, "ui"))
 	assert.Equal(t, "tg", f.put[0].Provider)
+	assert.Equal(t, "ABCD-EFGH", f.put[0].Code, "the code travels with the definition")
 	assert.Equal(t, []string{"ui"}, f.deleted)
 
 	assert.Equal(t, http.StatusBadRequest, do(t, ts, "PUT", "/v1/config/channels/other", `{"id":2,"name":"ui","provider":"tg"}`, bearer()).StatusCode, "the name is the path's")
@@ -197,6 +209,7 @@ func TestTheChannelConfigurationIsTheOperatorsToChange(t *testing.T) {
 
 	f.err = ErrConflict
 	assert.Equal(t, http.StatusConflict, do(t, ts, "PUT", "/v1/config/channels/ui", `{"id":2,"name":"ui","provider":"tg"}`, bearer()).StatusCode)
+	assert.Equal(t, http.StatusConflict, do(t, ts, "POST", "/v1/config/channels/ui/identify", `{"name":"ui","provider":"tg"}`, bearer()).StatusCode)
 	f.err = ErrBadRequest
 	assert.Equal(t, http.StatusBadRequest, do(t, ts, "DELETE", "/v1/config/channels/ui", "", bearer()).StatusCode)
 }

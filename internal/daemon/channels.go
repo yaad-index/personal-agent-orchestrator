@@ -24,17 +24,17 @@ func (r rejectRecorder) Record(channel, sender, name, kind, reason, payload stri
 }
 
 // wireChannels gives the layer what channel inbound needs and builds one adapter
-// per provider that carries a channel, registering each of its channels with the
-// layer (ADR-0058 points 1 and 2). It admits the channel ids to the ledger first,
-// so an id is never reused (ADR-0021 point 2), and returns the adapters for the
-// caller to run. A kind not compiled in, an unset credential, or a reused id stops
-// the node here.
-func wireChannels(cfg *config.Config, creds map[string]string, table adapter.Table, layer *comm.Layer, ids *identity.Store, rejects *rejected.Store) ([]adapter.Adapter, error) {
+// per provider, registering each of its channels with the layer (ADR-0058
+// points 1 and 2). A provider that carries no channel is brought up too when
+// its credential is there, so a person can register on it and a target on it
+// can be identified before it is a channel; without its credential it is left
+// down. It admits the channel ids to the ledger first, so an id is never reused
+// (ADR-0021 point 2), and returns the adapters by provider for the caller to
+// run. A kind not compiled in, an unset credential on a provider that carries a
+// channel, or a reused id stops the node here.
+func wireChannels(cfg *config.Config, creds map[string]string, table adapter.Table, layer *comm.Layer, ids *identity.Store, rejects *rejected.Store) (map[string]adapter.Adapter, error) {
 	layer.SetIdentity(ids, rejectRecorder{rejects})
 	layer.SetCompositeWindow(cfg.Orchestrator.MessageWindow)
-	if len(cfg.Orchestrator.Channels) == 0 {
-		return nil, nil
-	}
 	chanSpecs := make([]adapter.Spec, 0, len(cfg.Orchestrator.Channels))
 	chanIDs := make(map[string]int, len(cfg.Orchestrator.Channels))
 	providerOf := make(map[string]string, len(cfg.Orchestrator.Channels))
@@ -46,8 +46,9 @@ func wireChannels(cfg *config.Config, creds map[string]string, table adapter.Tab
 	}
 	var specs []adapter.Spec
 	for _, p := range cfg.Orchestrator.Providers {
-		if len(carried[p.Name]) == 0 {
-			continue // a provider that carries no channel is not brought up
+		if len(carried[p.Name]) == 0 && creds[p.Name] == "" {
+			slog.Info("a provider that carries no channel and has no credential is left down", "provider", p.Name)
+			continue
 		}
 		specs = append(specs, adapter.Spec{Name: p.Name, Kind: p.Kind, Credential: creds[p.Name], Options: p.Options, Channels: carried[p.Name]})
 	}
@@ -66,12 +67,14 @@ func wireChannels(cfg *config.Config, creds map[string]string, table adapter.Tab
 	layer.SetGroups(admittedGroups(cfg.Orchestrator.Channels))
 	layer.SetScopes(channelScopes(cfg.Orchestrator.Channels))
 	layer.SetProviders(providerOf)
-	for _, a := range adapters {
+	out := make(map[string]adapter.Adapter, len(adapters))
+	for i, a := range adapters {
 		for _, c := range a.Channels() {
 			layer.AddChannel(c)
 		}
+		out[specs[i].Name] = a
 	}
-	return adapters, nil
+	return out, nil
 }
 
 // standingBindings is the configured standing bindings as the layer routes them

@@ -204,7 +204,7 @@ func TestAConfiguredChannelBecomesAChannelOfTheLayer(t *testing.T) {
 
 // wireChannelsForTest wires the channel chat, on a provider of kind whose
 // credential reads as cred.
-func wireChannelsForTest(t *testing.T, kind, cred string) ([]adapter.Adapter, error) {
+func wireChannelsForTest(t *testing.T, kind, cred string) (map[string]adapter.Adapter, error) {
 	t.Helper()
 	built := make(chan *botFake, 1)
 	cfg := &config.Config{Orchestrator: config.Orchestrator{StateDir: t.TempDir(), MessageWindow: 10,
@@ -258,4 +258,24 @@ func TestBindingsMoveOntoEachChannelsProviderAndAConflictSaysHowOut(t *testing.T
 	require.ErrorIs(t, err, identity.ErrRekeyConflict)
 	assert.Contains(t, err.Error(), "nothing was changed")
 	assert.Contains(t, err.Error(), "providers of their own again")
+}
+
+func TestAProviderWithoutAChannelIsBroughtUpOnlyWithItsCredential(t *testing.T) {
+	built := make(chan *botFake, 3)
+	cfg := &config.Config{Orchestrator: config.Orchestrator{StateDir: t.TempDir(), MessageWindow: 10,
+		Providers: []config.Provider{{Name: "tg", Kind: "bot", CredentialEnv: "A"}, {Name: "spare", Kind: "bot", CredentialEnv: "B"}, {Name: "bare", Kind: "bot", CredentialEnv: "C"}},
+		Channels:  []config.Channel{{ID: 1, Name: "chat", Provider: "tg", Owner: "alice", Target: config.TargetPrivate}}}}
+	l := comm.New(nil, nil)
+	as, err := wireChannels(cfg, map[string]string{"tg": "x", "spare": "y"}, fakeTable(built), l, nil, nil)
+	require.NoError(t, err)
+	assert.Len(t, as, 2)
+	assert.Contains(t, as, "tg")
+	assert.Contains(t, as, "spare", "a person can register on it, and a target on it be identified")
+	assert.NotContains(t, as, "bare", "no credential, no channel: left down")
+	assert.Empty(t, as["spare"].Channels())
+
+	cfg.Orchestrator.Channels = nil
+	as, err = wireChannels(cfg, map[string]string{"spare": "y"}, fakeTable(built), comm.New(nil, nil), nil, nil)
+	require.NoError(t, err)
+	assert.Len(t, as, 1, "with no channel at all, too")
 }

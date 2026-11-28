@@ -95,20 +95,35 @@ var writeMu sync.Mutex
 func WriteManaged(path string, m Managed, checks ...func(*Config) error) error {
 	writeMu.Lock()
 	defer writeMu.Unlock()
-	cfg, err := load(path, true, &m)
+	cfg, err := checkManaged(path, m, checks)
 	if err != nil {
 		return err
-	}
-	for _, check := range checks {
-		if err := check(cfg); err != nil {
-			return err
-		}
 	}
 	b, err := encodeManaged(m)
 	if err != nil {
 		return err
 	}
 	return writeWhole(cfg.Orchestrator.Managed, b)
+}
+
+// CheckManaged is WriteManaged without the write: whether the configuration
+// with m as its managed file loads and passes checks.
+func CheckManaged(path string, m Managed, checks ...func(*Config) error) error {
+	_, err := checkManaged(path, m, checks)
+	return err
+}
+
+func checkManaged(path string, m Managed, checks []func(*Config) error) (*Config, error) {
+	cfg, err := load(path, true, &m)
+	if err != nil {
+		return nil, err
+	}
+	for _, check := range checks {
+		if err := check(cfg); err != nil {
+			return nil, err
+		}
+	}
+	return cfg, nil
 }
 
 // managedHeader opens every managed file, so whoever reads it knows not to
