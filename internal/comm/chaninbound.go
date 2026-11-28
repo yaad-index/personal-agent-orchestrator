@@ -57,6 +57,9 @@ type Identity interface {
 	// Senders returns the sender ids on the channel bound to the subject, read
 	// afresh.
 	Senders(subject, channel string) []string
+	// Permission returns the subject's permission channel, read afresh: "" for
+	// its private conversation (ADR-0058 point 6).
+	Permission(subject string) string
 }
 
 // Recorder keeps what the layer did not act on (ADR-0019 point 7). It is write-only

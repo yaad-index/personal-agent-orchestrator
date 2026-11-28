@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 
 	"github.com/yaad-index/personal-agent-orchestrator/internal/channel/local"
 	"github.com/yaad-index/personal-agent-orchestrator/internal/config"
+	"github.com/yaad-index/personal-agent-orchestrator/internal/identity"
 )
 
 func TestTheOperatorManagesSubjectsAndBindingsOverTheLocalChannel(t *testing.T) {
@@ -67,4 +69,32 @@ func TestTheOperatorManagesSubjectsAndBindingsOverTheLocalChannel(t *testing.T) 
 	assert.ErrorContains(t, err, "404")
 	require.NoError(t, c.RevokeInvitation(ctx, inv.ID))
 	assert.ErrorContains(t, c.RevokeInvitation(ctx, inv.ID), "404")
+}
+
+func TestAPermissionChannelIsOneOfTheSubjectsOwnChannels(t *testing.T) {
+	ids, err := identity.Open(filepath.Join(t.TempDir(), "identity.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ids.Close() })
+	require.NoError(t, ids.AddSubject("alice"))
+	a := identityAPI{s: ids, owners: channelOwners([]config.Channel{{Name: "dm", Owner: "alice"}, {Name: "team", Owner: "alice"}, {Name: "bobs", Owner: "bob"}})}
+	ctx := context.Background()
+
+	require.NoError(t, a.SetPermission(ctx, "alice", "team"))
+	subs, err := a.Subjects(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, "team", subs[0].Permission)
+
+	err = a.SetPermission(ctx, "alice", "bobs")
+	require.ErrorIs(t, err, local.ErrBadRequest)
+	assert.Contains(t, err.Error(), `channel "bobs" is bob's, not alice's`)
+	assert.ErrorIs(t, a.SetPermission(ctx, "alice", "nope"), local.ErrBadRequest)
+	assert.ErrorIs(t, a.SetPermission(ctx, "ghost", ""), local.ErrNotFound)
+	assert.Equal(t, "team", ids.Permission("alice"), "nothing refused was kept")
+
+	require.NoError(t, a.SetPermission(ctx, "alice", ""))
+	assert.Empty(t, ids.Permission("alice"), "back to her private conversation")
+	require.NoError(t, ids.SetOperator("alice", true))
+	require.NoError(t, a.SetPermission(ctx, "alice", "dm"))
+	require.NoError(t, ids.SetOperator("alice", false))
+	assert.Equal(t, "dm", ids.Permission("alice"), "the operator flag and the permission channel are kept apart")
 }

@@ -15,8 +15,10 @@ import (
 type fakeIdentity struct {
 	bound     map[string]string // channel NUL sender -> subject
 	operators map[string]bool
-	secret    string
-	registers int
+	// permission holds each subject's permission channel
+	permission map[string]string
+	secret     string
+	registers  int
 }
 
 func (f *fakeIdentity) Resolve(ch, snd string) (string, bool) {
@@ -31,7 +33,8 @@ func (f *fakeIdentity) Register(ch, snd, secret string) (string, bool) {
 	f.bound[ch+"\x00"+snd] = "alice"
 	return "alice", true
 }
-func (f *fakeIdentity) IsOperator(s string) bool { return f.operators[s] }
+func (f *fakeIdentity) IsOperator(s string) bool   { return f.operators[s] }
+func (f *fakeIdentity) Permission(s string) string { return f.permission[s] }
 func (f *fakeIdentity) Senders(subject, ch string) []string {
 	var out []string
 	for k, subj := range f.bound {

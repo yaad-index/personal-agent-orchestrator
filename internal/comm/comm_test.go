@@ -32,6 +32,8 @@ type fakeRouter struct {
 	atRoute func(core.Message)
 	// fail, when set, is the error each named agent's delivery reports.
 	fail map[string]error
+	// users maps an agent to the user it belongs to.
+	users map[string]string
 }
 
 func (f *fakeRouter) Resolve(t core.Target) ([]core.Profile, error) {
@@ -42,7 +44,7 @@ func (f *fakeRouter) Resolve(t core.Target) ([]core.Profile, error) {
 	}
 	var ps []core.Profile
 	for _, n := range names {
-		ps = append(ps, core.Profile{Name: n, Node: f.nodes[n]})
+		ps = append(ps, core.Profile{Name: n, Node: f.nodes[n], User: f.users[n]})
 	}
 	return ps, nil
 }

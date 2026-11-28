@@ -25,6 +25,10 @@ func TestIdentityCommandsCallTheirRoutes(t *testing.T) {
 		{func(b *bytes.Buffer) error {
 			return BindCmd{NodeFlags: f, Channel: "chat", Sender: "7", Subject: "alice"}.run(b)
 		}, "POST /v1/identity/bindings", "chat 7 bound to alice"},
+		{func(b *bytes.Buffer) error {
+			return PermissionCmd{NodeFlags: f, Name: "alice", Channel: "alice-team"}.run(b)
+		}, "PUT /v1/identity/subjects/alice/permission", "pao asks about alice's agents in alice-team"},
+		{func(b *bytes.Buffer) error { return PermissionCmd{NodeFlags: f, Name: "alice"}.run(b) }, "PUT /v1/identity/subjects/alice/permission", "in their private conversation"},
 		{func(b *bytes.Buffer) error { return RevokeCmd{NodeFlags: f, Channel: "chat", Sender: "7"}.run(b) }, "DELETE /v1/identity/bindings?channel=chat&sender=7", "chat 7 unbound"},
 	} {
 		var out bytes.Buffer
@@ -38,14 +42,17 @@ func TestIdentityCommandsCallTheirRoutes(t *testing.T) {
 func TestIdentityListsPrintOneRowEach(t *testing.T) {
 	s := newStubNode(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/identity/subjects" {
-			writeJSON(w, 200, []local.SubjectJSON{{Name: "alice", Created: time.Date(2026, 11, 16, 1, 2, 3, 0, time.UTC), Operator: true}})
+			writeJSON(w, 200, []local.SubjectJSON{
+				{Name: "alice", Created: time.Date(2026, 11, 16, 1, 2, 3, 0, time.UTC), Operator: true},
+				{Name: "bob", Created: time.Date(2026, 11, 16, 1, 2, 3, 0, time.UTC), Permission: "bob-team"},
+			})
 			return
 		}
 		writeJSON(w, 200, []local.BindingJSON{{Channel: "chat", Sender: "7", Subject: "alice"}})
 	})
 	var out bytes.Buffer
 	require.NoError(t, SubjectsCmd{NodeFlags: s.flags(t)}.run(&out))
-	assert.Equal(t, "alice\t2026-11-16T01:02:03Z\toperator\n", out.String())
+	assert.Equal(t, "alice\t2026-11-16T01:02:03Z\toperator\tprivate\nbob\t2026-11-16T01:02:03Z\t-\tbob-team\n", out.String())
 
 	out.Reset()
 	require.NoError(t, BindingsCmd{NodeFlags: s.flags(t), Subject: "alice"}.run(&out))

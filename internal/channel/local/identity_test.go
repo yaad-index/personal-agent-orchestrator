@@ -22,6 +22,7 @@ type fakeIdentity struct {
 	err      error
 
 	gotName, gotChannel, gotSender, gotSubject string
+	gotPermission                              string
 	gotBind                                    BindingJSON
 }
 
@@ -43,6 +44,10 @@ func (f *fakeIdentity) Bindings(_ context.Context, s string) ([]BindingJSON, err
 
 func (f *fakeIdentity) SetOperator(_ context.Context, n string, on bool) error {
 	f.gotName, f.gotOp = n, on
+	return f.err
+}
+func (f *fakeIdentity) SetPermission(_ context.Context, n, ch string) error {
+	f.gotName, f.gotPermission = n, ch
 	return f.err
 }
 func (f *fakeIdentity) Invite(_ context.Context, subject string, ttl time.Duration) (InvitationJSON, error) {
@@ -75,7 +80,7 @@ func TestIdentityRoutesNeedTheBearerToken(t *testing.T) {
 	f := &fakeIdentity{}
 	_, ts := newServer(t, &fakeLayer{}, WithIdentity(f))
 	for _, c := range [][2]string{
-		{"GET", "/v1/identity/subjects"}, {"POST", "/v1/identity/subjects"}, {"DELETE", "/v1/identity/subjects/a"},
+		{"GET", "/v1/identity/subjects"}, {"POST", "/v1/identity/subjects"}, {"DELETE", "/v1/identity/subjects/a"}, {"PUT", "/v1/identity/subjects/a/permission"},
 		{"GET", "/v1/identity/bindings"}, {"POST", "/v1/identity/bindings"}, {"DELETE", "/v1/identity/bindings?channel=c&sender=s"},
 	} {
 		for _, auth := range []string{"", "Bearer wrong"} {
@@ -102,6 +107,10 @@ func TestTheClientReachesEachIdentityOperation(t *testing.T) {
 	assert.Equal(t, "bob", f.gotName)
 	require.NoError(t, c.RemoveSubject(ctx, "a b"))
 	assert.Equal(t, "a b", f.gotName)
+	require.NoError(t, c.SetPermission(ctx, "bob", "bob-team"))
+	assert.Equal(t, [2]string{"bob", "bob-team"}, [2]string{f.gotName, f.gotPermission})
+	require.NoError(t, c.SetPermission(ctx, "bob", ""))
+	assert.Empty(t, f.gotPermission, "empty: the private conversation")
 
 	bs, err := c.Bindings(ctx, "alice")
 	require.NoError(t, err)
