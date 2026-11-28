@@ -12,16 +12,17 @@ import (
 // IdentityCmd groups the commands that manage who the humans are and which
 // sender ids are theirs.
 type IdentityCmd struct {
-	Subjects SubjectsCmd      `cmd:"" help:"List the human subjects."`
-	Add      SubjectAddCmd    `cmd:"" help:"Create a human subject."`
-	Operator OperatorCmd      `cmd:"" help:"Flag a subject as acting as the operator, or clear the flag."`
-	Remove   SubjectRemoveCmd `cmd:"" help:"Delete a subject and every binding that resolves to it."`
-	Bindings BindingsCmd      `cmd:"" help:"List the bindings, of one subject or of all."`
-	Bind     BindCmd          `cmd:"" help:"Tie a provider's sender id to a subject."`
-	Revoke   RevokeCmd        `cmd:"" help:"Remove a binding; the sender id is unbound again."`
-	Invite   InviteCmd        `cmd:"" help:"Issue an invitation that registers its holder as the given subject."`
-	Invites  InvitesCmd       `cmd:"" help:"List the invitations."`
-	Uninvite UninviteCmd      `cmd:"" help:"Revoke an invitation before it is used."`
+	Subjects   SubjectsCmd      `cmd:"" help:"List the human subjects."`
+	Add        SubjectAddCmd    `cmd:"" help:"Create a human subject."`
+	Operator   OperatorCmd      `cmd:"" help:"Flag a subject as acting as the operator, or clear the flag."`
+	Permission PermissionCmd    `cmd:"" help:"Set the channel where pao asks about a subject's agents, or go back to their private conversation."`
+	Remove     SubjectRemoveCmd `cmd:"" help:"Delete a subject and every binding that resolves to it."`
+	Bindings   BindingsCmd      `cmd:"" help:"List the bindings, of one subject or of all."`
+	Bind       BindCmd          `cmd:"" help:"Tie a provider's sender id to a subject."`
+	Revoke     RevokeCmd        `cmd:"" help:"Remove a binding; the sender id is unbound again."`
+	Invite     InviteCmd        `cmd:"" help:"Issue an invitation that registers its holder as the given subject."`
+	Invites    InvitesCmd       `cmd:"" help:"List the invitations."`
+	Uninvite   UninviteCmd      `cmd:"" help:"Revoke an invitation before it is used."`
 }
 
 // SubjectsCmd lists subjects.
@@ -42,7 +43,11 @@ func (c SubjectsCmd) run(w io.Writer) error {
 		return err
 	}
 	for _, s := range subs {
-		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\n", s.Name, s.Created.UTC().Format("2006-01-02T15:04:05Z"), flagWord(s.Operator)); err != nil {
+		perm := s.Permission
+		if perm == "" {
+			perm = "private"
+		}
+		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", s.Name, s.Created.UTC().Format("2006-01-02T15:04:05Z"), flagWord(s.Operator), perm); err != nil {
 			return err
 		}
 	}
@@ -52,7 +57,8 @@ func (c SubjectsCmd) run(w io.Writer) error {
 // SubjectAddCmd creates a subject.
 type SubjectAddCmd struct {
 	NodeFlags
-	Name string `arg:"" help:"Subject name: lowercase letters, digits, '-' and '_', at most 32."`
+	Name       string `arg:"" help:"Subject name: lowercase letters, digits, '-' and '_', at most 32."`
+	Permission string `help:"The channel, one of the subject's, where pao asks about their agents; by default their private conversation."`
 }
 
 // Run implements identity add.
@@ -68,7 +74,44 @@ func (c SubjectAddCmd) run(w io.Writer) error {
 	if err := cl.AddSubject(ctx, c.Name); err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(w, "subject %s added\n", c.Name)
+	if _, err := fmt.Fprintf(w, "subject %s added\n", c.Name); err != nil {
+		return err
+	}
+	if c.Permission == "" {
+		return nil
+	}
+	if err := cl.SetPermission(ctx, c.Name, c.Permission); err != nil {
+		return fmt.Errorf("its permission channel was not set: %w", err)
+	}
+	_, err = fmt.Fprintf(w, "%s's permission channel is %s\n", c.Name, c.Permission)
+	return err
+}
+
+// PermissionCmd sets a subject's permission channel (ADR-0058 point 6).
+type PermissionCmd struct {
+	NodeFlags
+	Name    string `arg:"" help:"Subject."`
+	Channel string `arg:"" optional:"" help:"A channel of the subject's. Left out, pao asks in their private conversation."`
+}
+
+// Run implements identity permission.
+func (c PermissionCmd) Run() error { return c.run(os.Stdout) }
+
+func (c PermissionCmd) run(w io.Writer) error {
+	cl, err := c.client()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := opCtx()
+	defer cancel()
+	if err := cl.SetPermission(ctx, c.Name, c.Channel); err != nil {
+		return err
+	}
+	where := c.Channel
+	if where == "" {
+		where = "their private conversation"
+	}
+	_, err = fmt.Fprintf(w, "pao asks about %s's agents in %s\n", c.Name, where)
 	return err
 }
 

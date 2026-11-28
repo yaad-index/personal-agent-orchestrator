@@ -21,8 +21,9 @@ const (
 	// message delivered to the agent.
 	toMirror
 	// toPrivate is the private conversation of each operator bound on a
-	// channel: where pao's messages about an agent go when it has no stderr
-	// binding.
+	// channel, which a chat channel narrows to its owner: where pao's messages
+	// about an agent go when it has no stderr binding, as its user's private
+	// permission channel or, for an agent of no user, the operators'.
 	toPrivate
 	// toStderr is a conversation a stderr binding names.
 	toStderr

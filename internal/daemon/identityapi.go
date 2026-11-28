@@ -20,6 +20,8 @@ type identityAPI struct {
 	// bound on its provider, so a binding under any other name would never be
 	// read.
 	providers []string
+	// owners holds the owner of each channel the node runs, by name.
+	owners map[string]string
 }
 
 func identityErr(err error) error {
@@ -48,11 +50,24 @@ func (a identityAPI) SetOperator(_ context.Context, name string, on bool) error 
 	return identityErr(a.s.SetOperator(name, on))
 }
 
+// SetPermission sets a subject's permission channel: one of the channels the
+// node runs that the subject owns, since pao asks there about the subject's
+// agents (ADR-0058 point 6), or "" for the subject's private conversation.
+func (a identityAPI) SetPermission(_ context.Context, name, channel string) error {
+	if owner, ok := a.owners[channel]; channel != "" && (!ok || owner != name) {
+		if !ok {
+			return translated{local.ErrBadRequest, fmt.Errorf("no channel %q", channel)}
+		}
+		return translated{local.ErrBadRequest, fmt.Errorf("channel %q is %s's, not %s's: a permission channel is one of the user's own", channel, owner, name)}
+	}
+	return identityErr(a.s.SetPermission(name, channel))
+}
+
 func (a identityAPI) Subjects(context.Context) ([]local.SubjectJSON, error) {
 	subs, err := a.s.Subjects()
 	out := make([]local.SubjectJSON, 0, len(subs))
 	for _, s := range subs {
-		out = append(out, local.SubjectJSON{Name: s.Name, Created: s.Created, Operator: s.Operator})
+		out = append(out, local.SubjectJSON{Name: s.Name, Created: s.Created, Operator: s.Operator, Permission: s.Permission})
 	}
 	return out, identityErr(err)
 }
@@ -96,6 +111,15 @@ func (a identityAPI) Invitations(context.Context) ([]local.InvitationJSON, error
 
 func (a identityAPI) RevokeInvitation(_ context.Context, id string) error {
 	return identityErr(a.s.RevokeInvitation(id))
+}
+
+// channelOwners maps each channel to its owner.
+func channelOwners(chs []config.Channel) map[string]string {
+	out := make(map[string]string, len(chs))
+	for _, c := range chs {
+		out[c.Name] = c.Owner
+	}
+	return out
 }
 
 // providerNames lists the configured providers by name.

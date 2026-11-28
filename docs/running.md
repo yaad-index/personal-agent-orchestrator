@@ -98,6 +98,8 @@ user: alice      # only a channel alice owns may be this agent's
 
 Setting a channel's default agent is refused unless the agent's `user` is the channel's `owner`. An agent with no `user` is no channel's. An agent is the default of one channel at a time: making it another's moves it there. pao warns at start about a channel whose owner is no subject it knows, since that channel acts on nothing until the subject is added.
 
+pao asks its questions about an agent, and tells its notices about it, in the permission channel of the agent's user. By default that is the user's private conversation with the bot, reached once for each provider that carries a channel of theirs. It can be set to any channel the user owns, a group or a topic too, when the user is added (`pao identity add <user> --permission <channel>`) or later (`pao identity permission <user> [<channel>]`; leaving the channel out goes back to the private conversation). Several of a user's agents share it. A channel that is not, or no longer, one of the user's is not used: pao warns and asks privately instead. Only an operator answers a gate question, so a question about the agent of a user who is not an operator also goes to the operators privately. An agent with no `user` is asked about as before, in each operator's private conversation. A stderr binding of an agent's, where it has one, still decides where these go.
+
 ## The file pao manages
 
 pao never writes `pao.yaml`. Settings the management UI sets go in a second file, which you name in `pao.yaml`:

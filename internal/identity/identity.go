@@ -57,12 +57,17 @@ type Subject struct {
 	// Operator marks a human acting as the operator (ADR-0022). Only the operator
 	// surface sets it.
 	Operator bool
+	// Permission is the channel where pao asks about the subject's agents and
+	// tells of them (ADR-0058 point 6); empty means the subject's private
+	// conversation.
+	Permission string
 }
 
 // record is what is stored for a subject.
 type record struct {
-	Created  time.Time `json:"created"`
-	Operator bool      `json:"operator,omitempty"`
+	Created    time.Time `json:"created"`
+	Operator   bool      `json:"operator,omitempty"`
+	Permission string    `json:"permission,omitempty"`
 }
 
 func (r record) bytes() []byte {
@@ -148,7 +153,7 @@ func (s *Store) Subjects() ([]Subject, error) {
 	err := s.db.View(func(tx *bolt.Tx) error {
 		return tx.Bucket(subjects).ForEach(func(k, v []byte) error {
 			r := parseRecord(v)
-			out = append(out, Subject{Name: string(k), Created: r.Created, Operator: r.Operator})
+			out = append(out, Subject{Name: string(k), Created: r.Created, Operator: r.Operator, Permission: r.Permission})
 			return nil
 		})
 	})
@@ -263,6 +268,39 @@ func (s *Store) SetOperator(name string, on bool) error {
 		r.Operator = on
 		return b.Put([]byte(name), r.bytes())
 	})
+}
+
+// SetPermission sets the subject's permission channel, by name, or with ""
+// goes back to the subject's private conversation (ADR-0058 point 6). Whether
+// the channel is one of the subject's is the caller's to check: the store does
+// not know the channels.
+func (s *Store) SetPermission(name, channel string) error {
+	if channel != "" && !channelRE.MatchString(channel) {
+		return fmt.Errorf("%w: channel %q", ErrInvalid, channel)
+	}
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(subjects)
+		v := b.Get([]byte(name))
+		if v == nil {
+			return ErrNoSubject
+		}
+		r := parseRecord(v)
+		r.Permission = channel
+		return b.Put([]byte(name), r.bytes())
+	})
+}
+
+// Permission is the subject's permission channel, read afresh: "" for its
+// private conversation, and for a subject that does not exist.
+func (s *Store) Permission(name string) string {
+	var ch string
+	_ = s.db.View(func(tx *bolt.Tx) error {
+		if v := tx.Bucket(subjects).Get([]byte(name)); v != nil {
+			ch = parseRecord(v).Permission
+		}
+		return nil
+	})
+	return ch
 }
 
 // IsOperator reports whether the subject exists and is flagged operator. It is
